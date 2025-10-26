@@ -7065,19 +7065,6 @@ bot.on('callback_query', async q => {
   // 1. Get data and message from the callbackQuery object
     const data = callbackQuery.data;
     const msg = callbackQuery.message;
-
-    // --- Wrap in a try/catch to prevent bot crashes ---
-    try {
-        // --- Handler for Cancelling Deletion ---
-        if (data === 'cancel_del_logout') {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            await bot.editMessageText("Logged-out bot purge has been cancelled.", {
-                chat_id: msg.chat.id,
-                message_id: msg.message_id,
-                reply_markup: null
-            });
-            return; // Stop execution
-        }
   const st = userStates[cid];
   // IMPORTANT: Ban check before any other logic for non-admin users
   if (cid !== ADMIN_ID) {
@@ -9304,18 +9291,17 @@ if (action === 'confirm_session_update') {
 }
 
 
-  // This goes inside your main bot.on('callback_query', async (callbackQuery) => { ... })
-
-    // --- Handler for Cancelling Deletion ---
-    if (data === 'cancel_del_logout') {
-        await bot.answerCallbackQuery(callbackQuery.id);
-        await bot.editMessageText("Logged-out bot purge has been cancelled.", {
-            chat_id: msg.chat.id,
-            message_id: msg.message_id,
-            reply_markup: null
-        });
-        return;
-    }
+  
+        // --- Handler for Cancelling Deletion ---
+        if (data === 'cancel_del_logout') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            await bot.editMessageText("Logged-out bot purge has been cancelled.", {
+                chat_id: msg.chat.id,
+                message_id: msg.message_id,
+                reply_markup: null
+            });
+            return; // Stop execution
+        }
 
     // --- Handler for Confirming Deletion ---
     if (data === 'confirm_del_logout') {
