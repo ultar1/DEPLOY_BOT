@@ -5152,6 +5152,103 @@ bot.onText(/^\/copydb$/, async (msg) => {
 });
 
 
+bot.onText(/\/dellogout/, async (msg) => {
+    
+    const fromId = msg.from.id;
+    const chatId = msg.chat.id;
+
+    // --- 1. Security Check: Admin Only ---
+    if (!ADMINS.includes(fromId)) {
+        return bot.sendMessage(chatId, "You do not have permission to use this command.");
+    }
+
+    // --- 2. Security Check: Private Chat Only ---
+    if (msg.chat.type !== 'private') {
+        return bot.sendMessage(chatId, "This command can only be used in a private chat.");
+    }
+
+    // --- 3. Configuration Check ---
+    if (!herokuApi || !dbServices || !process.env.HEROKU_API_KEY) {
+        console.error("[dellogout] Missing herokuApi, dbServices, or HEROKU_API_KEY");
+        return bot.sendMessage(chatId, "Error: Bot is not configured correctly for Heroku purge.");
+    }
+
+    // --- 4. Start Process ---
+    const adminMsg = await bot.sendMessage(chatId, "Fetching logged-out bots... Starting Heroku purge...");
+
+    try {
+        const botsToDelete = await dbServices.getLoggedOutBots();
+        const totalBots = botsToDelete.length;
+
+        if (totalBots === 0) {
+            return bot.editMessageText("No logged-out bots found to delete.", {
+                chat_id: chatId,
+                message_id: adminMsg.message_id
+            });
+        }
+
+        let log = `*Heroku-Only Purge Log (Total: ${totalBots})*\n\n`;
+        let successCount = 0;
+        let failCount = 0;
+
+        // --- 5. Loop and Delete ---
+        for (let i = 0; i < totalBots; i++) {
+            const botInfo = botsToDelete[i];
+            const { app_name } = botInfo;
+
+            // Update admin on progress
+            const currentTask = `(${i + 1}/${totalBots}) Deleting Heroku app *${app_name}*...`;
+            await bot.editMessageText(log + currentTask, { 
+                chat_id: chatId, 
+                message_id: adminMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }).catch(() => {}); // Ignore errors if text is same
+
+            try {
+                // Delete from Heroku
+                console.log(`[Heroku Purge] Deleting Heroku app: ${app_name}`);
+                await herokuApi.delete(`https://api.heroku.com/apps/${app_name}`, {
+                    headers: { 
+                        Authorization: `Bearer ${process.env.HEROKU_API_KEY}`, 
+                        Accept: 'application/vnd.heroku+json; version=3' 
+                    }
+                }).catch(e => {
+                    // IMPORTANT: If Heroku gives 404, it's already gone. We count this as success.
+                    if (e.response && e.response.status !== 404) {
+                        // A real error (like 403)
+                        throw e; 
+                    }
+                    // If it's 404, we do nothing and let it be counted as success.
+                    console.log(`[Heroku Purge] ${app_name} already deleted (404).`);
+                });
+
+                successCount++;
+                log += `(${i + 1}/${totalBots}) *${app_name}*... *PURGED*\n`;
+
+            } catch (error) {
+                failCount++;
+                const errorMsg = error.response ? error.response.status : error.message;
+                log += `(${i + 1}/${totalBots}) *${app_name}*... *FAILED* (${errorMsg})\n`;
+                console.error(`[Heroku Purge] Critical failure for ${app_name}: ${error.message}`);
+            }
+        }
+
+        // --- 6. Send Final Report ---
+        log += `\n--- Heroku Purge Complete ---\nSuccess: ${successCount}\nFailed: ${failCount}`;
+        await bot.editMessageText(log, { 
+            chat_id: chatId, 
+            message_id: adminMsg.message_id, 
+            parse_mode: 'Markdown' 
+        });
+
+    } catch (error) {
+        console.error(`[dellogout] Critical error: ${error.message}`);
+        await bot.editMessageText(`A critical error occurred: ${error.message}`, {
+            chat_id: chatId,
+            message_id: adminMsg.message_id
+        });
+    }
+});
 
 // In bot.js
 bot.onText(/^\/backupall$/, async (msg) => {
