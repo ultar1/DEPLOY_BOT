@@ -8615,6 +8615,8 @@ if (action === 'levanter_wa_fallback') {
             botType: 'levanter'
         }
     };
+  
+  await bot.answerCallbackQuery(q.id);
 
     // 3. Edit the message to ask for the number and remove the old buttons.
     await bot.editMessageText(
