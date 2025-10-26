@@ -8309,7 +8309,7 @@ if (action === 'deldb_select') {
     const tableName = payload;
     
     await bot.editMessageText(
-        `🚨 **CONFIRM DELETE: ${tableName.toUpperCase()}** 🚨\n\nAre you absolutely sure you want to drop the table \`${tableName}\`? This will erase **ALL** data and cannot be recovered.`,
+        `**CONFIRM DELETE: ${tableName.toUpperCase()}** \n\nAre you absolutely sure you want to drop the table \`${tableName}\`? This will erase **ALL** data and cannot be recovered.`,
         {
             chat_id: cid,
             message_id: q.message.message_id,
@@ -8607,6 +8607,7 @@ if (action === 'use_suggested_name') {
   // --- ADD this new block ---
 
 if (action === 'levanter_wa_fallback') {
+  await bot.answerCallbackQuery(q.id);
     // 1. Set the state to wait for the user's phone number.
     // This will trigger your existing logic when the user sends their number.
     userStates[cid] = {
@@ -8616,7 +8617,6 @@ if (action === 'levanter_wa_fallback') {
         }
     };
   
-  await bot.answerCallbackQuery(q.id);
 
     // 3. Edit the message to ask for the number and remove the old buttons.
     await bot.editMessageText(
