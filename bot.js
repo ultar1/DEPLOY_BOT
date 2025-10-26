@@ -8075,36 +8075,49 @@ if (action === 'gemini_select_bot') {
     return; // Ensure this function exits
   }
 
-  // --- FIX: This block replaces the invalid bot.onCallbackQuery call ---
-if (action === 'confirm_delete_bapp') {
+  if (action === 'confirm_delete_bapp') {
     const appName = payload;
     const appUserId = extra;
 
-    await bot.editMessageText(`Permanently deleting all database records for "*${escapeMarkdown(appName)}*"...`, {
+    // --- Updated "Deleting" message ---
+    await bot.editMessageText(`Permanently deleting all database records and Neon database for "*${escapeMarkdown(appName)}*"...`, {
         chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
     }).catch(()=>{});
 
     try {
-        // Call the new, more thorough delete function
+        // 1. ✅ NEW: Delete from Neon
+        console.log(`[ConfirmDeleteBApp] Deleting associated Neon database: ${appName}`);
+        const deleteResult = await deleteNeonDatabase(appName); 
+        if (!deleteResult.success) {
+            // Log the error, but continue deleting from our local DB
+            console.error(`[ConfirmDeleteBApp] Failed to delete Neon database ${appName}: ${deleteResult.error}`);
+            // We'll still proceed to delete the local records.
+        }
+
+        // 2. Call the new, more thorough delete function for local DB
         const deleted = await dbServices.permanentlyDeleteBotRecord(appUserId, appName);
         
         if (deleted) {
             await bot.answerCallbackQuery(q.id, { text: `All records for ${appName} deleted.`, show_alert: true });
-            await bot.editMessageText(`All database records for "*${escapeMarkdown(appName)}*" have been permanently deleted.`, {
+            // --- Updated success message ---
+            await bot.editMessageText(`All database records and the Neon database for "*${escapeMarkdown(appName)}*" have been permanently deleted.`, {
                 chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
             });
         } else {
-            await bot.editMessageText(`Could not find records for "*${escapeMarkdown(appName)}*" to delete. It may have already been removed.`, {
+            // --- Updated "not found" message ---
+            await bot.editMessageText(`Could not find local records for "*${escapeMarkdown(appName)}*" to delete. It may have already been removed. (Neon DB deletion was attempted.)`, {
                  chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
             });
         }
     } catch (e) {
-        await bot.editMessageText(`Failed to delete records for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}`, {
+        // This catch is for the local DB deletion
+        await bot.editMessageText(`Failed to delete local records for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)} (Neon DB deletion was attempted.)`, {
             chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
         });
     }
     return;
 }
+
 
 
 
