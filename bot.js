@@ -4527,7 +4527,15 @@ bot.onText(/^\/buytemp$/, async msg => {
 // Command to delete all 'logged_out' bots for the user from Heroku
 bot.onText(/^\/dellogout$/, async (msg) => {
     const userId = msg.chat.id.toString();
-    const workingMsg = await bot.sendMessage(userId, "🔍 Finding and deleting your logged-out bots from Heroku...");
+    // Use 'let' for workingMsg in case initial sendMessage fails
+    let workingMsg;
+    try {
+        workingMsg = await bot.sendMessage(userId, "🔍 Finding and deleting your logged-out bots from Heroku...");
+    } catch (sendError) {
+        console.error("[/dellogout] Failed to send initial message:", sendError);
+        // Can't proceed if the initial message fails
+        return;
+    }
 
     let deletedCount = 0;
     let failedCount = 0;
@@ -4543,22 +4551,23 @@ bot.onText(/^\/dellogout$/, async (msg) => {
         botsToDelete = result.rows;
 
         if (botsToDelete.length === 0) {
-            await bot.editMessageText("✅ No logged-out bots found to delete.", { chat_id: userId, message_id: workingMsg.message_id });
+            await bot.editMessageText("No logged-out bots found to delete.", { chat_id: userId, message_id: workingMsg.message_id });
             return;
         }
 
         await bot.editMessageText(`Found ${botsToDelete.length} logged-out bot(s). Starting deletion process... This might take a moment.`, { chat_id: userId, message_id: workingMsg.message_id });
 
         // 2. Loop and delete each bot
-        for (const [index, bot] of botsToDelete.entries()) {
-            const appName = bot.bot_name;
+        // **** RENAMED LOOP VARIABLE to botInfo ****
+        for (const [index, botInfo] of botsToDelete.entries()) {
+            const appName = botInfo.bot_name; // Use botInfo here
             const progressText = `Deleting bot "${appName}"... (${index + 1}/${botsToDelete.length})`;
-            await bot.editMessageText(progressText, { chat_id: userId, message_id: workingMsg.message_id }).catch(() => {}); // Update progress, ignore minor edit errors
+            // Use the main 'bot' object here (which should be correct)
+            await bot.editMessageText(progressText, { chat_id: userId, message_id: workingMsg.message_id }).catch(() => {});
 
             try {
                 // 3. Delete from Heroku using the herokuApi instance
                 console.log(`[/dellogout] Attempting Heroku delete for ${appName} (User: ${userId})`);
-                // Use the existing herokuApi instance which includes error handling (like for invalid keys)
                 await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 console.log(`[/dellogout] Successfully deleted ${appName} from Heroku.`);
                 deletedCount++;
@@ -4570,52 +4579,60 @@ bot.onText(/^\/dellogout$/, async (msg) => {
                     console.log(`[/dellogout] Cleaned up database records for ${appName}.`);
                 } catch (dbError) {
                     console.error(`[/dellogout] Database cleanup error for ${appName}:`, dbError);
-                    failedCount++; // Count as failed if DB cleanup fails
-                    // Notify admin about DB error, but Heroku deletion was likely successful
-                    await bot.sendMessage(ADMIN_ID, `⚠️ DB Cleanup failed for ${appName} (User: ${userId}) after /dellogout. Heroku app was deleted. Error: ${dbError.message}`);
+                    failedCount++;
+                    await bot.sendMessage(ADMIN_ID, `DB Cleanup failed for ${appName} (User: ${userId}) after /dellogout. Heroku app was deleted. Error: ${dbError.message}`);
                 }
 
             } catch (herokuError) {
-                // Handle case where app is already gone from Heroku (404)
+                // Handle Heroku errors
                 if (herokuError.response && herokuError.response.status === 404) {
                     console.log(`[/dellogout] Bot ${appName} not found on Heroku (404). Cleaning up DB records.`);
                     notFoundOnHerokuCount++;
-                    // Clean up DB even if not found on Heroku
                     try {
                         await dbServices.deleteUserBot(userId, appName);
                         await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
                         console.log(`[/dellogout] Cleaned up database records for ${appName} (was not found on Heroku).`);
                     } catch (dbError) {
                         console.error(`[/dellogout] Database cleanup error for ${appName} (Heroku 404):`, dbError);
-                        failedCount++; // Still count as a failure if DB cleanup fails here
+                        failedCount++;
                         await bot.sendMessage(ADMIN_ID, `DB Cleanup failed for ${appName} (User: ${userId}) after /dellogout (Heroku 404). Error: ${dbError.message}`);
                     }
                 } else {
-                    // Handle other Heroku API errors (like permissions, invalid key detected by interceptor, etc.)
                     const errorMsg = herokuError.response?.data?.message || herokuError.message || 'Unknown Heroku API error';
                     console.error(`[/dellogout] Heroku API error deleting ${appName}:`, errorMsg);
                     failedCount++;
-                    // Notify user about the specific failure
-                    await bot.sendMessage(userId, `Failed to delete bot "${appName}" from Heroku: ${errorMsg}`);
+                    await bot.sendMessage(userId, `Failed to delete bot "${appName}" from Heroku: ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' }); // Escape error message
                 }
             }
-            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between API calls
-        }
+            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+        } // End of for loop
 
         // 5. Final summary message to the user
         let summary = `Deletion process finished.\n\n`;
         summary += `Bots deleted from Heroku: ${deletedCount}\n`;
         summary += `Bots already gone from Heroku (DB cleaned): ${notFoundOnHerokuCount}\n`;
-        summary += `Failures (check messages above): ${failedCount}`;
+        summary += `Failures (check messages above or contact support): ${failedCount}`;
 
         await bot.editMessageText(summary, { chat_id: userId, message_id: workingMsg.message_id });
 
-    } catch (error) {
-        // Catch errors during the initial database query or unexpected issues
+    } catch (error) { // Outer catch block for unexpected errors
         console.error("[/dellogout] Critical error during the process:", error);
-        await bot.editMessageText(`❌ An unexpected error occurred while processing the command. Please check the bot logs or contact support.`, { chat_id: userId, message_id: workingMsg.message_id });
+        // Ensure workingMsg exists before trying to edit it
+        if (workingMsg && workingMsg.message_id) {
+            try {
+                // Use the main 'bot' object here
+                await bot.editMessageText(`An unexpected error occurred: ${escapeMarkdown(error.message)}. Please contact support.`, { chat_id: userId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }); // Escape error message
+            } catch (editError) {
+                console.error("[/dellogout] Failed to even edit the error message:", editError);
+                await bot.sendMessage(userId, `An unexpected critical error occurred: ${escapeMarkdown(error.message)}. Please contact support.`, { parse_mode: 'Markdown' }); // Escape error message
+            }
+        } else {
+            console.error("[/dellogout] Critical error occurred, and no initial message reference is available.");
+            await bot.sendMessage(userId, `An unexpected critical error occurred: ${escapeMarkdown(error.message)}. Please contact support.`, { parse_mode: 'Markdown' }); // Escape error message
+        }
     }
 });
+
 
 
 bot.onText(/^\/aa (\d+)\s+(\d+)$/, (msg, match) => {
