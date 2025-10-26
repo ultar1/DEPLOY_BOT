@@ -1463,14 +1463,6 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 }
 
         
-/*
-=================================================================
-==           COMPLETE and FIXED buildWithProgress              ==
-==  (in bot_services.js)                                       ==
-==  This version fixes the 'message_id of undefined' crash     ==
-==  AND correctly implements the Neon DB migration logic.      ==
-=================================================================
-*/
 
 async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null) {
     // 1. Get all the tools from the 'init' function
@@ -1529,7 +1521,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             // 2. All RESTORES that have an old Heroku DB URL (migrating them).
             
             const actionText = isRestore ? "Replacing old Heroku DB with" : "Creating";
-            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText} new Neon database...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
+            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText} new database...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
             
             const dbName = appName.replace(/-/g, '_');
             const neonResult = await createNeonDatabase(dbName);
@@ -1542,7 +1534,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             console.log(`[Build] Set DATABASE_URL for ${appName} to new Neon DB.`);
         } else {
              // This runs for RESTORES that ALREADY have a Neon DB.
-             await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing Neon database (Restore)...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
+             await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing database (Restore)...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
         }
         // --- End of Neon Logic ---
 
