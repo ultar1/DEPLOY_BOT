@@ -627,6 +627,81 @@ const availableTools = {
     getBotLogs
 };
 
+/**
+ * Calls the Gemini API to get a text response.
+ * Implements exponential backoff for retries.
+ * * NOTE: This requires Node.js v18+ for the global 'fetch' function.
+ * If you are on an older version, you must install node-fetch:
+ * npm install node-fetch@2
+ * ...and add this line at the top of your file:
+ * const fetch = require('node-fetch');
+ */
+async function callMyAi(prompt) {
+    const apiKey = ""; // Leave as-is, will be handled by the environment
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+    const payload = {
+        contents: [{
+            parts: [{ text: prompt }]
+        }]
+    };
+
+    let response;
+    let retries = 3;
+    let delay = 1000; // 1 second
+
+    while (retries > 0) {
+        try {
+            response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts[0].text) {
+                    // Success! Return the text.
+                    return result.candidates[0].content.parts[0].text;
+                } else {
+                    // Successful API call, but no valid content returned
+                    throw new Error("Invalid response structure from AI.");
+                }
+            } else if (response.status === 429 || response.status >= 500) {
+                // Throttling or server error, wait and retry
+                console.warn(`AI API call failed with status ${response.status}. Retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                retries--;
+                delay *= 2; // Exponential backoff
+            } else {
+                // Other client-side error (e.g., 400 Bad Request), don't retry
+                const errorResult = await response.json();
+                console.error("AI API call failed:", errorResult);
+                throw new Error(`AI API Error: ${errorResult.error ? errorResult.error.message : response.statusText}`);
+            }
+
+        } catch (error) {
+            if (retries > 0) {
+                // Network error, wait and retry
+                console.warn(`AI API call network error: ${error.message}. Retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                retries--;
+                delay *= 2;
+            } else {
+                // All retries failed
+                console.error("AI API call failed after all retries:", error);
+                throw new Error("The AI is currently unavailable. Please try again later.");
+            }
+        }
+    }
+    
+    // Fallback error if loop finishes without returning
+    throw new Error("The AI failed to respond after several attempts.");
+}
+
 // This function can now handle more complex requests.
 async function handleUserPrompt(prompt, userId) {
     const chat = geminiModel.startChat();
@@ -2783,7 +2858,7 @@ async function notifyAdminUserOnline(msg) {
         escapeMarkdown: escapeMarkdown,
     });
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
-registerGroupHandlers(bot, dbServices); 
+registerGroupHandlers(bot, dbServices, callMyAi); 
 
 
     await loadMaintenanceStatus(); // Load initial maintenance status
