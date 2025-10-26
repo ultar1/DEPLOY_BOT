@@ -12,6 +12,7 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 require('dotenv').config();
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
+const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
 const path = require('path');
 const mailListener = require('./mail_listener');
@@ -2782,6 +2783,8 @@ async function notifyAdminUserOnline(msg) {
         escapeMarkdown: escapeMarkdown,
     });
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
+registerGroupHandlers(bot, dbServices); 
+
 
     await loadMaintenanceStatus(); // Load initial maintenance status
 // In bot.js, inside the main (async () => { ... })(); startup block
