@@ -1039,6 +1039,24 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
 
 // 6) Utilities (some are passed to other modules)
 
+
+/**
+ * Escapes text for Telegram's 'HTML' parse_mode.
+ * This prevents Telegram from misinterpreting <, >, and & as HTML code.
+ * @param {string | any} text The text to escape.
+ */
+function escapeHTML(text) {
+  if (typeof text !== 'string') {
+    text = String(text);
+  }
+  
+  // Replace the 3 special HTML characters
+  return text.replace(/&/g, '&amp;')
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;');
+}
+
+
 // Function to escape Markdown V2 special characters
 function escapeMarkdown(text) {
     if (typeof text !== 'string') {
@@ -4430,9 +4448,7 @@ bot.onText(/^\/deployem$/, async (msg) => {
     }
 });
 
-// In bot.js
-
-// ADMIN COMMAND: /dbstats
+// This command handler now uses 'HTML' and is safe from parsing errors
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -4442,14 +4458,15 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const result = await getNeonStats();
 
     if (!result.success) {
+        // We still escape the error just in case it contains < or >
         return bot.editMessageText(
-            `Failed to fetch stats!\n\nReason: ${escapeMarkdown(result.error)}`, 
+            `<b>Failed to fetch stats!</b>\n\nReason: ${escapeHTML(result.error)}`, 
             { 
                 chat_id: adminId, 
                 message_id: workingMsg.message_id, 
-                parse_mode: 'MarkdownV2' // Use V2 for the escape function
+                parse_mode: 'HTML' // Use HTML
             }
-        );
+        ).catch(err => console.error("Error editing message:", err.message)); // Add catch
     }
 
     const { logical_size_mb, databases, project_id, branch_id } = result.data;
@@ -4458,31 +4475,30 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     let dbListString = "No databases found.";
     if (databases.length > 0) {
         dbListString = databases
-            .map(db => `  - \`${escapeMarkdown(db.name)}\` (Owner: \`${escapeMarkdown(db.owner)}\`, Created: ${escapeMarkdown(db.created_at)})`)
+            // Use <b> for bold, <code> for code. Escape the API data.
+            .map(db => `  - <b>${escapeHTML(db.name)}</b> (Owner: <code>${escapeHTML(db.owner)}</code>, Created: ${escapeHTML(db.created_at)})`)
             .join('\n');
     }
 
-    // Format the final message
+    // Format the final message using HTML tags
     const finalMessage = `
-*Neon Database Statistics*
+<b>Neon Database Statistics</b>
 
-*Project:* \`${escapeMarkdown(project_id)}\`
-*Branch:* \`${escapeMarkdown(branch_id)}\`
-*Total Storage Used:* *${escapeMarkdown(logical_size_mb)} MB* / 512 MB (Free Tier Limit)
+<b>Project:</b> <code>${escapeHTML(project_id)}</code>
+<b>Branch:</b> <code>${escapeHTML(branch_id)}</code>
+<b>Total Storage Used:</b> <i>${escapeHTML(logical_size_mb)} MB</i> / 512 MB (Free Tier Limit)
 
-*Databases (${databases.length}):*
+<b>Databases (${databases.length}):</b>
 ${dbListString}
     `;
 
+    // Send the final message
     await bot.editMessageText(finalMessage, {
         chat_id: adminId,
         message_id: workingMsg.message_id,
-        parse_mode: 'MarkdownV2' // Use V2 for the escape function
-    });
+        parse_mode: 'HTML' // Use HTML
+    }).catch(err => console.error("Error editing message:", err.message)); // Add catch
 });
-
-
-// ... other code ...
 
 // --- NEW COMMAND: /sync ---
 bot.onText(/^\/sync$/, async (msg) => {
