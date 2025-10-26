@@ -1463,15 +1463,22 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 }
 
         
-// In bot_services.js
-// ❗️❗️ REPLACE your existing buildWithProgress function with this new, complete, and CORRECTED version ❗️❗️
+/*
+=================================================================
+==           COMPLETE and FIXED buildWithProgress              ==
+==  (in bot_services.js)                                       ==
+==  This version fixes the 'message_id of undefined' crash     ==
+==  AND correctly implements the Neon DB migration logic.      ==
+=================================================================
+*/
 
 async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null) {
-    // ❗️ FIX: Added all required dependencies from moduleParams, including createNeonDatabase
+    // 1. Get all the tools from the 'init' function
     const { 
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
         ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool, 
-        MUST_JOIN_CHANNEL_ID, createNeonDatabase 
+        MUST_JOIN_CHANNEL_ID, createNeonDatabase, appDeploymentPromises, getAnimatedEmoji,
+        getUserBotCount, hasReceivedReward, addDeployKey, recordReward, grantReferralRewards
     } = moduleParams;
     
     let appName = vars.APP_NAME;
@@ -1479,10 +1486,11 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     let buildMsg;
     let userNotifyMsg;
     let buildResult = false; // Define buildResult at the top
-    let animateIntervalId; // Define here to be accessible in finally
-    let userAnimateIntervalId; // Define here for user messages
+    let animateIntervalId; // Admin animation
+    let userAnimateIntervalId; // User animation
 
     try {
+        // 2. Handle app renaming if restoring an existing app
         if (isRestore) {
             try {
                 await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
@@ -1491,37 +1499,53 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                 vars.APP_NAME = newName;
                 console.log(`[Restore] App ${originalAppName} exists. Using new name: ${appName}`);
             } catch (e) {
-                if (e.response?.status !== 404) throw e; // 404 is good, name is free
+                if (e.response?.status !== 404) throw e; // 404 is good (name is free)
             }
         }
         
         buildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
+        
+        // ❗️ FIX: Only create userNotifyMsg if the user is NOT the admin.
         if (String(targetChatId) !== ADMIN_ID) {
             userNotifyMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
         }
+        
         animateIntervalId = await animateMessage(ADMIN_ID, buildMsg.message_id, `Building ${appName}...`);
 
         // --- Step 1: Create the Heroku app ---
         const appSetup = { name: appName, region: 'us', stack: 'heroku-22' };
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        clearInterval(animateIntervalId); // Stop first animation
+        clearInterval(animateIntervalId);
 
         await bot.editMessageText(`Configuring resources...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id });
         const configMsgAnimate = await animateMessage(ADMIN_ID, buildMsg.message_id, 'Configuring resources');
 
-        // --- STEP 2: CREATE NEON DATABASE ---
-        if (!isRestore) { 
-            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Creating Neon database...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
+        // --- ❗️ STEP 2: NEON DATABASE LOGIC (Your Request) ❗️ ---
+        const hasNeonDB = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
+
+        if (!isRestore || (isRestore && !hasNeonDB)) {
+            // This runs for:
+            // 1. All NEW deploys.
+            // 2. All RESTORES that have an old Heroku DB URL (migrating them).
+            
+            const actionText = isRestore ? "Replacing old Heroku DB with" : "Creating";
+            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText} new Neon database...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
+            
             const dbName = appName.replace(/-/g, '_');
             const neonResult = await createNeonDatabase(dbName);
+            
             if (!neonResult.success) {
                 throw new Error(`Neon DB creation failed: ${neonResult.error}`);
             }
-            vars.DATABASE_URL = neonResult.connection_string;
+            // Overwrite the (old/missing) DATABASE_URL with the new Neon one.
+            vars.DATABASE_URL = neonResult.connection_string; 
+            console.log(`[Build] Set DATABASE_URL for ${appName} to new Neon DB.`);
         } else {
-             await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking database (Restore)...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
+             // This runs for RESTORES that ALREADY have a Neon DB.
+             await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing Neon database (Restore)...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' });
         }
-        
+        // --- End of Neon Logic ---
+
         // --- Step 3: Set Buildpacks ---
         await herokuApi.put(
           `/apps/${appName}/buildpack-installations`,
@@ -1569,11 +1593,10 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         const statusUrl = `/apps/${appName}/builds/${buildId}`;
         let buildStatus = 'pending';
         let currentPct = 0;
-        let buildProgressInterval; // Define interval here to be clearable in timeout
+        let buildProgressInterval;
 
         try {
             const BUILD_COMPLETION_TIMEOUT = 600 * 1000; // 10 minutes
-            
             const buildPromise = new Promise((resolve, reject) => {
                 const timeoutId = setTimeout(() => {
                     clearInterval(buildProgressInterval);
@@ -1582,7 +1605,6 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 
                 buildProgressInterval = setInterval(async () => {
                     try {
-                        // ❗️ FIX: Use herokuApi, not axios
                         const poll = await herokuApi.get(statusUrl, {
                             headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
                         });
@@ -1610,19 +1632,16 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                             }
                         }
                     } catch (error) {
-                        console.error(`Error polling build status for ${appName}:`, error.message);
                         clearInterval(buildProgressInterval);
                         clearTimeout(timeoutId);
                         reject(new Error(`Error polling build status: ${error.message}`));
                     }
-                }, 10000); // Poll every 10 seconds
+                }, 10000);
             });
-
-            await buildPromise; // Wait for the promise to resolve or reject
-
+            await buildPromise;
         } catch (err) {
             if (buildProgressInterval) clearInterval(buildProgressInterval);
-            throw err; // Re-throw the error to be caught by the main catch block
+            throw err; 
         }
 
         // --- Step 7: Handle Build Succeeded ---
@@ -1639,10 +1658,10 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                 `Restore successful! App *${escapeMarkdown(appName)}* has been redeployed.`,
                 { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' }
             );
-            if (userNotifyMsg) {
+            if (userNotifyMsg) { // Check if userNotifyMsg exists
                 await bot.editMessageText(`Your bot *${escapeMarkdown(appName)}* has been successfully restored and is starting!`, { chat_id: targetChatId, message_id: userNotifyMsg.message_id, parse_mode: 'Markdown' });
             }
-            return { success: true, newAppName: appName }; // Return for restoreall
+            return { success: true, newAppName: appName };
         }
 
         if (isFreeTrial) {
@@ -1682,58 +1701,64 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Paid'}`;
         await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
 
-        // --- Wait for Bot to Connect ---
-        const baseWaitingText = `Build successful! Waiting for bot to connect...`;
-        await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: targetChatId, message_id: userNotifyMsg.message_id, parse_mode: 'Markdown' });
-        userAnimateIntervalId = await animateMessage(targetChatId, userNotifyMsg.message_id, baseWaitingText);
-        
-        const appStatusPromise = new Promise((resolve, reject) => {
-            const STATUS_CHECK_TIMEOUT = 120 * 1000;
-            const timeoutId = setTimeout(() => {
-                const appPromise = appDeploymentPromises.get(appName); // ❗️ FIX: Use appName
-                if (appPromise) {
-                    appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
-                }
-            }, STATUS_CHECK_TIMEOUT);
-            // ❗️ FIX: Use appName
-            appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId: userAnimateIntervalId, timeoutId });
-        });
+        // --- ❗️ NEW, FIXED "Wait for Connect" Logic ❗️ ---
+        // Only run this block if the user is NOT the admin.
+        if (userNotifyMsg) {
+            const baseWaitingText = `Build successful! Waiting for bot to connect...`;
+            await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: targetChatId, message_id: userNotifyMsg.message_id, parse_mode: 'Markdown' });
+            userAnimateIntervalId = await animateMessage(targetChatId, userNotifyMsg.message_id, baseWaitingText);
+            
+            const appStatusPromise = new Promise((resolve, reject) => {
+                const STATUS_CHECK_TIMEOUT = 120 * 1000;
+                const timeoutId = setTimeout(() => {
+                    const appPromise = appDeploymentPromises.get(appName);
+                    if (appPromise) {
+                        appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
+                    }
+                }, STATUS_CHECK_TIMEOUT);
+                appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId: userAnimateIntervalId, timeoutId });
+            });
 
-        try {
-            await appStatusPromise;
-            const promiseData = appDeploymentPromises.get(appName); // ❗️ FIX: Use appName
-            if (promiseData) {
-               clearTimeout(promiseData.timeoutId);
-               clearInterval(promiseData.animateIntervalId);
-            }
-            await bot.editMessageText(
-                `Your bot *${escapeMarkdown(appName)}* is now live!\n\nBackup your app for future reference.`,
-                {
-                    chat_id: targetChatId,
-                    message_id: userNotifyMsg.message_id,
-                    parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: [[{ text: `Backup "${appName}"`, callback_data: `backup_app:${appName}` }]] }
+            try {
+                await appStatusPromise;
+                const promiseData = appDeploymentPromises.get(appName);
+                if (promiseData) {
+                   clearTimeout(promiseData.timeoutId);
+                   clearInterval(promiseData.animateIntervalId);
                 }
-            );
-            buildResult = true;
-        } catch (err) {
-            const promiseData = appDeploymentPromises.get(appName); // ❗️ FIX: Use appName
-            if (promiseData) {
-                clearInterval(promiseData.animateIntervalId);
-                clearTimeout(promiseData.timeoutId);
-            }
-            await bot.editMessageText(
-                `Bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
-                {
-                    chat_id: targetChatId,
-                    message_id: userNotifyMsg.message_id,
-                    parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
+                await bot.editMessageText(
+                    `Your bot *${escapeMarkdown(appName)}* is now live!\n\nBackup your app for future reference.`,
+                    {
+                        chat_id: targetChatId,
+                        message_id: userNotifyMsg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: [[{ text: `Backup "${appName}"`, callback_data: `backup_app:${appName}` }]] }
+                    }
+                );
+                buildResult = true;
+            } catch (err) {
+                const promiseData = appDeploymentPromises.get(appName);
+                if (promiseData) {
+                    clearInterval(promiseData.animateIntervalId);
+                    clearTimeout(promiseData.timeoutId);
                 }
-            );
-            buildResult = false;
-        } finally {
-            appDeploymentPromises.delete(appName); // ❗️ FIX: Use appName
+                await bot.editMessageText(
+                    `Bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
+                    {
+                        chat_id: targetChatId,
+                        message_id: userNotifyMsg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
+                    }
+                );
+                buildResult = false;
+            } finally {
+                appDeploymentPromises.delete(appName);
+            }
+        } else {
+            // The user IS the admin, so we don't need to do the "wait for connect" logic.
+            // The admin can see the build status and the bot connecting in the channel.
+            buildResult = true; 
         }
 
     } catch (error) {
@@ -1743,6 +1768,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         if (buildMsg) {
             await bot.editMessageText(`Build failed for *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
         }
+        // ❗️ FIX: Check if userNotifyMsg exists before trying to edit it
         if (userNotifyMsg) {
             await bot.editMessageText(`Your bot *${escapeMarkdown(appName)}* failed to deploy.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: targetChatId, message_id: userNotifyMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
         }
@@ -1750,7 +1776,8 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     }
     
     return buildResult;
-} 
+}
+        
 
 
 module.exports = {
