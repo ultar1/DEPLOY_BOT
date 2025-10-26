@@ -7066,108 +7066,6 @@ bot.on('callback_query', async q => {
     // from the callbackQuery object.
     const data = callbackQuery.data;
     const msg = callbackQuery.message;
-    // ---------------------
-
-    // Now your existing code will work perfectly:
-
-    // --- Handler for Cancelling Deletion ---
-    if (data === 'cancel_del_logout') {
-        await bot.answerCallbackQuery(callbackQuery.id);
-        await bot.editMessageText("Logged-out bot purge has been cancelled.", {
-            chat_id: msg.chat.id, // This now works
-            message_id: msg.message_id, // This now works
-            reply_markup: null
-        });
-        return;
-    }
-
-    // --- Handler for Confirming Deletion ---
-    if (data === 'confirm_del_logout') {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: "Starting purge..." });
-
-        const adminId = msg.chat.id; // This now works
-        const adminMsg = await bot.editMessageText("Fetching bot list... Starting purge...", {
-            chat_id: adminId,
-            message_id: msg.message_id, // This now works
-            reply_markup: null
-        });
-
-        // Get the list of bots again to be safe
-        const botsToDelete = await dbServices.getLoggedOutBots();
-        const totalBots = botsToDelete.length;
-        
-        if (totalBots === 0) {
-             return bot.editMessageText("No logged-out bots found to delete.", {
-                chat_id: adminId,
-                message_id: adminMsg.message_id
-            });
-        }
-
-        let log = `*Purge Log (Total: ${totalBots})*\n\n`;
-        let successCount = 0;
-        let failCount = 0;
-
-        for (let i = 0; i < totalBots; i++) {
-            const botInfo = botsToDelete[i];
-            const { user_id, app_name } = botInfo;
-
-            // 1. Update admin log to show "in progress"
-            const currentTask = `(${i + 1}/${totalBots}) Deleting *${escapeMarkdown(app_name)}*... ⏳`;
-            await bot.editMessageText(log + currentTask, { 
-                chat_id: adminId, 
-                message_id: adminMsg.message_id, 
-                parse_mode: 'Markdown' 
-            }).catch(() => {});
-
-            try {
-                // 2. Delete from Heroku
-                console.log(`[Purge] Deleting Heroku app: ${app_name}`);
-                await herokuApi.delete(`https://api.heroku.com/apps/${app_name}`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                }).catch(e => {
-                    if (e.response && e.response.status !== 404) {
-                        console.error(`[Purge] Heroku delete error for ${app_name}: ${e.message}`);
-                    }
-                    // Ignore 404 "not found" errors
-                });
-
-                // 3. Delete from Neon
-                console.log(`[Purge] Deleting Neon database: ${app_name}`);
-                // This function is already safe and handles 404s
-                await dbServices.deleteNeonDatabase(app_name); 
-
-                // 4. Update log with success
-                successCount++;
-                log += `(${i + 1}/${totalBots}) *${escapeMarkdown(app_name)}*... *PURGED*\n`;
-
-            } catch (error) {
-                failCount++;
-                log += `(${i + 1}/${totalBots}) *${escapeMarkdown(app_name)}*... *FAILED*: ${escapeMarkdown(error.message)}\n`;
-                console.error(`[Purge] Critical failure for ${app_name}: ${error.message}`);
-            }
-
-            // 6. Update the message with the result for this bot
-            await bot.editMessageText(log, { 
-                chat_id: adminId, 
-                message_id: adminMsg.message_id, 
-                parse_mode: 'Markdown' 
-            }).catch(() => {});
-        }
-
-        // --- Send final summary ---
-        log += `\n--- Purge Complete ---\n*Success:* ${successCount}\n*Failed:* ${failCount}`;
-        await bot.editMessageText(log, { 
-            chat_id: adminId, 
-            message_id: adminMsg.message_id, 
-            parse_mode: 'Markdown' 
-        });
-        
-        return;
-    }
-
-    // --- Add other 'if (data === ...)' blocks here ---
-
-});
 
   const st = userStates[cid];
   // IMPORTANT: Ban check before any other logic for non-admin users
@@ -8604,6 +8502,106 @@ if (action === 'use_suggested_name') {
     });
     return;
 }
+
+
+    // --- Handler for Cancelling Deletion ---
+    if (action === 'cancel_del_logout') { // Now checking 'action'
+        await bot.answerCallbackQuery(callbackQuery.id);
+        await bot.editMessageText("Logged-out bot purge has been cancelled.", {
+            chat_id: msg.chat.id,
+            message_id: msg.message_id,
+            reply_markup: null
+        });
+        return;
+    }
+
+    // --- Handler for Confirming Deletion ---
+    if (action === 'confirm_del_logout') { // Now checking 'action'
+        await bot.answerCallbackQuery(callbackQuery.id, { text: "Starting purge..." });
+
+        const adminId = msg.chat.id;
+        const adminMsg = await bot.editMessageText("Fetching bot list... Starting purge...", {
+            chat_id: adminId,
+            message_id: msg.message_id,
+            reply_markup: null
+        });
+
+        // Get the list of bots again to be safe
+        const botsToDelete = await dbServices.getLoggedOutBots();
+        const totalBots = botsToDelete.length;
+        
+        if (totalBots === 0) {
+             return bot.editMessageText("No logged-out bots found to delete.", {
+                chat_id: adminId,
+                message_id: adminMsg.message_id
+            });
+        }
+
+        let log = `*Purge Log (Total: ${totalBots})*\n\n`;
+        let successCount = 0;
+        let failCount = 0;
+
+        for (let i = 0; i < totalBots; i++) {
+            const botInfo = botsToDelete[i];
+            const { user_id, app_name } = botInfo;
+
+            // 1. Update admin log to show "in progress"
+            const currentTask = `(${i + 1}/${totalBots}) Deleting *${escapeMarkdown(app_name)}*... ⏳`;
+            await bot.editMessageText(log + currentTask, { 
+                chat_id: adminId, 
+                message_id: adminMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }).catch(() => {});
+
+            try {
+                // 2. Delete from Heroku
+                console.log(`[Purge] Deleting Heroku app: ${app_name}`);
+                await herokuApi.delete(`https://api.heroku.com/apps/${app_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                }).catch(e => {
+                    if (e.response && e.response.status !== 404) {
+                        console.error(`[Purge] Heroku delete error for ${app_name}: ${e.message}`);
+                    }
+                    // Ignore 404 "not found" errors
+                });
+
+                // 3. Delete from Neon
+                console.log(`[Purge] Deleting Neon database: ${app_name}`);
+                // This function is already safe and handles 404s
+                await dbServices.deleteNeonDatabase(app_name); 
+
+                // 4. Update log with success
+                successCount++;
+                log += `(${i + 1}/${totalBots}) *${escapeMarkdown(app_name)}*... *PURGED*\n`;
+
+            } catch (error) {
+                failCount++;
+                log += `(${i + 1}/${totalBots}) *${escapeMarkdown(app_name)}*... *FAILED*: ${escapeMarkdown(error.message)}\n`;
+                console.error(`[Purge] Critical failure for ${app_name}: ${error.message}`);
+            }
+
+            // 6. Update the message with the result for this bot
+            await bot.editMessageText(log, { 
+                chat_id: adminId, 
+                message_id: adminMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }).catch(() => {});
+        }
+
+        // --- Send final summary ---
+        log += `\n--- Purge Complete ---\n*Success:* ${successCount}\n*Failed:* ${failCount}`;
+        await bot.editMessageText(log, { 
+            chat_id: adminId, 
+            message_id: adminMsg.message_id, 
+            parse_mode: 'Markdown' 
+        });
+        
+        return;
+    }
+
+    // --- You can add other 'if (action === ...)' blocks here ---
+
+});
 
 
   // --- ADD this new block ---
