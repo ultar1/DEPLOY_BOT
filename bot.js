@@ -8616,9 +8616,6 @@ if (action === 'levanter_wa_fallback') {
         }
     };
 
-    // 2. Acknowledge the button press
-    await bot.answerCallbackQuery(q.id);
-    
     // 3. Edit the message to ask for the number and remove the old buttons.
     await bot.editMessageText(
         'Okay, please send your WhatsApp number now in the full international format (e.g., `+23491630000000`).', 
@@ -8632,7 +8629,6 @@ if (action === 'levanter_wa_fallback') {
     return;
 }
 
-// In bot.js, inside bot.on('callback_query', ...)
 
 if (action === 'neon_del_confirm') {
     const dbName = payload;
