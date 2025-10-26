@@ -9291,7 +9291,7 @@ if (action === 'confirm_session_update') {
   // This goes inside your main bot.on('callback_query', async (callbackQuery) => { ... })
 
     // --- Handler for Cancelling Deletion ---
-    if (action === 'cancel_del_logout') {
+    if (data === 'cancel_del_logout') {
         await bot.answerCallbackQuery(callbackQuery.id);
         await bot.editMessageText("Logged-out bot purge has been cancelled.", {
             chat_id: msg.chat.id,
@@ -9302,7 +9302,7 @@ if (action === 'confirm_session_update') {
     }
 
     // --- Handler for Confirming Deletion ---
-    if (action === 'confirm_del_logout') {
+    if (data === 'confirm_del_logout') {
         await bot.answerCallbackQuery(callbackQuery.id, { text: "Starting purge..." });
 
         const adminId = msg.chat.id;
