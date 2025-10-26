@@ -1632,8 +1632,6 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
 }
 
 
-// In bot.js
-// ❗️ REPLACE your handleRestoreAllConfirm function with this:
 async function handleRestoreAllConfirm(query) {
     const adminId = query.message.chat.id;
     const botType = query.data.split(':')[1];
@@ -1650,37 +1648,48 @@ async function handleRestoreAllConfirm(query) {
     const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
     let successCount = 0;
     let failureCount = 0;
-    let progressLog = [];
+    let progressLog = [`*Starting restore for ${deployments.length} ${botType} bots...*\n`];
 
     for (const [index, deployment] of deployments.entries()) {
         const originalAppName = deployment.app_name;
         const originalOwnerId = deployment.user_id;
         
-        progressLog.push(`**Processing ${index + 1}/${deployments.length}:** \`${originalAppName}\``);
-        await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+        // --- THIS IS THE NEW LOGIC YOU WANTED ---
+        // 1. Set the "in-progress" line for the current bot
+        const currentTask = `**(${index + 1}/${deployments.length})** Restoring \`${originalAppName}\` for \`${originalOwnerId}\`... ⏳`;
+        await bot.editMessageText(progressLog.join('\n') + "\n" + currentTask, { 
+            chat_id: adminId, 
+            message_id: progressMsg.message_id, 
+            parse_mode: 'Markdown' 
+        }).catch(()=>{}); // Ignore "message not modified"
         
         try {
-            // --- Phase 1: Restore the App and Settings ---
-            const buildResult = await dbServices.buildWithProgress(originalOwnerId, deployment.config_vars, false, true, botType, deployment.referred_by, deployment.ip_address);
+            // --- Phase 1: Call the NEW silent restore function ---
+            const buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
             
             if (!buildResult.success) {
-                throw new Error("App build process failed or timed out.");
+                // Throw the specific error from the silent function
+                throw new Error(buildResult.error || "App build process failed or timed out.");
             }
 
-            const newAppName = buildResult.newAppName;
-            progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
+            // 2. Update the log with the "success" line
+            const newAppName = buildResult.appName; // Use .appName from silent function
+            progressLog.push(`**(${index + 1}/${deployments.length})** \`${newAppName}\`... ✅ *Success*`);
             successCount++;
 
         } catch (error) {
             failureCount++;
-            const errorMsg = error.response?.data?.message || error.message;
+            const errorMsg = error.message; // Use the error message from the throw
             console.error(`[RestoreAll] CRITICAL ERROR while restoring ${originalAppName}:`, errorMsg);
-            progressLog.push(`   **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
+            
+            // 2. Update the log with the "failure" line
+            progressLog.push(`**(${index + 1}/${deployments.length})** \`${originalAppName}\`... ❌ *Failed*: ${String(errorMsg).substring(0, 100)}...`);
         }
     }
     
+    // --- Send final summary log ---
     await bot.editMessageText(
-        `**Bot Restoration Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.slice(-10).join('\n')}`, 
+        `**Bot Restoration Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.join('\n')}`, 
         { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
     );
 
@@ -1713,6 +1722,7 @@ async function handleRestoreAllConfirm(query) {
         }
     }
 }
+
 
 
 
