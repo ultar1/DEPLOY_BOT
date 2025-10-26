@@ -1529,6 +1529,7 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
 }
 
 
+// In bot.js, REPLACE this entire function
 async function runBackupAllTask(adminId, initialMessageId = null) {
     console.log('[Backup Task] Starting execution...');
     
@@ -1536,10 +1537,11 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
     if (initialMessageId) {
         progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
     } else {
-        progressMsg = await bot.sendMessage(adminId, '**Starting Bot Settings Backup...**', { parse_mode: 'Markdown' });
+        // Send plain text, no parse_mode
+        progressMsg = await bot.sendMessage(adminId, 'Starting Bot Settings Backup...');
     }
 
-    let backupSuccess = true; // Assume success unless a failure occurs
+    let backupSuccess = true;
     let failCount = 0;
     try {
         const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
@@ -1548,8 +1550,9 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
         for (const [index, botInfo] of allBots.entries()) {
             const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up settings for *${escapeMarkdown(appName)}*...`, {
-                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+            // Send plain text, no parse_mode
+            await bot.editMessageText(`Progress: (${index + 1}/${allBots.length})\n\nBacking up settings for ${appName}...`, {
+                chat_id: adminId, message_id: progressMsg.message_id
             }).catch(() => {});
 
             try {
@@ -1562,19 +1565,22 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
                     console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
                     await dbServices.deleteUserBot(ownerId, appName);
                     await dbServices.markDeploymentDeletedFromHeroku(ownerId, appName);
-                    await bot.sendMessage(adminId, `Bot *${escapeMarkdown(appName)}* not found on Heroku. Records cleaned.`, { parse_mode: 'Markdown' });
+                    // Send plain text, no parse_mode
+                    await bot.sendMessage(adminId, `Bot ${appName} not found on Heroku. Records cleaned.`);
                 } else {
                     failCount++;
                     const errorMsg = error.response?.data?.message || error.message;
                     console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
-                    await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
+                    // Send plain text, no parse_mode
+                    await bot.sendMessage(adminId, `Failed to back up ${appName}.\nReason: ${String(errorMsg).substring(0, 200)}`);
                 }
             }
         } // End of loop
 
+        // Send plain text, no parse_mode
         await bot.editMessageText(
-            `**Bot Settings Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nBot configurations (including DATABASE_URL) are saved.`,
-            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+            `Bot Settings Backup Complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}\n\nBot configurations (including DATABASE_URL) are saved.`,
+            { chat_id: adminId, message_id: progressMsg.message_id }
         );
         
         if (failCount > 0) {
@@ -1583,21 +1589,24 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
 
     } catch (error) {
         console.error('[Backup Task] Critical error during /backupall:', error);
-        await bot.editMessageText(`**A critical error occurred during backup:**\n\n${escapeMarkdown(error.message)}`, {
-            chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+        // Send plain text, no parse_mode
+        await bot.editMessageText(`A critical error occurred during backup:\n\n${error.message}`, {
+            chat_id: adminId, message_id: progressMsg.message_id
         });
         backupSuccess = false;
     }
 
     // --- PHASE 2: Automatically Run /copydb ---
     if (backupSuccess) {
-        await bot.sendMessage(adminId, "**Starting Phase 2:** Automatically copying main database to backup database...");
+        // Send plain text, no parse_mode
+        await bot.sendMessage(adminId, "Starting Phase 2: Automatically copying main database to backup database...");
         try {
             await runCopyDbTask(); // This is the core logic function for /copydb
-            await bot.sendMessage(adminId, "**Full System Maintenance Complete!**\n\nAll bot settings and the main database copy are finished.");
+            await bot.sendMessage(adminId, "Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.");
         } catch (copyError) {
             console.error("Error during automated /copydb task:", copyError);
-            await bot.sendMessage(adminId, `**Bot backup was successful, but the final /copydb task failed.**\n\n*Reason:* ${escapeMarkdown(copyError.message)}`);
+            // Send plain text, no parse_mode
+            await bot.sendMessage(adminId, `Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`);
         }
     } else {
          await bot.sendMessage(adminId, "Main database copy was skipped because errors occurred during the bot backup phase.");
