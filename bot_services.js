@@ -356,16 +356,17 @@ async function getExpiredBackups() {
 }
 
 
+
 // === Backup, Restore, and Sync Functions ===
 
-async function getAllUserBots() {
+async function getUserBots() {
     try {
         const r = await pool.query('SELECT user_id, bot_name, bot_type FROM user_bots ORDER BY created_at');
         console.log(`[DB] getAllUserBots: Fetched ${r.rows.length} bots with their types.`);
         return r.rows;
     }
     catch (error) {
-        console.error('[DB] getAllUserBots: Failed to get all user bots:', error.message);
+        console.error('[DB] getUserBots: Failed to get all user bots:', error.message);
         return [];
     }
 }
@@ -1162,7 +1163,6 @@ module.exports = {
     addUserBot,
     getUserBots,
     getUserIdByBotName,
-    getAllUserBots,
     getExpiringBots,
     getUserBotCount,
     getBotNameBySessionId,
