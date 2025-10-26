@@ -10188,17 +10188,40 @@ if (action === 'info') {
         return;
     }
 
-    await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+    // --- Updated "Deleting" message ---
+    await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" ...`, { 
+        chat_id: cid, 
+        message_id: messageId, 
+        parse_mode: 'Markdown' 
+    });
+
     try {
+        // 1. Delete from Heroku
         await herokuApi.delete(`https://api.heroku.com/apps/${appToDelete}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
+
+        // 2. ✅ NEW: Delete from Neon
+        console.log(`[ConfirmDelete] Deleting associated Neon database: ${appToDelete}`);
+        const deleteResult = await deleteNeonDatabase(appToDelete); 
+        if (!deleteResult.success) {
+            // Log the error, but continue deleting from our local DB
+            console.error(`[ConfirmDelete] Failed to delete Neon database ${appToDelete}: ${deleteResult.error}`);
+        }
+
+        // 3. Clean up local database
         const ownerId = await dbServices.getUserIdByBotName(appToDelete);
         if (ownerId) {
             await dbServices.deleteUserBot(ownerId, appToDelete);
             await dbServices.markDeploymentDeletedFromHeroku(ownerId, appToDelete);
         }
-        await bot.editMessageText(`App "*${escapeMarkdown(appToDelete)}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+
+        // --- Updated success message ---
+        await bot.editMessageText(`App "*${escapeMarkdown(appToDelete)}*" has been permanently deleted.`, { 
+            chat_id: cid, 
+            message_id: messageId, 
+            parse_mode: 'Markdown' 
+        });
 
         if (originalAction === 'userdelete') {
             // This is the flow for a regular user
@@ -10218,16 +10241,28 @@ if (action === 'info') {
             }
         } else {
             // This is the flow for an admin deleting from the main list.
-            // We add an extra check to be safe.
             if (cid === ADMIN_ID) {
                 await dbServices.sendAppList(cid, messageId);
             }
         }
     } catch (e) {
+        // This catch block handles Heroku errors (like 404)
         if (e.response && e.response.status === 404) {
+            // App was already gone from Heroku, but we should still clean up Neon and our DB
+            
+            // ✅ NEW: Add Neon deletion to the 404 handler
+            console.log(`[ConfirmDelete-404] Heroku app not found, deleting Neon DB: ${appToDelete}`);
+            const deleteResult = await deleteNeonDatabase(appToDelete); 
+            if (!deleteResult.success) {
+                console.error(`[ConfirmDelete-404] Failed to delete Neon database ${appToDelete}: ${deleteResult.error}`);
+            }
+
+            // Call your existing 404 handler
             await dbServices.handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete');
             return;
         }
+
+        // Handle other errors
         const errorMsg = e.response?.data?.message || e.message;
         await bot.editMessageText(`Failed to delete app "*${escapeMarkdown(appToDelete)}*": ${escapeMarkdown(errorMsg)}`, {
             chat_id: cid,
@@ -10242,6 +10277,7 @@ if (action === 'info') {
     }
     return;
 }
+
 
 
   if (action === 'canceldelete') {
