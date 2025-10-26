@@ -210,6 +210,27 @@ async function getAllBotDeployments() {
 }
 
 
+/**
+ * Fetches all bots marked as 'logged_out' from the database.
+ * @returns {Promise<Array<{user_id: string, app_name: string}>>}
+ */
+async function getLoggedOutBots() {
+    try {
+        // We select 'bot_name' and rename it to 'app_name' for consistency
+        const result = await pool.query(
+            `SELECT user_id, bot_name AS app_name 
+             FROM user_bots 
+             WHERE status = 'logged_out';`
+        );
+        console.log(`[DB] Found ${result.rows.length} logged-out bots.`);
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB] Failed to get logged-out bots:`, error.message);
+        return [];
+    }
+}
+
+
 
 async function syncDatabaseWithHeroku() {
     console.log('[Sync] Starting full database synchronization with Heroku...');
@@ -2000,6 +2021,7 @@ module.exports = {
     updateUserActivity,
     getUserLastSeen,
     getAllBotDeployments,
+    getLoggedOutBots,
     isUserBanned,
     restoreHerokuDbFromRenderSchema,
     banUser,
