@@ -1039,26 +1039,33 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
 
 // 6) Utilities (some are passed to other modules)
 
-// In bot.js
-// ❗️ REPLACE your old, broken escapeMarkdown function with this one ❗️
-
-/**
- * Correctly escapes text for Telegram's MarkdownV2 parse_mode.
- * @param {string} text The text to escape.
- * @returns {string} The escaped text.
- */
+// Function to escape Markdown V2 special characters
 function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // This regex matches all 17 reserved characters for MarkdownV2
-    const escapeChars = /[_*[\]()~`>#+\-=|{}.!]/g;
-    
-    // ❗️ FIX: The replacement string MUST be '\\$1'
-    // This adds a literal backslash before the matched character.
-    return text.replace(escapeChars, '\\$1');
+    // Escape all special Markdown v2 characters: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
+    // Only escape if not part of a known URL or if it's explicitly used as a markdown character
+    return text
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/`/g, '\\`')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/!/g, '\\!');
 }
-
 
 // A reusable function to format a concise countdown string for button lists.
 function formatTimeLeft(expirationDateStr) {
