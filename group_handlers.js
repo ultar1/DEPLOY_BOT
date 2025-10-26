@@ -1,24 +1,23 @@
 /**
- * group_handlers.js (V3 - Cleaned)
- * * Contains all group moderation features (timed mutes, /gpt, stats, kick)
- * * All deployment-service features have been REMOVED.
+ * group_handlers.js (V4)
+ * * All deployment-service features REMOVED.
+ * * NEW: Admin/GPT commands are auto-deleted.
+ * * NEW: Bot replies to commands self-destruct after 5 minutes.
+ * * NEW: Admin commands support targeting by User ID (e.g., /kick 123456789)
  */
 
 // --- Configuration ---
 const WARN_LIMIT = 3; // How many warnings before a user is auto-kicked.
-const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000; // 6 months in milliseconds for inactivity
+const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000; // 6 months in milliseconds
 let callGemini; // This will be set by the main bot file
 
 // --- Helper Functions ---
 
 /**
  * Parses a duration string (e.g., "5m", "1h", "3d") into a UNIX timestamp.
- * @param {string} durationStr - The duration string.
- * @returns {number|null} - The UNIX timestamp (in seconds) for when the mute ends, or null.
  */
 const parseDuration = (durationStr) => {
     if (!durationStr) return null;
-    
     const match = durationStr.match(/^(\d+)([mhd])$/);
     if (!match) return null;
 
@@ -48,9 +47,9 @@ const isAdmin = async (bot, chatId, userId) => {
 };
 
 /**
- * A helper to quickly send and delete a reply message.
+ * A helper to quickly send and delete an ERROR message (lasts 5 seconds).
  */
-const sendTempMessage = (bot, chatId, text, replyToMessageId, duration = 3000) => {
+const sendTempMessage = (bot, chatId, text, replyToMessageId, duration = 5000) => {
     bot.sendMessage(chatId, text, { reply_to_message_id: replyToMessageId })
         .then(msg => {
             setTimeout(() => {
@@ -59,29 +58,68 @@ const sendTempMessage = (bot, chatId, text, replyToMessageId, duration = 3000) =
         }).catch(() => {});
 };
 
-// --- Main Registration Function ---
+/**
+ * NEW: A helper to send a SUCCESS message that self-destructs after 5 minutes.
+ */
+const sendSelfDestructingMessage = (bot, chatId, text, replyToMessageId) => {
+    const duration = 300000; // 5 minutes
+    bot.sendMessage(chatId, text, { reply_to_message_id: replyToMessageId })
+        .then(msg => {
+            setTimeout(() => {
+                bot.deleteMessage(chatId, msg.message_id).catch(() => {});
+            }, duration);
+        }).catch(() => {});
+};
 
 /**
- * Registers all group-related event handlers.
- * @param {TelegramBot} bot - The main bot instance.
- * @param {Object} dbServices - Your database services object.
- * @param {Function} geminiFunction - The function from your main file to call the Gemini API.
+ * NEW: Gets the target user from a command, either by reply or by User ID.
+ * @returns {object} - { id: "123", name: "John", isReply: true } or { error: "..." }
  */
+const getTarget = async (bot, msg, args) => {
+    const chatId = msg.chat.id;
+
+    // 1. By Reply
+    if (msg.reply_to_message) {
+        return {
+            id: msg.reply_to_message.from.id,
+            name: msg.reply_to_message.from.first_name,
+            isReply: true
+        };
+    }
+    
+    // 2. By User ID (as second argument)
+    const targetArg = args[1];
+    if (targetArg && /^\d{5,}$/.test(targetArg)) { // Check for a numeric ID
+        try {
+            const member = await bot.getChatMember(chatId, targetArg);
+            return {
+                id: member.user.id,
+                name: member.user.first_name,
+                isReply: false
+            };
+        } catch (e) {
+            return { error: "Could not find user with that ID." };
+        }
+    }
+    
+    // 3. No target found
+    return { error: "Please reply to a user or provide their User ID as the first argument." };
+};
+
+
+// --- Main Registration Function ---
+
 function registerGroupHandlers(bot, dbServices, geminiFunction) {
     
-    // Connect the Gemini function
     callGemini = geminiFunction;
 
-    // --- 1. Welcome New Members ---
     bot.on('new_chat_members', async (msg) => {
         const chatId = msg.chat.id;
-        const newMembers = msg.new_chat_members;
-
-        for (const member of newMembers) {
+        for (const member of msg.new_chat_members) {
             if (member.is_bot) continue; 
-            
             const welcomeMessage = `Hello ${member.first_name}, welcome to the group!`;
             try {
+                // This welcome message can stay
                 await bot.sendMessage(chatId, welcomeMessage);
             } catch (error) {
                 console.error(`Failed to send welcome message: ${error.message}`);
@@ -89,23 +127,20 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
         }
     });
 
-    // --- 2. Handle Members Leaving ---
     bot.on('left_chat_member', async (msg) => {
         const chatId = msg.chat.id;
         const member = msg.left_chat_member;
         if (member.is_bot) return;
-        
         const goodbyeMessage = `Goodbye, ${member.first_name}.`;
         try {
+            // This goodbye message can stay
             await bot.sendMessage(chatId, goodbyeMessage);
         } catch (error) {
             console.error(`Failed to send goodbye message: ${error.message}`);
         }
     });
 
-    // --- 3. Handle ALL Group Messages (for Stats and Commands) ---
     bot.on('message', async (msg) => {
-        // Ignore messages that aren't from a group or supergroup
         if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') {
             return;
         }
@@ -116,9 +151,7 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
         const fromName = msg.from.first_name;
         const timestamp = msg.date;
 
-        // --- User Activity Logging (FOR /stats and /kick_inactive) ---
         if (!text.startsWith('/') && dbServices.logUserActivity) {
-            // Log activity for any non-command message
             try {
                 await dbServices.logUserActivity(fromId, chatId, fromName, timestamp);
             } catch (error) {
@@ -126,34 +159,30 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
             }
         }
 
-        // --- Command Processing ---
         if (!text.startsWith('/')) {
-            return; // Not a command, stop here
+            return;
         }
 
         const args = text.split(' ');
-        const command = args[0].split('@')[0]; // Gets /command from /command@botname
+        const command = args[0].split('@')[0];
         const reply = msg.reply_to_message;
 
-        // --- Admin & Reply Checks ---
         const needsAdmin = ['/mute', '/unmute', '/kick', '/ban', '/unban', '/warn', '/pin', '/unpin', '/del', '/kick_inactive'];
-        const needsReply = ['/mute', '/unmute', '/kick', '/ban', '/unban', '/warn', '/pin', '/unpin', '/del'];
-        
+        const commandNeedsTarget = ['/mute', '/unmute', '/kick', '/ban', '/unban', '/warn'];
+        const commandShouldBeDeleted = [...needsAdmin, '/gpt'];
+
+        // --- Permission & Deletion Logic ---
         if (needsAdmin.includes(command)) {
             const userIsAdmin = await isAdmin(bot, chatId, fromId);
             if (!userIsAdmin) {
-                return sendTempMessage(bot, chatId, "You don't have permission to do that.", msg.message_id);
+                sendTempMessage(bot, chatId, "You don't have permission to do that.", msg.message_id);
+                bot.deleteMessage(chatId, msg.message_id).catch(() => {}); // Delete unauthorized command
+                return;
             }
         }
         
-        if (needsReply.includes(command)) {
-            if (!reply) {
-                return sendTempMessage(bot, chatId, `Please reply to a user/message to use the ${command} command.`, msg.message_id);
-            }
-        }
-        
-        // Delete the admin command message to keep chat clean
-        if (needsAdmin.includes(command)) {
+        // NEW: Delete commands that should be deleted
+        if (commandShouldBeDeleted.includes(command)) {
             bot.deleteMessage(chatId, msg.message_id).catch(() => {});
         }
 
@@ -162,154 +191,182 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
             switch (command) {
                 // --- Mute (UPGRADED) ---
                 case '/mute': {
-                    const userId = reply.from.id;
-                    const durationStr = args[1]; // "5m", "1h", "3d"
+                    const target = await getTarget(bot, msg, args);
+                    if (target.error) {
+                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
+                    }
+                    
+                    const userId = target.id;
+                    const durationStr = target.isReply ? args[1] : args[2]; // Arg shifts
                     const until_date = parseDuration(durationStr);
                     
                     const permissions = { can_send_messages: false };
                     let muteMessage;
 
                     if (until_date) {
-                        // Timed mute
                         permissions.until_date = until_date;
-                        muteMessage = `${reply.from.first_name} has been muted for ${durationStr}.`;
+                        muteMessage = `${target.name} has been muted for ${durationStr}.`;
                     } else {
-                        // Permanent mute
-                        muteMessage = `${reply.from.first_name} has been muted permanently.`;
+                        muteMessage = `${target.name} has been muted permanently.`;
                     }
                     
                     await bot.restrictChatMember(chatId, userId, permissions);
-                    await bot.sendMessage(chatId, muteMessage);
+                    sendSelfDestructingMessage(bot, chatId, muteMessage, msg.message_id); // 5 min reply
                     break;
                 }
 
-                // --- Unmute ---
+                // --- Unmute (UPGRADED) ---
                 case '/unmute': {
-                    const userId = reply.from.id;
-                    await bot.restrictChatMember(chatId, userId, {
+                    const target = await getTarget(bot, msg, args);
+                    if (target.error) {
+                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
+                    }
+
+                    await bot.restrictChatMember(chatId, target.id, {
                         can_send_messages: true,
                         can_send_media_messages: true,
                         can_send_other_messages: true,
                         can_add_web_page_previews: true
                     });
-                    await bot.sendMessage(chatId, `${reply.from.first_name} has been unmuted.`);
+                    sendSelfDestructingMessage(bot, chatId, `${target.name} has been unmuted.`, msg.message_id);
                     break;
                 }
 
-                // --- Kick (Ban + Unban) ---
+                // --- Kick (UPGRADED) ---
                 case '/kick': {
-                    const userId = reply.from.id;
-                    const userName = reply.from.first_name;
-                    await bot.banChatMember(chatId, userId); // Kicks them
-                    await bot.unbanChatMember(chatId, userId); // Immediately unbans, so they can re-join
-                    await bot.sendMessage(chatId, `${userName} has been kicked.`);
+                    const target = await getTarget(bot, msg, args);
+                    if (target.error) {
+                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
+                    }
+                    
+                    await bot.banChatMember(chatId, target.id);
+                    await bot.unbanChatMember(chatId, target.id);
+                    sendSelfDestructingMessage(bot, chatId, `${target.name} has been kicked.`, msg.message_id);
                     break;
                 }
 
-                // --- Ban (Permanent) ---
+                // --- Ban (UPGRADED) ---
                 case '/ban': {
-                    const userId = reply.from.id;
-                    const userName = reply.from.first_name;
-                    await bot.banChatMember(chatId, userId);
-                    await bot.sendMessage(chatId, `${userName} has been permanently banned.`);
+                    const target = await getTarget(bot, msg, args);
+                    if (target.error) {
+                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
+                    }
+
+                    await bot.banChatMember(chatId, target.id);
+                    sendSelfDestructingMessage(bot, chatId, `${target.name} has been permanently banned.`, msg.message_id);
                     break;
                 }
 
-                // --- Unban ---
+                // --- Unban (UPGRADED) ---
                 case '/unban': {
-                    const userId = reply.from.id;
-                    const userName = reply.from.first_name;
-                    await bot.unbanChatMember(chatId, userId);
-                    await bot.sendMessage(chatId, `${userName} has been unbanned and can re-join.`);
+                    const target = await getTarget(bot, msg, args);
+                    if (target.error) {
+                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
+                    }
+
+                    await bot.unbanChatMember(chatId, target.id);
+                    sendSelfDestructingMessage(bot, chatId, `${target.name} has been unbanned and can re-join.`, msg.message_id);
                     break;
                 }
                 
-                // --- Delete Message ---
+                // --- Delete Message (Requires Reply) ---
                 case '/del': {
-                    await bot.deleteMessage(chatId, reply.message_id);
+                    if (!reply) {
+                        return sendTempMessage(bot, chatId, `Please reply to a message to use the ${command} command.`, msg.message_id);
+                    }
+                    await bot.deleteMessage(chatId, reply.message_id).catch(() => {});
                     sendTempMessage(bot, chatId, "Message deleted.", msg.message_id, 2000);
                     break;
                 }
 
-                // --- Pin Message ---
+                // --- Pin Message (Requires Reply) ---
                 case '/pin': {
+                    if (!reply) {
+                        return sendTempMessage(bot, chatId, `Please reply to a message to use the ${command} command.`, msg.message_id);
+                    }
                     await bot.pinChatMessage(chatId, reply.message_id, { disable_notification: false });
                     break;
                 }
 
-                // --- Unpin Message ---
+                // --- Unpin Message (Requires Reply) ---
                 case '/unpin': {
+                    if (!reply) {
+                        return sendTempMessage(bot, chatId, `Please reply to a message to use the ${command} command.`, msg.message_id);
+                    }
                     await bot.unpinChatMessage(chatId, { message_id: reply.message_id });
                     sendTempMessage(bot, chatId, "Message unpinned.", msg.message_id, 2000);
                     break;
                 }
 
-                // --- Warn User ---
+                // --- Warn User (UPGRADED) ---
                 case '/warn': {
                     if (!dbServices.addWarning) {
-                        return bot.sendMessage(chatId, "Error: Warning system not configured in dbServices.");
+                        return sendTempMessage(bot, chatId, "Error: Warning system not configured in dbServices.", msg.message_id);
                     }
                     
-                    const userId = reply.from.id;
-                    const userName = reply.from.first_name;
+                    const target = await getTarget(bot, msg, args);
+                    if (target.error) {
+                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
+                    }
                     
-                    const { newWarningCount } = await dbServices.addWarning(userId, chatId);
+                    const { newWarningCount } = await dbServices.addWarning(target.id, chatId);
 
                     if (newWarningCount >= WARN_LIMIT) {
-                        // Auto-kick
-                        await bot.banChatMember(chatId, userId);
-                        await bot.unbanChatMember(chatId, userId);
-                        await dbServices.clearWarnings(userId, chatId);
-                        await bot.sendMessage(chatId, `${userName} has been auto-kicked after receiving ${WARN_LIMIT} warnings.`);
+                        await bot.banChatMember(chatId, target.id);
+                        await bot.unbanChatMember(chatId, target.id);
+                        await dbServices.clearWarnings(target.id, chatId);
+                        sendSelfDestructingMessage(bot, chatId, `${target.name} has been auto-kicked after receiving ${WARN_LIMIT} warnings.`, msg.message_id);
                     } else {
-                        // Just send warning
-                        await bot.sendMessage(chatId, `${userName} has been warned. This is warning ${newWarningCount}/${WARN_LIMIT}.`);
+                        sendSelfDestructingMessage(bot, chatId, `${target.name} has been warned. This is warning ${newWarningCount}/${WARN_LIMIT}.`, msg.message_id);
                     }
                     break;
                 }
 
-                // --- GPT (NEW) ---
+                // --- GPT (UPGRADED) ---
                 case '/gpt': {
                     let question = '';
                     
                     if (reply) {
-                        // 1. Check for replied-to message
                         question = reply.text;
                     } else if (args.length > 1) {
-                        // 2. Check for text after /gpt
                         question = text.substring(command.length).trim();
                     } else {
-                        // 3. No question found
                         return sendTempMessage(bot, chatId, "Please reply to a message or type your question after /gpt.", msg.message_id);
                     }
 
                     if (!callGemini) {
-                        return bot.sendMessage(chatId, "Error: The AI module is not connected.", { reply_to_message_id: msg.message_id });
+                        return sendSelfDestructingMessage(bot, chatId, "Error: The AI module is not connected.", msg.message_id);
                     }
 
-                    // Show "Bot is thinking..."
+                    // Show "Thinking..." (and delete it after 5 mins)
                     const thinkingMsg = await bot.sendMessage(chatId, "Thinking...", { reply_to_message_id: msg.message_id });
+                    const thinkingMsgId = thinkingMsg.message_id;
+                    
+                    setTimeout(() => {
+                        bot.deleteMessage(chatId, thinkingMsgId).catch(() => {});
+                    }, 300000); // 5 minutes
 
                     try {
                         const answer = await callGemini(question);
+                        // Edit the "Thinking..." message to the final answer
                         await bot.editMessageText(answer, {
                             chat_id: chatId,
-                            message_id: thinkingMsg.message_id,
+                            message_id: thinkingMsgId,
                             parse_mode: 'Markdown'
                         });
                     } catch (error) {
                         await bot.editMessageText(`Sorry, I had trouble getting an answer. ${error.message}`, {
                             chat_id: chatId,
-                            message_id: thinkingMsg.message_id
+                            message_id: thinkingMsgId
                         });
                     }
                     break;
                 }
                 
-                // --- Stats (NEW) ---
+                // --- Stats (UPGRADED) ---
                 case '/stats': {
                     if (!dbServices.getChatStats) {
-                        return bot.sendMessage(chatId, "Error: Stats module not configured in dbServices.");
+                        return sendTempMessage(bot, chatId, "Error: Stats module not configured in dbServices.", msg.message_id);
                     }
                     
                     const inactiveTime = Date.now() - SIX_MONTHS_MS;
@@ -317,14 +374,37 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
                     
                     const statsMessage = `*Group Stats*\n\nActive (last 6 months): ${stats.activeCount}\nInactive (over 6 months): ${stats.inactiveCount}\n\n*Note:* I can only track users who have sent a message since I was added.`;
                     
-                    await bot.sendMessage(chatId, statsMessage, { parse_mode: 'Markdown' });
+                    sendSelfDestructingMessage(bot, chatId, statsMessage, { parse_mode: 'Markdown' });
                     break;
                 }
 
-                // --- Kick Inactive (NEW) ---
+                // --- Kick Inactive (UPGRADED) ---
                 case '/kick_inactive': {
                     if (!dbServices.getInactiveUsers) {
-                        return bot.sendMessage(chatId, "Error: Stats module not configured in dbServices.");
+                        return sendTempMessage(bot, chatId, "Error: Stats module not configured in dbServices.", msg.message_id);
+                    }
+                    
+                    const inactiveTime = Date.now() - SIX_MONTHS_MS;
+                    const inactiveUsers = await dbServices.getInactiveUsers(chatId, Math.floor(inactiveTime / 1000));
+
+                    if (inactiveUsers.length === 0) {
+                        return sendSelfDestructingMessage(bot, chatId, "No inactive users found to kick.", msg.message_id);
+                    }
+
+                    const statusMsg = await bot.sendMessage(chatId, `Found ${inactiveUsers.length} inactive users. Starting removal...`);
+                    
+                    let successCount = 0;
+                    let failCount = 0;
+
+                    for (const user of inactiveUsers) {
+                        try {
+                            await bot.banChatMember(chatId, user.user_id);
+                            await bot.unbanChatMember(chatId, user.user_id);
+                            successCount++;
+                        } catch (error) {
+                            failCount++;
+                            console.error(`Failed to kick ${user.user_name}: ${error.message}`);
+                        }
                     }
                     
                     await bot.editMessageText(`*Inactive User Purge Complete*\n\nKicked: ${successCount}\nFailed: ${failCount}`, {
@@ -332,6 +412,10 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
                         message_id: statusMsg.message_id,
                         parse_mode: 'Markdown'
                     });
+                    // Make the final summary message also self-destruct
+                    setTimeout(() => {
+                        bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+                    }, 300000);
                     break;
                 }
             }
@@ -344,7 +428,7 @@ function registerGroupHandlers(bot, dbServices, geminiFunction) {
         }
     });
 
-    console.log("✅ Group Handlers (Cleaned) registered successfully.");
+    console.log("✅ Group Handlers (V4) registered successfully.");
 }
 
 // Export the main function
