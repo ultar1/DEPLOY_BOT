@@ -4448,40 +4448,45 @@ bot.onText(/^\/deployem$/, async (msg) => {
     }
 });
 
-// This command handler now uses 'HTML' and is safe from parsing errors
+// This replaces your old /dbstats command
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
     const workingMsg = await bot.sendMessage(adminId, "Fetching Neon database stats...");
 
-    const result = await getNeonStats();
+    try {
+        // 1. Get Neon API data
+        const neonResult = await getNeonStats();
+        if (!neonResult.success) {
+            throw new Error(neonResult.error);
+        }
 
-    if (!result.success) {
-        // We still escape the error just in case it contains < or >
-        return bot.editMessageText(
-            `<b>Failed to fetch stats!</b>\n\nReason: ${escapeHTML(result.error)}`, 
-            { 
-                chat_id: adminId, 
-                message_id: workingMsg.message_id, 
-                parse_mode: 'HTML' // Use HTML
-            }
-        ).catch(err => console.error("Error editing message:", err.message)); // Add catch
-    }
+        // 2. ✅ NEW: Get all bots from YOUR database
+        const allBots = await dbServices.getAllBotDeployments();
+        
+        // 3. ✅ NEW: Create a quick lookup map (app_name -> user_id)
+        const ownerMap = new Map();
+        for (const bot of allBots) {
+            ownerMap.set(bot.app_name.replace(/-/g, '_'), bot.user_id);
+        }
 
-    const { logical_size_mb, databases, project_id, branch_id } = result.data;
-    
-    // Create the list of databases
-    let dbListString = "No databases found.";
-    if (databases.length > 0) {
-        dbListString = databases
-            // Use <b> for bold, <code> for code. Escape the API data.
-            .map(db => `  - <b>${escapeHTML(db.name)}</b> (Owner: <code>${escapeHTML(db.owner)}</code>, Created: ${escapeHTML(db.created_at)})`)
-            .join('\n');
-    }
+        const { logical_size_mb, databases, project_id, branch_id } = neonResult.data;
+        
+        // 4. ✅ NEW: Build the list string using the lookup map
+        let dbListString = "No databases found.";
+        if (databases.length > 0) {
+            dbListString = databases.map(db => {
+                // Find the owner's user_id from the map
+                const ownerUserId = ownerMap.get(db.name);
+                const ownerString = ownerUserId ? `(Owner User ID: <code>${ownerUserId}</code>)` : '(Owner: Unknown/External)';
+                
+                return `  - <b>${escapeHTML(db.name)}</b> ${ownerString}\n    (Neon Role: <code>${escapeHTML(db.owner)}</code>, Created: ${escapeHTML(db.created_at)})`;
+            }).join('\n\n'); // Added extra newline for readability
+        }
 
-    // Format the final message using HTML tags
-    const finalMessage = `
+        // 5. ✅ NEW: Format the final message
+        const finalMessage = `
 <b>Neon Database Statistics</b>
 
 <b>Project:</b> <code>${escapeHTML(project_id)}</code>
@@ -4490,15 +4495,26 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
 <b>Databases (${databases.length}):</b>
 ${dbListString}
-    `;
+        `;
 
-    // Send the final message
-    await bot.editMessageText(finalMessage, {
-        chat_id: adminId,
-        message_id: workingMsg.message_id,
-        parse_mode: 'HTML' // Use HTML
-    }).catch(err => console.error("Error editing message:", err.message)); // Add catch
+        await bot.editMessageText(finalMessage, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'HTML'
+        });
+
+    } catch (error) {
+        await bot.editMessageText(
+            `<b>Failed to fetch stats!</b>\n\nReason: ${escapeHTML(error.message)}`, 
+            { 
+                chat_id: adminId, 
+                message_id: workingMsg.message_id, 
+                parse_mode: 'HTML'
+            }
+        ).catch(err => console.error("Error editing message:", err.message));
+    }
 });
+
 
 // --- NEW COMMAND: /sync ---
 bot.onText(/^\/sync$/, async (msg) => {
