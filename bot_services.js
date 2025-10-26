@@ -201,9 +201,16 @@ async function restoreHerokuDbFromRenderSchema(appName) {
 }
 
 
-// bot_services.js
+async function getAllBotDeployments() {
+    // This query depends on your table name.
+    // It should get the app_name and user_id from your main bot table
+    const query = 'SELECT app_name, user_id FROM user_bots'; // Or 'deployments', etc.
+    const { rows } = await pool.query(query);
+    return rows;
+}
 
-// ... other code ...
+
+
 async function syncDatabaseWithHeroku() {
     console.log('[Sync] Starting full database synchronization with Heroku...');
     const syncStats = {
@@ -1791,6 +1798,7 @@ module.exports = {
     recordFreeTrialDeploy,
     updateUserActivity,
     getUserLastSeen,
+    getAllBotDeployments,
     isUserBanned,
     restoreHerokuDbFromRenderSchema,
     banUser,
