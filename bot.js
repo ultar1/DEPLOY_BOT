@@ -1255,40 +1255,80 @@ async function createNeonDatabase(newDbName) {
     }
 }
 
-
 /**
  * Deletes a specific database from your Neon project. This is permanent.
  * @param {string} dbName The name of the database to delete.
  * @returns {Promise<{success: boolean, error?: string}>}
  */
 async function deleteNeonDatabase(dbName) {
+    // This function assumes your Neon credentials are in process.env
     const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID } = process.env;
-
     if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
         console.error("[Neon] API credentials are not fully configured.");
         return { success: false, error: "Neon API credentials are not set." };
     }
 
-    // The specific API endpoint for deleting a database
-    const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases/${dbName}`;
-    
-    const headers = {
-        'Authorization': `Bearer ${NEON_API_KEY}`,
-        'Accept': 'application/json'
-    };
+    // Sanitize the app name to get the database name
+    const neonDbName = dbName.replace(/-/g, '_');
+    const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases/${neonDbName}`;
+    const headers = { 'Authorization': `Bearer ${NEON_API_KEY}`, 'Accept': 'application/json' };
 
     try {
         await axios.delete(apiUrl, { headers });
-        console.log(`[Neon] Successfully deleted database: ${dbName}`);
+        console.log(`[Neon] Successfully deleted database: ${neonDbName}`);
         return { success: true };
     } catch (error) {
+        // A 404 error is fine, it just means the DB was already gone.
+        if (error.response?.status === 404) {
+            console.log(`[Neon] Database ${neonDbName} not found. Assuming already deleted.`);
+            return { success: true };
+        }
         const errorMsg = error.response?.data?.message || error.message;
         console.error(`[Neon] Error deleting database: ${errorMsg}`);
         return { success: false, error: errorMsg };
     }
 }
 
+/**
+ * MASTER DELETION FUNCTION
+ * Deletes a bot from Heroku, deletes its Neon DB, and cleans up all local DB records.
+ * @param {string} userId The bot's owner ID.
+ * @param {string} appName The bot's app name.
+ */
+async function deleteBotCompletely(userId, appName) {
+    console.log(`[Delete] Starting complete deletion for bot: ${appName}`);
+    
+    // 1. Delete from Heroku (uses herokuApi for error handling)
+    try {
+        await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        console.log(`[Delete] Successfully deleted ${appName} from Heroku.`);
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+            console.log(`[Delete] Bot ${appName} was already deleted from Heroku.`);
+        } else {
+            // Log other errors but continue cleanup
+            console.error(`[Delete] Error deleting ${appName} from Heroku:`, error.response?.data?.message || error.message);
+        }
+    }
 
+    // 2. Delete the associated Neon database
+    try {
+        await deleteNeonDatabase(appName);
+        console.log(`[Delete] Successfully deleted Neon database for ${appName}.`);
+    } catch (error) {
+        console.error(`[Delete] Error deleting Neon database for ${appName}:`, error.message);
+    }
+    
+    // 3. Clean up all local database records (in bot_services.js)
+    try {
+        await dbServices.permanentlyDeleteBotRecord(userId, appName);
+        console.log(`[Delete] Successfully cleaned up all local DB records for ${appName}.`);
+    } catch (error) {
+        console.error(`[Delete] Error cleaning up local DB records for ${appName}:`, error.message);
+    }
+    
+    console.log(`[Delete] Completed deletion process for ${appName}.`);
+}
 
 
 /**
@@ -2433,134 +2473,7 @@ async function handleRestoreAllSelection(query) {
         }
     });
 }
-
-// In bot.js, find and REPLACE this entire function
-async function handleRestoreAllConfirm(query) {
-    const adminId = query.message.chat.id;
-    const botType = query.data.split(':')[1];
-    
-    // Check if a message exists to edit, otherwise send a new one
-    let progressMsg;
-    if (query.message && query.message.message_id) {
-        progressMsg = await bot.editMessageText(`**Starting Full Restore: ${botType.toUpperCase()}**\n\nPreparing to process bots...`, {
-            chat_id: adminId, message_id: query.message.message_id, parse_mode: 'Markdown'
-        }).catch(() => bot.sendMessage(adminId, "**Starting Full Restore...**", { parse_mode: 'Markdown' }));
-    } else {
-        progressMsg = await bot.sendMessage(adminId, "**Starting Full Restore...**", { parse_mode: 'Markdown' });
-    }
-
-    const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
-    let successCount = 0;
-    let failureCount = 0;
-    let progressLog = [];
-
-    for (const [index, deployment] of deployments.entries()) {
-        const originalAppName = deployment.app_name; // The name from the backup (e.g., adams12-8911)
-        const originalOwnerId = deployment.user_id;
-        
-        progressLog.push(`**Processing ${index + 1}/${deployments.length}:** \`${originalAppName}\``);
-        await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
-        
-        try {
-            // --- Phase 1: Restore the App and Settings ---
-            const buildResult = await dbServices.buildWithProgress(originalOwnerId, deployment.config_vars, false, true, botType, deployment.referred_by, deployment.ip_address);
-            
-            if (!buildResult.success) {
-                throw new Error("App build process failed or timed out.");
-            }
-
-            const newAppName = buildResult.newAppName; // The new, unique name (e.g., 'akpan11-0747')
-            const dynoType = buildResult.dynoType; 
-
-            progressLog.push(`   App created as \`${newAppName}\`. Finding backup data...`);
-            await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
-
-            // --- Phase 2: Restore the Database from the Render Schema ---
-
-            // ❗️❗️ NEW FIX: Extract the "base name" for searching.
-            // This strips all numbers and hyphens to get the root name.
-            // Example: "akpan1233" becomes "akpan"
-            // Example: "adams12-8911" becomes "adams"
-            const baseNameForSearch = originalAppName.replace(/[\-0-9]/g, '');
-            
-            progressLog.push(`   Base name is \`${baseNameForSearch}\`. Restoring data...`);
-            await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
-
-
-            // ❗️❗️ FIX: We now pass the 'baseNameForSearch' instead of 'originalAppName'.
-            // Your dbServices.restoreHerokuDbFromRenderSchema function MUST
-            // be updated to handle this, for example by using:
-            // "SELECT ... WHERE schema_name LIKE $1 || '%'" (using baseNameForSearch as $1)
-                        // --- Phase 2: Restore the Database from the Render Schema ---
-            const restoreResult = await dbServices.restoreHerokuDbFromRenderSchema(baseNameForSearch, newAppName);
-            if (!restoreResult.success) {
-                throw new Error(restoreResult.message);
-            }
-
-                        // ❗️❗️ NEW FIX: Turn the bot ON now that the data is restored
-            try {
-                console.log(`[Restore] Scaling '${dynoType}' dyno to 1 for "${newAppName}".`);
-                await herokuApi.patch(`/apps/${newAppName}/formation/${dynoType}`, // <-- USE VARIABLE
-                    { quantity: 1 }, 
-                    { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-                );
-            } catch (scaleError) {
-                // Add more detail to the error message
-                throw new Error(`DB restore success, but failed to scale '${dynoType}' dyno to 1.`);
-            }
-
-
-            progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
-            successCount++;
-          
-          } catch (error) {
-            failureCount++;
-            const errorMsg = error.response?.data?.message || error.message;
-            console.error(`[RestoreAll] CRITICAL ERROR while restoring ${originalAppName}:`, errorMsg);
-            progressLog.push(`   **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
-        }
-    }
-
-    
-    // --- (The rest of the function for Phases 3 & 4 remains the same) ---
-    
-    await bot.editMessageText(
-        `**Bot Restoration Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.slice(-10).join('\n')}`, 
-        { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
-    );
-
-    if (failureCount === 0 && successCount > 0) { 
-        await bot.sendMessage(adminId, "**Starting Phase 3:** Automatically deploying and linking the email service...");
-        try {
-            const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
-            if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY) {
-                throw new Error("Cannot deploy email service: Missing `GMAIL_USER`, `GMAIL_APP_PASSWORD`, or `SECRET_API_KEY` in environment.");
-            }
-            const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
-            const createAppRes = await herokuApi.post('/apps', { name: appName }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            const appWebUrl = createAppRes.data.web_url;
-            await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            await herokuApi.post(`/apps/${appName}/builds`, {
-                source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" }
-            }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            const updateResult = await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
-            if (!updateResult.success) throw new Error(`Failed to update Render variable: ${updateResult.message}`);
-            await bot.sendMessage(adminId, `**Email Service Deployed!**\n\nThe main bot is now restarting on Render to apply the changes.`);
-        } catch (error) {
-            const errorMsg = error.response?.data?.message || error.message;
-            await bot.sendMessage(adminId, `**Bot restore was successful, but the email service deployment failed.**\n\n*Reason:* ${escapeMarkdown(errorMsg)}\n\nPlease run \`/deploy_email_service\` manually.`);
-        }
-    }
-    if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "**Starting Phase 4:** Automatically copying main database to backup database...");
-        try {
-            await runCopyDbTask();
-            await bot.sendMessage(adminId, "**Full System Recovery Complete!**\n\nAll restore and backup tasks are now finished.");
-        } catch (copyError) {
-            await bot.sendMessage(adminId, `**Bot/Email restore was successful, but the final /copydb task failed.**\n\n*Reason:* ${escapeMarkdown(copyError.message)}`);
-        }
-    }
-}
+      
 
 /**
  * Fetches all non-system user-created table names from the database.
