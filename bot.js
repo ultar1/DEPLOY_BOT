@@ -11240,24 +11240,44 @@ async function checkAndManageExpirations() {
     for (const botInfo of expiredBots) {
         try {
             console.log(`[Expiration] Bot ${botInfo.app_name} for user ${botInfo.user_id} has expired. Deleting now.`);
-            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' });
             
-            // Delete from Heroku
+            // --- Send notice to user ---
+            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' })
+                .catch(err => console.error(`[Expiration] Failed to send deletion notice to user ${botInfo.user_id}:`, err.message));
+            
+            // --- START: DELETION LOGIC ---
+
+            // 1. Delete from Heroku
+            console.log(`[Expiration] Deleting Heroku app: ${botInfo.app_name}`);
             await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
             
-            // Delete from all database tables
+            // 2. ✅ NEW: Delete its Neon database
+            console.log(`[Expiration] Deleting associated Neon database: ${botInfo.app_name}`);
+            const deleteResult = await deleteNeonDatabase(botInfo.app_name); 
+            if (!deleteResult.success) {
+                // Log the error, but continue deleting from our local DB
+                console.error(`[Expiration] Failed to delete Neon database ${botInfo.app_name}: ${deleteResult.error}`);
+            }
+
+            // --- END: DELETION LOGIC ---
+            
+            // 3. Delete from all local database tables
             await dbServices.deleteUserBot(botInfo.user_id, botInfo.app_name);
             await dbServices.deleteUserDeploymentFromBackup(botInfo.user_id, botInfo.app_name);
 
-            await bot.sendMessage(ADMIN_ID, `Bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\` expired and was auto-deleted.`, { parse_mode: 'Markdown' });
+            // --- Send alert to admin ---
+            await bot.sendMessage(ADMIN_ID, `Bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\` expired and was auto-deleted from Heroku and Neon.`, { parse_mode: 'Markdown' })
+                .catch(err => console.error(`[Expiration] Failed to send admin alert for ${botInfo.app_name}:`, err.message));
+
         } catch (error) {
             console.error(`[Expiration] Failed to delete expired bot ${botInfo.app_name} for user ${botInfo.user_id}:`, error.message);
             await monitorSendTelegramAlert(`Failed to auto-delete expired bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\`. Please check logs.`, ADMIN_ID);
         }
     }
 }
+
 
 
 // Run the check once every day
