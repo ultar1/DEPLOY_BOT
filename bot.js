@@ -1488,7 +1488,6 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
     }
 }
 
-// In bot.js, replace your entire runBackupAllTask function with this:
 
 async function runBackupAllTask(adminId, initialMessageId = null) {
     console.log('[Backup Task] Starting execution...');
@@ -1497,21 +1496,19 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
     if (initialMessageId) {
         progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
     } else {
-        progressMsg = await bot.sendMessage(adminId, '**Starting Full System Backup...**', { parse_mode: 'Markdown' });
+        progressMsg = await bot.sendMessage(adminId, '**Starting Bot Settings Backup...**', { parse_mode: 'Markdown' });
     }
 
-    let backupSuccess = false; // Flag to check if backup was successful
-    let failCount = 0; // Track failures
-
+    let backupSuccess = true; // Assume success unless a failure occurs
+    let failCount = 0;
     try {
         const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
         let successCount = 0;
-        let skippedCount = 0;
 
         for (const [index, botInfo] of allBots.entries()) {
             const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up settings & data for *${escapeMarkdown(appName)}*...`, {
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up settings for *${escapeMarkdown(appName)}*...`, {
                 chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
             }).catch(() => {});
 
@@ -1519,29 +1516,15 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
                 // Step 1: Backup config vars (settings)
                 const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
-                
-                // Step 2: Backup the database
-                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName);
-
-                if (backupResult.success) {
-                    successCount++;
-                } else if (backupResult.message.includes("DATABASE_URL not found")) {
-                    console.log(`[Backup Task] Skipping DB backup for ${appName}: ${backupResult.message}`);
-                    skippedCount++;
-                    successCount++; // Count settings backup as success
-                } else {
-                    throw new Error(backupResult.message);
-                }
-
+                successCount++;
             } catch (error) {
                  if (error.response && error.response.status === 404) {
                     console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
                     await dbServices.deleteUserBot(ownerId, appName);
-                    await dbServices.deleteUserDeploymentFromBackup(ownerId, appName);
+                    await dbServices.markDeploymentDeletedFromHeroku(ownerId, appName);
                     await bot.sendMessage(adminId, `Bot *${escapeMarkdown(appName)}* not found on Heroku. Records cleaned.`, { parse_mode: 'Markdown' });
-
                 } else {
-                    failCount++; // Increment failure count
+                    failCount++;
                     const errorMsg = error.response?.data?.message || error.message;
                     console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
                     await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
@@ -1550,12 +1533,12 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
         } // End of loop
 
         await bot.editMessageText(
-            `**Bot Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n*DB Skipped:* ${skippedCount}\n\nData copied to Render DB schemas.`,
+            `**Bot Settings Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nBot configurations (including DATABASE_URL) are saved.`,
             { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
         );
         
-        if (failCount === 0) {
-             backupSuccess = true;
+        if (failCount > 0) {
+             backupSuccess = false;
         }
 
     } catch (error) {
@@ -1563,20 +1546,104 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
         await bot.editMessageText(`**A critical error occurred during backup:**\n\n${escapeMarkdown(error.message)}`, {
             chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
         });
+        backupSuccess = false;
     }
 
-    // --- ❗️ NEW: PHASE 2 - Automatically Run /copydb ---
-    if (backupSuccess) { // Only run copydb if the backupall part had 0 failures
+    // --- PHASE 2: Automatically Run /copydb ---
+    if (backupSuccess) {
         await bot.sendMessage(adminId, "**Starting Phase 2:** Automatically copying main database to backup database...");
         try {
             await runCopyDbTask(); // This is the core logic function for /copydb
-            await bot.sendMessage(adminId, "**Full System Maintenance Complete!**\n\nAll bot backups and the main database copy are finished.");
+            await bot.sendMessage(adminId, "**Full System Maintenance Complete!**\n\nAll bot settings and the main database copy are finished.");
         } catch (copyError) {
             console.error("Error during automated /copydb task:", copyError);
             await bot.sendMessage(adminId, `**Bot backup was successful, but the final /copydb task failed.**\n\n*Reason:* ${escapeMarkdown(copyError.message)}`);
         }
     } else {
          await bot.sendMessage(adminId, "Main database copy was skipped because errors occurred during the bot backup phase.");
+    }
+}
+
+
+// In bot.js
+// ❗️ REPLACE your handleRestoreAllConfirm function with this:
+async function handleRestoreAllConfirm(query) {
+    const adminId = query.message.chat.id;
+    const botType = query.data.split(':')[1];
+    
+    let progressMsg;
+    if (query.message && query.message.message_id) {
+        progressMsg = await bot.editMessageText(`**Starting Full Restore: ${botType.toUpperCase()}**\n\nThis will recreate each bot using its saved settings.`, {
+            chat_id: adminId, message_id: query.message.message_id, parse_mode: 'Markdown'
+        }).catch(() => bot.sendMessage(adminId, "**Starting Full Restore...**", { parse_mode: 'Markdown' }));
+    } else {
+        progressMsg = await bot.sendMessage(adminId, "**Starting Full Restore...**", { parse_mode: 'Markdown' });
+    }
+
+    const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
+    let successCount = 0;
+    let failureCount = 0;
+    let progressLog = [];
+
+    for (const [index, deployment] of deployments.entries()) {
+        const originalAppName = deployment.app_name;
+        const originalOwnerId = deployment.user_id;
+        
+        progressLog.push(`**Processing ${index + 1}/${deployments.length}:** \`${originalAppName}\``);
+        await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+        
+        try {
+            // --- Phase 1: Restore the App and Settings ---
+            const buildResult = await dbServices.buildWithProgress(originalOwnerId, deployment.config_vars, false, true, botType, deployment.referred_by, deployment.ip_address);
+            
+            if (!buildResult.success) {
+                throw new Error("App build process failed or timed out.");
+            }
+
+            const newAppName = buildResult.newAppName;
+            progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
+            successCount++;
+
+        } catch (error) {
+            failureCount++;
+            const errorMsg = error.response?.data?.message || error.message;
+            console.error(`[RestoreAll] CRITICAL ERROR while restoring ${originalAppName}:`, errorMsg);
+            progressLog.push(`   **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
+        }
+    }
+    
+    await bot.editMessageText(
+        `**Bot Restoration Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.slice(-10).join('\n')}`, 
+        { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+    );
+
+    // --- (Phase 3 & 4 for Email and Copydb remain unchanged) ---
+    if (failureCount === 0 && successCount > 0) {
+        await bot.sendMessage(adminId, "**Starting Phase 3:** Automatically deploying and linking the email service...");
+        try {
+            // ... (email service deployment logic) ...
+            const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
+            if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY) throw new Error("Missing email credentials");
+            const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
+            const createAppRes = await herokuApi.post('/apps', { name: appName }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+            const appWebUrl = createAppRes.data.web_url;
+            await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+            await herokuApi.post(`/apps/${appName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+            await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
+            await bot.sendMessage(adminId, `**Email Service Deployed!**`);
+        } catch (error) {
+            const errorMsg = error.response?.data?.message || error.message;
+            await bot.sendMessage(adminId, `**Bot restore was successful, but email service deployment failed.**\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+        }
+    }
+    if (failureCount === 0 && successCount > 0) {
+        await bot.sendMessage(adminId, "**Starting Phase 4:** Automatically copying main database to backup database...");
+        try {
+            await runCopyDbTask();
+            await bot.sendMessage(adminId, "**Full System Recovery Complete!**");
+        } catch (copyError) {
+            await bot.sendMessage(adminId, `**Bot/Email restore was successful, but the final /copydb task failed.**\n*Reason:* ${escapeMarkdown(copyError.message)}`, { parse_mode: 'Markdown' });
+        }
     }
 }
 
