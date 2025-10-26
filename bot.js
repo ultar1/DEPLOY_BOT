@@ -10219,23 +10219,16 @@ if (action === 'info') {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
 
-        // 2. ✅ NEW: Delete from Neon
-        console.log(`[ConfirmDelete] Deleting associated Neon database: ${appToDelete}`);
-        const deleteResult = await deleteNeonDatabase(appToDelete); 
-        if (!deleteResult.success) {
-            // Log the error, but continue deleting from our local DB
-            console.error(`[ConfirmDelete] Failed to delete Neon database ${appToDelete}: ${deleteResult.error}`);
-        }
 
         // 3. Clean up local database
         const ownerId = await dbServices.getUserIdByBotName(appToDelete);
         if (ownerId) {
-            await dbServices.deleteUserBot(ownerId, appToDelete);
+            
             await dbServices.markDeploymentDeletedFromHeroku(ownerId, appToDelete);
         }
 
         // --- Updated success message ---
-        await bot.editMessageText(`App "*${escapeMarkdown(appToDelete)}*" has been permanently deleted.`, { 
+        await bot.editMessageText(`App "*${escapeMarkdown(appToDelete)}*" has been deleted.`, { 
             chat_id: cid, 
             message_id: messageId, 
             parse_mode: 'Markdown' 
