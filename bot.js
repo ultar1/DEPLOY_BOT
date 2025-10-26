@@ -8607,7 +8607,7 @@ if (action === 'use_suggested_name') {
   // --- ADD this new block ---
 
 if (action === 'levanter_wa_fallback') {
-  await bot.answerCallbackQuery(q.id);
+  
     // 1. Set the state to wait for the user's phone number.
     // This will trigger your existing logic when the user sends their number.
     userStates[cid] = {
