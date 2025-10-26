@@ -2060,6 +2060,66 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
     }
 }
 
+
+// In bot.js
+
+/**
+ * Fetches detailed statistics for your Neon project, including all databases.
+ * @returns {Promise<{success: boolean, data?: object, error?: string}>}
+ */
+async function getNeonStats() {
+    const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID } = process.env;
+
+    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
+        console.error("[Neon] API credentials are not fully configured.");
+        return { success: false, error: "Neon API credentials are not set." };
+    }
+
+    const headers = {
+        'Authorization': `Bearer ${NEON_API_KEY}`,
+        'Accept': 'application/json'
+    };
+    
+    // API endpoint to get the list of databases
+    const dbsUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases`;
+    // API endpoint to get branch details (like storage size)
+    const branchUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}`;
+
+    try {
+        // We make two API calls at the same time to get all the info
+        const [dbsResponse, branchResponse] = await Promise.all([
+            axios.get(dbsUrl, { headers }),
+            axios.get(branchUrl, { headers })
+        ]);
+        
+        const databaseList = dbsResponse.data.databases;
+        const branchData = branchResponse.data.branch;
+
+        // Extract the useful information
+        const logicalSizeMB = (branchData.logical_size / (1024 * 1024)).toFixed(2);
+        const databases = databaseList.map(db => ({
+            name: db.name,
+            owner: db.owner_name,
+            created_at: new Date(db.created_at).toLocaleDateString('en-US')
+        }));
+        
+        return { 
+            success: true, 
+            data: {
+                logical_size_mb: logicalSizeMB,
+                databases: databases,
+                project_id: NEON_PROJECT_ID,
+                branch_id: NEON_BRANCH_ID
+            }
+        };
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Neon] Error fetching stats: ${errorMsg}`);
+        return { success: false, error: errorMsg };
+    }
+}
+
+
 /**
  * Creates a Paystack payment link and sends it to the user.
  */
@@ -4364,12 +4424,62 @@ bot.onText(/^\/deployem$/, async (msg) => {
 
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
-        await bot.editMessageText(`❌ **Deployment Failed!**\n\n*Reason:* ${escapeMarkdown(errorMsg)}`, {
+        await bot.editMessageText(`**Deployment Failed!**\n\n*Reason:* ${escapeMarkdown(errorMsg)}`, {
             chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
         });
     }
 });
 
+// In bot.js
+
+// ADMIN COMMAND: /dbstats
+bot.onText(/^\/dbstats$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const workingMsg = await bot.sendMessage(adminId, "Fetching Neon database stats...");
+
+    const result = await getNeonStats();
+
+    if (!result.success) {
+        return bot.editMessageText(
+            `Failed to fetch stats!\n\nReason: ${escapeMarkdown(result.error)}`, 
+            { 
+                chat_id: adminId, 
+                message_id: workingMsg.message_id, 
+                parse_mode: 'MarkdownV2' // Use V2 for the escape function
+            }
+        );
+    }
+
+    const { logical_size_mb, databases, project_id, branch_id } = result.data;
+    
+    // Create the list of databases
+    let dbListString = "No databases found.";
+    if (databases.length > 0) {
+        dbListString = databases
+            .map(db => `  - \`${escapeMarkdown(db.name)}\` (Owner: \`${escapeMarkdown(db.owner)}\`, Created: ${escapeMarkdown(db.created_at)})`)
+            .join('\n');
+    }
+
+    // Format the final message
+    const finalMessage = `
+*Neon Database Statistics*
+
+*Project:* \`${escapeMarkdown(project_id)}\`
+*Branch:* \`${escapeMarkdown(branch_id)}\`
+*Total Storage Used:* *${escapeMarkdown(logical_size_mb)} MB* / 512 MB (Free Tier Limit)
+
+*Databases (${databases.length}):*
+${dbListString}
+    `;
+
+    await bot.editMessageText(finalMessage, {
+        chat_id: adminId,
+        message_id: workingMsg.message_id,
+        parse_mode: 'MarkdownV2' // Use V2 for the escape function
+    });
+});
 
 
 // ... other code ...
