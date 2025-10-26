@@ -271,6 +271,19 @@ async function createAllTablesInPool(dbPool, dbName) {
           );
         `);
 
+     await client.query(`
+     CREATE TABLE user_activity (
+  user_id VARCHAR(255) NOT NULL,
+  chat_id VARCHAR(255) NOT NULL,
+  user_name VARCHAR(255),
+  last_seen_timestamp INTEGER NOT NULL,
+  PRIMARY KEY (user_id, chat_id)
+);
+`);
+
+await client.query(`CREATE INDEX idx_user_activity_last_seen ON user_activity (chat_id, last_seen_timestamp);`);
+
+
       
         
         await client.query(`
@@ -701,6 +714,76 @@ async function callMyAi(prompt) {
     // Fallback error if loop finishes without returning
     throw new Error("The AI failed to respond after several attempts.");
 }
+
+/**
+ * Logs a user's message timestamp.
+ * This is an UPSERT operation.
+ * @param {string|number} userId - The Telegram user ID.
+ * @param {string|number} chatId - The Telegram chat ID.
+ *a @param {string} userName - The user's first name.
+ * @param {number} timestamp - The UNIX timestamp (in seconds) of the message.
+ */
+async function logUserActivity(userId, chatId, userName, timestamp) {
+  const userIdStr = String(userId);
+  const chatIdStr = String(chatId);
+
+  const query = `
+    INSERT INTO user_activity (user_id, chat_id, user_name, last_seen_timestamp)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (user_id, chat_id)
+    DO UPDATE SET last_seen_timestamp = $4, user_name = $3
+  `;
+  
+  try {
+    await pool.query(query, [userIdStr, chatIdStr, userName, timestamp]);
+  } catch (error) {
+    console.error(`Failed to log user activity:`, error);
+  }
+}
+
+/**
+ * Gets the count of active and inactive users for a chat.
+ * @param {string|number} chatId - The Telegram chat ID.
+ * @param {number} inactiveTimestamp - The UNIX timestamp (in seconds) cutoff.
+ * @returns {Promise<{activeCount: number, inactiveCount: number}>}
+ */
+async function getChatStats(chatId, inactiveTimestamp) {
+  const chatIdStr = String(chatId);
+  try {
+    const activeQuery = 'SELECT COUNT(user_id) FROM user_activity WHERE chat_id = $1 AND last_seen_timestamp >= $2';
+    const inactiveQuery = 'SELECT COUNT(user_id) FROM user_activity WHERE chat_id = $1 AND last_seen_timestamp < $2';
+
+    const activeRes = await pool.query(activeQuery, [chatIdStr, inactiveTimestamp]);
+    const inactiveRes = await pool.query(inactiveQuery, [chatIdStr, inactiveTimestamp]);
+    
+    return {
+      activeCount: parseInt(activeRes.rows[0].count) || 0,
+      inactiveCount: parseInt(inactiveRes.rows[0].count) || 0
+    };
+  } catch (error) {
+    console.error(`Failed to get chat stats:`, error);
+    return { activeCount: 0, inactiveCount: 0 };
+  }
+}
+
+/**
+ * Gets a list of users who are inactive.
+ * @param {string|number} chatId - The Telegram chat ID.
+ *m @param {number} inactiveTimestamp - The UNIX timestamp (in seconds) cutoff.
+ * @returns {Promise<Array<{user_id: string, user_name: string}>>}
+ */
+async function getInactiveUsers(chatId, inactiveTimestamp) {
+  const chatIdStr = String(chatId);
+  try {
+    const query = 'SELECT user_id, user_name FROM user_activity WHERE chat_id = $1 AND last_seen_timestamp < $2';
+    const res = await pool.query(query, [chatIdStr, inactiveTimestamp]);
+    return res.rows;
+  } catch (error) {
+    console.error(`Failed to get inactive users:`, error);
+    return [];
+  }
+}
+
 
 // This function can now handle more complex requests.
 async function handleUserPrompt(prompt, userId) {
