@@ -852,27 +852,46 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
     }
 }
 
+// In bot_services.js
+
 async function getAllDeploymentsFromBackup(botType) {
+    // Ensure backupPool is initialized and available
+    if (!backupPool) {
+        console.error('[DB-Backup] Backup pool is not initialized in bot_services.');
+        return [];
+    }
     try {
-        // --- THIS IS THE FIX ---
-        // It now fetches ALL bots of the specified type from your backup database,
-        // ignoring whether they are active or inactive.
-        const result = await pool.query(
-            `SELECT user_id, app_name, session_id, config_vars
-             FROM user_deployments 
-             WHERE bot_type = $1
-             ORDER BY app_name ASC;`,
+        // --- THIS IS THE UPDATED QUERY ---
+        // It now fetches from the backupPool and joins user_deployments with user_bots
+        // to filter based on the status stored in the backup's user_bots table.
+        const result = await backupPool.query(
+            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars
+             FROM user_deployments ud
+             INNER JOIN user_bots ub ON ud.user_id = ub.user_id AND ud.app_name = ub.bot_name
+             WHERE ud.bot_type = $1 AND ub.status = 'online' -- Only select bots that were 'online'
+             ORDER BY ud.app_name ASC;`,
             [botType]
         );
-        // --- END OF FIX ---
+        // --- END OF UPDATED QUERY ---
 
-        console.log(`[DB-Backup] Fetched all ${result.rows.length} deployments for mass restore from backup pool.`);
+        console.log(`[DB-Backup] Fetched ${result.rows.length} 'online' deployments of type ${botType} for mass restore from backup pool.`);
         return result.rows;
     } catch (error) {
-        console.error(`[DB-Backup] Failed to get all deployments for mass restore:`, error.message);
+        console.error(`[DB-Backup] Failed to get 'online' deployments for mass restore:`, error.message);
+        // Attempt to log the specific SQL error if available
+        if (error.code) {
+            console.error(`[DB-Backup] SQL Error Code: ${error.code}, Detail: ${error.detail || 'N/A'}`);
+        }
+        // Notify admin about the failure
+        if (monitorSendTelegramAlert && ADMIN_ID) {
+            monitorSendTelegramAlert(`CRITICAL DB ERROR during /restoreall (fetching backup): ${error.message}. Check logs.`, ADMIN_ID);
+        } else {
+             console.error("[DB-Backup] monitorSendTelegramAlert or ADMIN_ID not available for error notification.");
+        }
         return [];
     }
 }
+
 
 
 
