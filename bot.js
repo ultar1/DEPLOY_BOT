@@ -271,19 +271,6 @@ async function createAllTablesInPool(dbPool, dbName) {
           );
         `);
 
-     await client.query(`
-     CREATE TABLE user_activity (
-  user_id VARCHAR(255) NOT NULL,
-  chat_id VARCHAR(255) NOT NULL,
-  user_name VARCHAR(255),
-  last_seen_timestamp INTEGER NOT NULL,
-  PRIMARY KEY (user_id, chat_id)
-);
-`);
-
-await client.query(`CREATE INDEX idx_user_activity_last_seen ON user_activity (chat_id, last_seen_timestamp);`);
-
-
       
         
         await client.query(`
