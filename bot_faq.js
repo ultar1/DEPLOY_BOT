@@ -10,7 +10,7 @@ function init(params) {
     console.log('--- bot_faq.js initialized! ---');
 }
 
-// --- NEW FAQ Data ---
+// --- NEW FAQ Data (Converted to HTML) ---
 const FAQ_QUESTIONS = [
     // --- Section: Getting Started ---
     {
@@ -19,11 +19,11 @@ const FAQ_QUESTIONS = [
     },
     {
         question: "What's the difference between Levanter and Raganork?",
-        answer: "They are two different types of WhatsApp bots with unique features.\n\n• *Levanter* is known for its stability and essential features.\n• *Raganork* often includes more advanced or experimental features.\n\nChoose the one that best fits your needs!"
+        answer: "They are two different types of WhatsApp bots with unique features.\n\n• <b>Levanter</b> is known for its stability and essential features.\n• <b>Raganork</b> often includes more advanced or experimental features.\n\nChoose the one that best fits your needs!"
     },
     {
         question: "How do I get a Session ID?",
-        answer: "A Session ID is required to link the Bot to your WhatsApp account. In the main menu, tap 'Get Session ID' and select your bot type (Levanter or Raganork) to visit the correct website to generate your code. The ID format will start with `levanter_` or `RGNK~`."
+        answer: "A Session ID is required to link the Bot to your WhatsApp account. In the main menu, tap 'Get Session ID' and select your bot type (Levanter or Raganork) to visit the correct website to generate your code. The ID format will start with <code>levanter_</code> or <code>RGNK~</code>."
     },
     {
         question: "What is a 'Deploy Key' and why do I need one?",
@@ -40,11 +40,11 @@ const FAQ_QUESTIONS = [
     },
     {
         question: "How do I change my bot's settings (Variables)?",
-        answer: "Navigate to 'My Bots', select the bot you want to configure, and tap 'Set Variable'. This menu allows you to change your `SESSION_ID`, `PREFIX`, `SUDO` numbers, and other important settings."
+        answer: "Navigate to 'My Bots', select the bot you want to configure, and tap 'Set Variable'. This menu allows you to change your <code>SESSION_ID</code>, <code>PREFIX</code>, <code>SUDO</code> numbers, and other important settings."
     },
     {
         question: "What do 'Restart', 'Redeploy', and 'Delete' do?",
-        answer: "• *Restart:* Turns your bot off and on again. This is the first thing to try if your bot is unresponsive.\n• *Redeploy:* Updates your bot with the latest source code, giving you new features or bug fixes without losing your settings.\n• *Delete:* Permanently removes your bot and all its data from our servers. This action cannot be undone."
+        answer: "• <b>Restart:</b> Turns your bot off and on again. This is the first thing to try if your bot is unresponsive.\n• <b>Redeploy:</b> Updates your bot with the latest source code, giving you new features or bug fixes without losing your settings.\n• <b>Delete:</b> Permanently removes your bot and all its data from our servers. This action cannot be undone."
     },
     {
         question: "What happens when my bot expires?",
@@ -53,7 +53,7 @@ const FAQ_QUESTIONS = [
     // --- Section: Troubleshooting ---
     {
         question: "My bot is 'Logged Out' or 'Offline'. How do I fix it?",
-        answer: "This is the most common issue and means your Session ID has expired. You must generate a new one.\n\n*Solution:* Go to 'My Bots' -> Select your bot -> 'Set Variable' -> 'SESSION_ID', and paste your new, valid Session ID.\n\n⚠️ *IMPORTANT:* A bot left in the 'Logged Out' state for more than **7 days** will be automatically deleted."
+        answer: "This is the most common issue and means your Session ID has expired. You must generate a new one.\n\n<b>Solution:</b> Go to 'My Bots' -> Select your bot -> 'Set Variable' -> 'SESSION_ID', and paste your new, valid Session ID.\n\n⚠️ <b>IMPORTANT:</b> A bot left in the 'Logged Out' state for more than <b>7 days</b> will be automatically deleted."
     },
     {
         question: "My bot failed to deploy. What should I do?",
@@ -82,16 +82,20 @@ const FAQ_ITEMS_PER_PAGE = 5;
 
 // Function to send a specific page of FAQs
 async function sendFaqPage(chatId, messageId, page) {
-    const { bot, userStates, escapeMarkdown } = moduleParams;
+    // Destructure bot and userStates from moduleParams
+    const { bot, userStates } = moduleParams;
 
     const startIndex = (page - 1) * FAQ_ITEMS_PER_PAGE;
     const endIndex = startIndex + FAQ_ITEMS_PER_PAGE;
     const currentQuestions = FAQ_QUESTIONS.slice(startIndex, endIndex);
 
-    let faqText = "*Frequently Asked Questions*\n\n";
+    // --- UPDATED to use HTML tags ---
+    let faqText = "<b>Frequently Asked Questions</b>\n\n";
     currentQuestions.forEach((faq, index) => {
-        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`;
-        faqText += `_${escapeMarkdown(faq.answer)}_\n\n`;
+        // Use <b> for the question
+        faqText += `<b>${startIndex + index + 1}. ${faq.question}</b>\n`;
+        // Use the answer as-is (it already contains HTML)
+        faqText += `${faq.answer}\n\n`;
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
@@ -110,7 +114,7 @@ async function sendFaqPage(chatId, messageId, page) {
     keyboard.push([{ text: '« Back to Main Menu', callback_data: 'back_to_main_menu' }]);
 
     const options = {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML', // <-- UPDATED
         disable_web_page_preview: true,
         reply_markup: { inline_keyboard: keyboard }
     };
