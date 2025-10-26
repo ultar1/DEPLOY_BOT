@@ -4448,7 +4448,7 @@ bot.onText(/^\/deployem$/, async (msg) => {
     }
 });
 
-// This replaces your old /dbstats command
+
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -4462,30 +4462,34 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             throw new Error(neonResult.error);
         }
 
-        // 2. ✅ NEW: Get all bots from YOUR database
+        // 2. Get all bots from YOUR database
         const allBots = await dbServices.getAllBotDeployments();
         
-        // 3. ✅ NEW: Create a quick lookup map (app_name -> user_id)
+        // 3. Create a quick lookup map (app_name -> user_id)
         const ownerMap = new Map();
         for (const bot of allBots) {
-            ownerMap.set(bot.app_name.replace(/-/g, '_'), bot.user_id);
+            // ✅ --- THIS IS THE FIX --- ✅
+            // Only add to map if app_name is a valid string
+            if (bot.bot_name && typeof bot.bot_name === 'string') {
+                ownerMap.set(bot.bot_name.replace(/-/g, '_'), bot.user_id);
+            }
+            // ✅ --- END OF FIX --- ✅
         }
 
         const { logical_size_mb, databases, project_id, branch_id } = neonResult.data;
         
-        // 4. ✅ NEW: Build the list string using the lookup map
+        // 4. Build the list string using the lookup map
         let dbListString = "No databases found.";
         if (databases.length > 0) {
             dbListString = databases.map(db => {
-                // Find the owner's user_id from the map
                 const ownerUserId = ownerMap.get(db.name);
                 const ownerString = ownerUserId ? `(Owner User ID: <code>${ownerUserId}</code>)` : '(Owner: Unknown/External)';
                 
                 return `  - <b>${escapeHTML(db.name)}</b> ${ownerString}\n    (Neon Role: <code>${escapeHTML(db.owner)}</code>, Created: ${escapeHTML(db.created_at)})`;
-            }).join('\n\n'); // Added extra newline for readability
+            }).join('\n\n');
         }
 
-        // 5. ✅ NEW: Format the final message
+        // 5. Format the final message
         const finalMessage = `
 <b>Neon Database Statistics</b>
 
@@ -4514,6 +4518,7 @@ ${dbListString}
         ).catch(err => console.error("Error editing message:", err.message));
     }
 });
+
 
 
 // --- NEW COMMAND: /sync ---
