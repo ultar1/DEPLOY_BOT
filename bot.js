@@ -5158,13 +5158,9 @@ bot.onText(/\/dellogout/, async (msg) => {
     const chatId = msg.chat.id;
 
     // --- 1. Security Check: Admin Only ---
+    // This check now works because ADMINS is defined above.
     if (!ADMINS.includes(fromId)) {
         return bot.sendMessage(chatId, "You do not have permission to use this command.");
-    }
-
-    // --- 2. Security Check: Private Chat Only ---
-    if (msg.chat.type !== 'private') {
-        return bot.sendMessage(chatId, "This command can only be used in a private chat.");
     }
 
     // --- 3. Configuration Check ---
@@ -5173,7 +5169,7 @@ bot.onText(/\/dellogout/, async (msg) => {
         return bot.sendMessage(chatId, "Error: Bot is not configured correctly for Heroku purge.");
     }
 
-    // --- 4. Start Process ---
+    // --- 4. Start Process (runs immediately) ---
     const adminMsg = await bot.sendMessage(chatId, "Fetching logged-out bots... Starting Heroku purge...");
 
     try {
@@ -5198,11 +5194,12 @@ bot.onText(/\/dellogout/, async (msg) => {
 
             // Update admin on progress
             const currentTask = `(${i + 1}/${totalBots}) Deleting Heroku app *${app_name}*...`;
+            // Using .catch() in case the message text hasn't changed, which would throw an error
             await bot.editMessageText(log + currentTask, { 
                 chat_id: chatId, 
                 message_id: adminMsg.message_id, 
                 parse_mode: 'Markdown' 
-            }).catch(() => {}); // Ignore errors if text is same
+            }).catch(() => {});
 
             try {
                 // Delete from Heroku
@@ -5212,24 +5209,24 @@ bot.onText(/\/dellogout/, async (msg) => {
                         Authorization: `Bearer ${process.env.HEROKU_API_KEY}`, 
                         Accept: 'application/vnd.heroku+json; version=3' 
                     }
-                }).catch(e => {
-                    // IMPORTANT: If Heroku gives 404, it's already gone. We count this as success.
-                    if (e.response && e.response.status !== 404) {
-                        // A real error (like 403)
-                        throw e; 
-                    }
-                    // If it's 404, we do nothing and let it be counted as success.
-                    console.log(`[Heroku Purge] ${app_name} already deleted (404).`);
                 });
 
                 successCount++;
                 log += `(${i + 1}/${totalBots}) *${app_name}*... *PURGED*\n`;
 
             } catch (error) {
-                failCount++;
-                const errorMsg = error.response ? error.response.status : error.message;
-                log += `(${i + 1}/${totalBots}) *${app_name}*... *FAILED* (${errorMsg})\n`;
-                console.error(`[Heroku Purge] Critical failure for ${app_name}: ${error.message}`);
+                // IMPORTANT: If Heroku gives 404, it's already gone. We count this as success.
+                if (error.response && error.response.status === 404) {
+                    successCount++;
+                    log += `(${i + 1}/${totalBots}) *${app_name}*... *Already gone (404)*\n`;
+                    console.log(`[Heroku Purge] ${app_name} already deleted (404).`);
+                } else {
+                    // A real error (like 403 Forbidden or 500)
+                    failCount++;
+                    const errorMsg = error.response ? error.response.status : error.message;
+                    log += `(${i + 1}/${totalBots}) *${app_name}*... *FAILED* (${errorMsg})\n`;
+                    console.error(`[Heroku Purge] Critical failure for ${app_name}: ${error.message}`);
+                }
             }
         }
 
@@ -5249,7 +5246,6 @@ bot.onText(/\/dellogout/, async (msg) => {
         });
     }
 });
-
 // In bot.js
 bot.onText(/^\/backupall$/, async (msg) => {
     const adminId = msg.chat.id.toString();
