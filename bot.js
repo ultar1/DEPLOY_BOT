@@ -28,6 +28,12 @@ const { sendPaymentConfirmation, sendVerificationEmail, sendLoggedOutReminder } 
 
 const crypto = require('crypto');
 
+const cron = require('node-cron');
+// ...
+// Make sure botServices is required, you probably already have this
+const botServices = require('./bot_services.js');
+
+
 
 const { URLSearchParams } = require('url');
 
@@ -1274,6 +1280,25 @@ function startScheduledTasks() {
         chat: { id: ADMIN_ID },
         from: { id: ADMIN_ID }
     };
+
+  // --- START SCHEDULED JOBS ---
+
+// Schedule prune job to run every 7 days (every Sunday at 12:00 AM)
+// '0 0 * * 0' = (minute 0) (hour 0) (any day of month) (any month) (day of week 0 = Sunday)
+cron.schedule('0 0 * * 0', () => {
+    console.log('--- Running weekly logged-out bot prune job ---');
+    botServices.pruneLoggedOutBots().catch(err => {
+        console.error('[Scheduler] Weekly prune job failed:', err);
+    });
+}, {
+    scheduled: true,
+    timezone: "Africa/Lagos" // ❗️ IMPORTANT: Set this to your server's/local timezone
+});
+
+console.log('Weekly prune job for logged-out bots is scheduled.');
+
+// --- END SCHEDULED JOBS ---
+
 
     // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
     // Cron format: 'Minute Hour DayOfMonth Month DayOfWeek'
@@ -2906,6 +2931,7 @@ async function notifyAdminUserOnline(msg) {
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
     ADMIN_ID: ADMIN_ID,
     createNeonDatabase: createNeonDatabase, 
+     deleteNeonDatabase: deleteNeonDatabase,
     // --- CRITICAL CHANGE START ---
     defaultEnvVars: { // <-- Pass an object containing both
         levanter: levanterDefaultEnvVars,
@@ -11581,63 +11607,6 @@ setInterval(runDailyBackup, 60 * 60 * 1000);
 console.log('[Backup] Scheduled hourly automatic database backup.');
 
 
-// Replace this entire function in bot.js
-async function checkAndPruneLoggedOutBots() {
-    console.log('[Prune] Running hourly check for long-term logged-out bots...');
-    try {
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); 
-        
-        const result = await pool.query(
-            "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
-            [sevenDaysAgo] 
-        );
-
-        const botsToDelete = result.rows;
-        if (botsToDelete.length === 0) {
-            console.log('[Prune] No logged-out bots found matching the 7-day deletion criteria.');
-            return;
-        }
-
-        console.log(`[Prune] Found ${botsToDelete.length} bot(s) to delete for being logged out over 7 days.`);
-
-        for (const botInfo of botsToDelete) {
-            const { user_id, bot_name } = botInfo;
-            console.log(`[Prune] Attempting to delete bot "${bot_name}" for user ${user_id}.`);
-            
-            try {
-                // ❗️ FIX: Use herokuApi here instead of axios ❗️
-                await herokuApi.delete(`/apps/${bot_name}`, {
-                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
-                });
-
-                // Database cleanup (this part was correct)
-                await dbServices.deleteUserBot(user_id, bot_name);
-                await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
-
-                await bot.sendMessage(user_id, `Your bot *${escapeMarkdown(bot_name)}* has been automatically deleted because it was logged out for more than 7 days.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 7 days.`, { parse_mode: 'Markdown' });
-                console.log(`[Prune] Successfully deleted bot "${bot_name}".`);
-
-            } catch (error) {
-                if (error.response && error.response.status === 404) {
-                    console.log(`[Prune] App ${bot_name} was already deleted from Heroku. Cleaning up DB records.`);
-                    await dbServices.deleteUserBot(user_id, bot_name);
-                    await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
-                } else {
-                    // Log the specific error for debugging
-                    const errorMsg = error.response?.data?.message || error.message;
-                    console.error(`[Prune] Failed to delete bot ${bot_name}:`, errorMsg);
-                    await bot.sendMessage(ADMIN_ID, `Failed to auto-delete bot "*${escapeMarkdown(bot_name)}*". Please check logs. Reason: ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
-                }
-            }
-        }
-    } catch (dbError) {
-        console.error('[Prune] DB Error while checking for logged-out bots:', dbError);
-    }
-}
-
-
-
 async function pruneInactiveUsers() {
     console.log('[Prune] Running daily check for inactive users with no bots...');
     
@@ -11741,11 +11710,6 @@ async function sendLoggedOutCountdownReminders() {
 // 🚨 Schedule this to run every 24 hours (1 day)
 setInterval(sendLoggedOutCountdownReminders, 24 * 60 * 60 * 1000); 
 console.log('[Countdown] Scheduled daily logged-out bot countdown reminders.');
-
-
-// Run the check every hour
-setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
-console.log('[Countdown] Scheduled daily deleting logged-out bot.');
 
 
 async function checkAndSendLoggedOutReminders() {
