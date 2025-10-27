@@ -106,6 +106,118 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 
 /**
+ * Automatically prunes (deletes) the external resources for bots marked as 'logged_out'.
+ * This deletes the Heroku app and the associated Neon database but LEAVES the
+ * user's records in the main database intact.
+ * @returns {Promise<{pruned: number, failedHeroku: number, failedNeon: number}>} - A summary.
+ */
+async function pruneLoggedOutBots() {
+    console.log('[Prune] Starting scheduled job to prune logged-out resources...');
+    
+    // 1. Get the 'deleteNeonDatabase' function from moduleParams
+    // We MUST assume this function is passed in from bot.js, just like 'createNeonDatabase'
+    const { deleteNeonDatabase } = moduleParams;
+
+    if (!deleteNeonDatabase) {
+        console.error('[Prune] CRITICAL: `deleteNeonDatabase` function not found in moduleParams. Prune job aborted.');
+        if (monitorSendTelegramAlert) {
+            monitorSendTelegramAlert('CRITICAL PRUNE ERROR: `deleteNeonDatabase` function not provided. Prune job aborted. Please update bot code.', ADMIN_ID);
+        }
+        return { pruned: 0, failedHeroku: -1, failedNeon: -1 };
+    }
+
+    // 2. Get all bots marked as 'logged_out'
+    const loggedOutBots = await getLoggedOutBots(); // This is your existing function
+
+    if (loggedOutBots.length === 0) {
+        console.log('[Prune] No logged-out bots found to prune.');
+        return { pruned: 0, failedHeroku: 0, failedNeon: 0 };
+    }
+
+    console.log(`[Prune] Found ${loggedOutBots.length} logged-out bots. Starting resource deletion...`);
+    
+    let prunedCount = 0;
+    let failedHerokuCount = 0;
+    let failedNeonCount = 0;
+
+    // 3. Loop through each bot and delete its resources
+    for (const bot of loggedOutBots) {
+        const { user_id, app_name } = bot;
+        let herokuDeleted = false;
+        let neonDeleted = false;
+
+        // --- Part A: Delete Heroku App ---
+        try {
+            console.log(`[Prune] Deleting Heroku app: ${app_name} (User: ${user_id})`);
+            await herokuApi.delete(`/apps/${app_name}`, {
+                headers: { 
+                    'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                    'Accept': 'application/vnd.heroku+json; version=3'
+                }
+            });
+            console.log(`[Prune] Successfully deleted Heroku app: ${app_name}`);
+            herokuDeleted = true;
+        } catch (error) {
+            if (error.response && error.response.status === 404) {
+                // If it's already gone, count it as a success
+                console.warn(`[Prune] Heroku app ${app_name} was already deleted.`);
+                herokuDeleted = true; 
+            } else {
+                console.error(`[Prune] Failed to delete Heroku app ${app_name}:`, error.message);
+                failedHerokuCount++;
+            }
+        }
+
+        // --- Part B: Delete Neon Database ---
+        const dbName = app_name.replace(/-/g, '_'); // Recreate the DB name
+        try {
+            console.log(`[Prune] Deleting Neon database: ${dbName} (for app: ${app_name})`);
+            const neonResult = await deleteNeonDatabase(dbName);
+            
+            if (neonResult.success) {
+                console.log(`[Prune] Successfully deleted Neon DB: ${dbName}`);
+                neonDeleted = true;
+            } else {
+                // If it's already gone, count it as a success
+                if (neonResult.error && (neonResult.error.includes('not found') || neonResult.error.includes('Project not found'))) {
+                    console.warn(`[Prune] Neon DB ${dbName} was already deleted.`);
+                    neonDeleted = true;
+                } else {
+                    throw new Error(neonResult.error || 'Unknown Neon deletion error');
+                }
+            }
+        } catch (error) {
+            console.error(`[Prune] Failed to delete Neon DB ${dbName}:`, error.message);
+            failedNeonCount++;
+        }
+
+        // --- Part C: Tally ---
+        if (herokuDeleted && neonDeleted) {
+            prunedCount++;
+            console.log(`[Prune] Successfully pruned all resources for ${app_name}. DB record remains.`);
+        }
+    }
+
+    // --- 4. Report to Admin ---
+    console.log(`[Prune] Job finished. Fully pruned: ${prunedCount}, Heroku fails: ${failedHerokuCount}, Neon fails: ${failedNeonCount}.`);
+    
+    if (monitorSendTelegramAlert && ADMIN_ID && (prunedCount > 0 || failedHerokuCount > 0 || failedNeonCount > 0)) {
+         monitorSendTelegramAlert(
+            `*Weekly Resource Prune Report* \n\n` +
+            `Bots fully pruned (Heroku + Neon): ${prunedCount}\n` +
+            `Failed Heroku deletions: ${failedHerokuCount}\n` +
+            `Failed Neon DB deletions: ${failedNeonCount}\n\n` +
+            `Note: User database records were *not* deleted, only external apps and databases.`,
+            ADMIN_ID
+         );
+    }
+    
+    return { pruned: prunedCount, failedHeroku: failedHerokuCount, failedNeon: failedNeonCount };
+}
+
+
+
+/**
  * Directly copies a Heroku Postgres database into a new schema in the main Render database.
  * @param {string} appName The name of the Heroku app.
  * @returns {Promise<{success: boolean, message: string}>}
@@ -2085,6 +2197,7 @@ module.exports = {
     getAllUserBots,
     getExpiringBots,
     getUserBotCount,
+    pruneLoggedOutBot,
     getBotNameBySessionId,
     updateUserSession,
     addDeployKey,
