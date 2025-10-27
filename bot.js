@@ -35,8 +35,13 @@ const botServices = require('./bot_services.js');
 
 const { URLSearchParams } = require('url');
 const sharp = require('sharp');
-const STICKER_PACK_NAME = `Ultar`;
-const STICKER_PACK_TITLE = `Ultar`; 
+// ✅ Correct TITLE (what users see)
+const STICKER_PACK_TITLE = 'Ultar';
+
+// ✅ Correct NAME (technical ID for Telegram)
+// Make sure ADMIN_ID and BOT_USERNAME are defined above this!
+const STICKER_PACK_NAME = `ultar_${ADMIN_ID}_by_${BOT_USERNAME}`;
+
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
 const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
