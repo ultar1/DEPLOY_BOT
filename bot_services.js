@@ -1518,8 +1518,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool, 
         MUST_JOIN_CHANNEL_ID, createNeonDatabase, appDeploymentPromises, getAnimatedEmoji,
         getUserBotCount, hasReceivedReward, addDeployKey, recordReward, grantReferralRewards,
-        addUserBot, // Added missing dependencies
-        saveUserDeployment // Added missing dependencies
+        addUserBot, saveUserDeployment // Added missing dependencies
     } = moduleParams;
     
     let appName = vars.APP_NAME;
