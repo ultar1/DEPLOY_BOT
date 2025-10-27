@@ -40,7 +40,7 @@ const STICKER_PACK_TITLE = 'Ultar';
 
 // ✅ Correct NAME (technical ID for Telegram)
 // Make sure ADMIN_ID and BOT_USERNAME are defined above this!
-const STICKER_PACK_NAME = `ultar_${TELEGRAM_USER_ID}_by_${BOT_USERNAME}`;
+const STICKER_PACK_NAME = `ultar_7897230448_by_${BOT_USERNAME}`;
 
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
