@@ -36,7 +36,7 @@ const botServices = require('./bot_services.js');
 const { URLSearchParams } = require('url');
 const sharp = require('sharp');
 const STICKER_PACK_NAME = `Ultar`;
-const STICKER_PACK_TITLE = 'Ultar'; 
+const STICKER_PACK_TITLE = `Ultar`; 
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
 const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
