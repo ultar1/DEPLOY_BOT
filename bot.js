@@ -28,14 +28,15 @@ const { sendPaymentConfirmation, sendVerificationEmail, sendLoggedOutReminder } 
 
 const crypto = require('crypto');
 
-const cron = require('node-cron');
-// ...
 // Make sure botServices is required, you probably already have this
 const botServices = require('./bot_services.js');
 
 
 
 const { URLSearchParams } = require('url');
+const sharp = require('sharp');
+const STICKER_PACK_NAME = `Ultar`;
+const STICKER_PACK_TITLE = 'Ultar'; 
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
 const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
@@ -5267,6 +5268,115 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, mat
 });
 
 // ... other code ...
+/**
+ * Smart sticker command.
+ * - If the pack doesn't exist, it creates it.
+ * - If the pack exists, it adds to it.
+ * Usage: Reply to a photo and type /sticker 😂
+ */
+bot.onText(/\/sticker(?: (.+))?/, async (msg, match) => {
+    // 1. Check permissions
+    if (String(msg.from.id) !== ADMIN_ID) {
+        return bot.sendMessage(msg.chat.id, "You are not authorized.");
+    }
+    
+    // 2. Check that the command is used correctly
+    if (!msg.reply_to_message || !msg.reply_to_message.photo) {
+        return bot.sendMessage(msg.chat.id, "Please reply to a photo.");
+    }
+
+    const emojis = match[1];
+    if (!emojis) {
+        return bot.sendMessage(msg.chat.id, "Please provide an emoji, e.g., `/sticker 😂`");
+    }
+
+    const sentMsg = await bot.sendMessage(msg.chat.id, "Processing sticker...");
+    let stickerBuffer;
+
+    try {
+        // 3. Download and process the photo
+        const photo = msg.reply_to_message.photo.pop();
+        const file = await bot.getFile(photo.file_id);
+        
+        // This URL uses the BOT_TOKEN from the top of your file
+        const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+
+        const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+        const photoBuffer = Buffer.from(response.data, 'binary');
+
+        stickerBuffer = await sharp(photoBuffer)
+            .resize(512, 512, { 
+                fit: 'contain', 
+                background: { r: 0, g: 0, b: 0, alpha: 0 } 
+            })
+            .webp()
+            .toBuffer();
+
+    } catch (err) {
+        console.error(err);
+        return bot.editMessageText(`Error processing image: ${err.message}`, {
+            chat_id: msg.chat.id,
+            message_id: sentMsg.message_id
+        });
+    }
+
+    // 4. Try to ADD the sticker
+    try {
+        // We use the STICKER_PACK_NAME from the top of your file
+        await bot.addStickerToSet(
+            msg.from.id,
+            STICKER_PACK_NAME,
+            stickerBuffer,
+            emojis
+        );
+        
+        await bot.editMessageText(`Sticker added!`, {
+            chat_id: msg.chat.id,
+            message_id: sentMsg.message_id
+        });
+
+    } catch (addError) {
+        // 5. If adding failed, check if it's because the pack doesn't exist
+        if (addError.response && addError.response.body.description.includes('STICKERSET_INVALID')) {
+            // Pack doesn't exist. Let's create it!
+            await bot.editMessageText("Pack not found, creating a new one...", {
+                chat_id: msg.chat.id,
+                message_id: sentMsg.message_id
+            });
+            
+            try {
+                // We use all the pre-defined constants
+                await bot.createNewStickerSet(
+                    msg.from.id,
+                    STICKER_PACK_NAME,
+                    STICKER_PACK_TITLE, // Title from the top
+                    stickerBuffer,
+                    emojis
+                );
+                
+                await bot.editMessageText(`✅ New pack created and sticker added!`, {
+                    chat_id: msg.chat.id,
+                    message_id: sentMsg.message_id
+                });
+
+            } catch (createError) {
+                // This might fail if the name is still wrong (e.g., BOT_USERNAME is incorrect)
+                console.error(createError);
+                await bot.editMessageText(`Error creating new pack: ${createError.response.body.description}`, {
+                    chat_id: msg.chat.id,
+                    message_id: sentMsg.message_id
+                });
+            }
+        } else {
+            // It was a different error (e.g., "Too many stickers in pack")
+            console.error(addError);
+            await bot.editMessageText(`Error adding sticker: ${addError.response.body.description}`, {
+                chat_id: msg.chat.id,
+                message_id: sentMsg.message_id
+            });
+        }
+    }
+});
 
 
 bot.onText(/^\/copydb$/, async (msg) => {
