@@ -111,7 +111,7 @@ const execPromise = util.promisify(exec);
  * user's records in the main database intact.
  * @returns {Promise<{pruned: number, failedHeroku: number, failedNeon: number}>} - A summary.
  */
-async function pruneLoggedOutBots() {
+async function pruneLoggedOutBot() {
     console.log('[Prune] Starting scheduled job to prune logged-out resources...');
     
     // 1. Get the 'deleteNeonDatabase' function from moduleParams
