@@ -106,7 +106,7 @@ const {
 } = process.env;
 
 
-const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '8302751516:AAGQL2dlWPmRqpOGfTsmjC6ByGE4dJLDHMg';
+const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7788409928:AAFw7A2Pr7lVJUWTQJlYWIKKwDveQPF9-ZI';
 const TELEGRAM_USER_ID = '7302005705';
 const TELEGRAM_CHANNEL_ID = '-1002892034574';
 
@@ -5299,7 +5299,7 @@ bot.onText(/\/sticker(?: (.+))?/, async (msg, match) => {
         const file = await bot.getFile(photo.file_id);
         
         // This URL uses the BOT_TOKEN from the top of your file
-        const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+        const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
 
         const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
         const photoBuffer = Buffer.from(response.data, 'binary');
@@ -5354,7 +5354,7 @@ bot.onText(/\/sticker(?: (.+))?/, async (msg, match) => {
                     emojis
                 );
                 
-                await bot.editMessageText(`✅ New pack created and sticker added!`, {
+                await bot.editMessageText(`New pack created and sticker added!`, {
                     chat_id: msg.chat.id,
                     message_id: sentMsg.message_id
                 });
