@@ -1517,8 +1517,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
         ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool, 
         MUST_JOIN_CHANNEL_ID, createNeonDatabase, appDeploymentPromises, getAnimatedEmoji,
-        getUserBotCount, hasReceivedReward, addDeployKey, recordReward, grantReferralRewards,
-        addUserBot, saveUserDeployment // Added missing dependencies
+        getUserBotCount, hasReceivedReward, addDeployKey, recordReward, grantReferralRewards
     } = moduleParams;
     
     let appName = vars.APP_NAME;
