@@ -5272,116 +5272,173 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, mat
     );
 });
 
-// ... other code ...
-/**
- * Smart sticker command.
- * - If the pack doesn't exist, it creates it.
- * - If the pack exists, it adds to it.
- * Usage: Reply to a photo and type /sticker 😂
- */
+
+
 bot.onText(/\/sticker(?: (.+))?/, async (msg, match) => {
-    // 1. Check permissions
+    // 1. Basic Checks
     if (String(msg.from.id) !== ADMIN_ID) {
         return bot.sendMessage(msg.chat.id, "You are not authorized.");
     }
-    
-    // 2. Check that the command is used correctly
-    if (!msg.reply_to_message || !msg.reply_to_message.photo) {
-        return bot.sendMessage(msg.chat.id, "Please reply to a photo.");
+    if (!msg.reply_to_message) {
+        return bot.sendMessage(msg.chat.id, "Please reply to a photo, short video (under 3s), or GIF.");
     }
-
+    const repliedMsg = msg.reply_to_message;
     const emojis = match[1];
     if (!emojis) {
         return bot.sendMessage(msg.chat.id, "Please provide an emoji, e.g., `/sticker 😂`");
     }
 
-    const sentMsg = await bot.sendMessage(msg.chat.id, "Processing sticker...");
-    let stickerBuffer;
+    // 2. Identify Media Type and Get File ID
+    let fileId;
+    let isAnimated = false;
+    let isPhoto = false;
 
-    try {
-        // 3. Download and process the photo
-        const photo = msg.reply_to_message.photo.pop();
-        const file = await bot.getFile(photo.file_id);
-        
-        // This URL uses the BOT_TOKEN from the top of your file
-        const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-
-        const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-        const photoBuffer = Buffer.from(response.data, 'binary');
-
-        stickerBuffer = await sharp(photoBuffer)
-            .resize(512, 512, { 
-                fit: 'contain', 
-                background: { r: 0, g: 0, b: 0, alpha: 0 } 
-            })
-            .webp()
-            .toBuffer();
-
-    } catch (err) {
-        console.error(err);
-        return bot.editMessageText(`Error processing image: ${err.message}`, {
-            chat_id: msg.chat.id,
-            message_id: sentMsg.message_id
-        });
+    if (repliedMsg.photo) {
+        fileId = repliedMsg.photo[repliedMsg.photo.length - 1].file_id;
+        isPhoto = true;
+    } else if (repliedMsg.video && repliedMsg.video.duration <= 3) { // Telegram requires <= 3 seconds
+        fileId = repliedMsg.video.file_id;
+        isAnimated = true;
+    } else if (repliedMsg.animation) { // GIFs are treated as 'animation'
+        fileId = repliedMsg.animation.file_id;
+        isAnimated = true;
+    } else if (repliedMsg.video && repliedMsg.video.duration > 3) {
+        return bot.sendMessage(msg.chat.id, "Video is too long. Animated stickers must be 3 seconds or less.");
+    } else {
+        return bot.sendMessage(msg.chat.id, "Please reply to a photo, short video (under 3s), or GIF.");
     }
 
-    // 4. Try to ADD the sticker
+    const sentMsg = await bot.sendMessage(msg.chat.id, "Processing media...");
+    let stickerBuffer;
+    let inputTempPath = null;
+    let outputTempPath = null;
+
     try {
-        // We use the STICKER_PACK_NAME from the top of your file
-        await bot.addStickerToSet(
-            msg.from.id,
-            STICKER_PACK_NAME,
-            stickerBuffer,
-            emojis
-        );
-        
-        await bot.editMessageText(`Sticker added!`, {
-            chat_id: msg.chat.id,
-            message_id: sentMsg.message_id
+        // 3. Download the media
+        const file = await bot.getFile(fileId);
+        const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+        const mediaBuffer = Buffer.from(response.data, 'binary');
+
+        await bot.editMessageText("Converting to sticker format...", {
+            chat_id: msg.chat.id, message_id: sentMsg.message_id
         });
 
-    } catch (addError) {
-        // 5. If adding failed, check if it's because the pack doesn't exist
-        if (addError.response && addError.response.body.description.includes('STICKERSET_INVALID')) {
-            // Pack doesn't exist. Let's create it!
-            await bot.editMessageText("Pack not found, creating a new one...", {
-                chat_id: msg.chat.id,
-                message_id: sentMsg.message_id
-            });
-            
-            try {
-                // We use all the pre-defined constants
-                await bot.createNewStickerSet(
-                    msg.from.id,
-                    STICKER_PACK_NAME,
-                    STICKER_PACK_TITLE, // Title from the top
-                    stickerBuffer,
-                    emojis
-                );
-                
-                await bot.editMessageText(`New pack created and sticker added!`, {
-                    chat_id: msg.chat.id,
-                    message_id: sentMsg.message_id
-                });
+        // 4. Process based on type
+        if (isPhoto) {
+            // --- Static Photo Processing (using Sharp) ---
+            stickerBuffer = await sharp(mediaBuffer)
+                .resize(512, 512, {
+                    fit: 'contain',
+                    background: { r: 0, g: 0, b: 0, alpha: 0 } // Ensure transparent background
+                })
+                .webp() // Convert to WebP for static stickers
+                .toBuffer();
+        } else if (isAnimated) {
+            // --- Animated Video/GIF Processing (using FFmpeg) ---
+            inputTempPath = tempfile(path.extname(file.file_path || '.mp4')); // Use original extension if available
+            outputTempPath = tempfile('.webm');
+            fs.writeFileSync(inputTempPath, mediaBuffer);
 
-            } catch (createError) {
-                // This might fail if the name is still wrong (e.g., BOT_USERNAME is incorrect)
-                console.error(createError);
-                await bot.editMessageText(`Error creating new pack: ${createError.response.body.description}`, {
-                    chat_id: msg.chat.id,
-                    message_id: sentMsg.message_id
-                });
-            }
-        } else {
-            // It was a different error (e.g., "Too many stickers in pack")
-            console.error(addError);
-            await bot.editMessageText(`Error adding sticker: ${addError.response.body.description}`, {
-                chat_id: msg.chat.id,
-                message_id: sentMsg.message_id
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputTempPath)
+                    .outputOptions([
+                        '-c:v libvpx-vp9', // VP9 codec (required by Telegram)
+                        '-pix_fmt yuva420p', // Pixel format supporting transparency
+                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease:flags=bicubic,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000', // Scale and pad with transparency
+                        '-t 3',            // Max 3 seconds duration
+                        '-an',             // No audio
+                        '-loop 0',         // Loop indefinitely (for WebM)
+                        '-vsync 0',        // Variable frame rate sync
+                        '-quality good',   // Encoding quality
+                        '-b:v 1M',         // Bitrate (adjust if needed)
+                        '-crf 30',         // Constant Rate Factor (adjust quality/size)
+                    ])
+                    .outputFormat('webm')
+                    .on('end', resolve)
+                    .on('error', (err) => {
+                        console.error('FFmpeg error:', err.message);
+                        reject(new Error(`FFmpeg conversion failed: ${err.message.split('\n').pop()}`)); // Get last line of error
+                    })
+                    .save(outputTempPath);
             });
+
+            stickerBuffer = fs.readFileSync(outputTempPath);
+
+            // Telegram requires animated stickers to be <= 256KB
+            if (stickerBuffer.length > 256 * 1024) {
+                throw new Error(`Converted animated sticker is too large (${(stickerBuffer.length / 1024).toFixed(1)}KB). Max size is 256KB.`);
+            }
+        }
+
+        await bot.editMessageText("Uploading sticker to Telegram...", {
+            chat_id: msg.chat.id, message_id: sentMsg.message_id
+        });
+
+        // 5. Determine upload options
+        const stickerOptions = {};
+        if (isAnimated) {
+            stickerOptions.webm_sticker = stickerBuffer;
+        } else {
+            stickerOptions.png_sticker = stickerBuffer; // API uses png_sticker for WebP too
+        }
+
+        // 6. Try to ADD sticker
+        try {
+            await bot.addStickerToSet(msg.from.id, STICKER_PACK_NAME, stickerOptions, emojis);
+            await bot.editMessageText(`Sticker added!`, {
+                chat_id: msg.chat.id, message_id: sentMsg.message_id
+            });
+        } catch (addError) {
+            // 7. If ADD fails because pack doesn't exist, CREATE it
+            if (addError.response && addError.response.body.description.includes('STICKERSET_INVALID')) {
+                await bot.editMessageText("Pack not found, creating a new one...", {
+                    chat_id: msg.chat.id, message_id: sentMsg.message_id
+                });
+                try {
+                    await bot.createNewStickerSet(msg.from.id, STICKER_PACK_NAME, STICKER_PACK_TITLE, stickerOptions, emojis);
+                    await bot.editMessageText(`New pack created and sticker added!`, {
+                        chat_id: msg.chat.id, message_id: sentMsg.message_id
+                    });
+                } catch (createError) {
+                    console.error("Error creating new pack:", createError.response?.body || createError.message);
+                    throw new Error(`Error creating new pack: ${createError.response?.body?.description || createError.message}`);
+                }
+            } else {
+                // Different error during add
+                console.error("Error adding sticker:", addError.response?.body || addError.message);
+                throw new Error(`Error adding sticker: ${addError.response?.body?.description || addError.message}`);
+            }
+        }
+
+        // 8. Send the sticker back
+        try {
+            const stickerSet = await bot.getStickerSet(STICKER_PACK_NAME);
+            const lastSticker = stickerSet.stickers.pop();
+            if (lastSticker) {
+                await bot.sendSticker(msg.chat.id, lastSticker.file_id);
+            }
+        } catch (sendError) {
+            console.error("Error sending the new sticker back to user:", sendError.message);
+        }
+
+    } catch (err) {
+        // General error handling
+        console.error("Sticker command error:", err);
+        await bot.editMessageText(`❌ Error: ${err.message}`, {
+            chat_id: msg.chat.id, message_id: sentMsg.message_id
+        });
+    } finally {
+        // 9. Cleanup temporary files
+        if (inputTempPath && fs.existsSync(inputTempPath)) {
+            fs.unlinkSync(inputTempPath);
+        }
+        if (outputTempPath && fs.existsSync(outputTempPath)) {
+            fs.unlinkSync(outputTempPath);
         }
     }
 });
+
 
 
 bot.onText(/^\/copydb$/, async (msg) => {
