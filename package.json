@@ -22,6 +22,7 @@
     "replicate": "1.3.0",
     "node-cron": "^3.0.3",
     "uuid": "^10.0.0",
+    "sharp": "0.34.4",
     "rimraf": "^6.0.0",
     "mailersend": "^2.0.0",
     "util": "0.12.5",            
