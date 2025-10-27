@@ -1882,7 +1882,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
     const { 
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
         ADMIN_ID, defaultEnvVars, escapeMarkdown, mainPool, 
-        createNeonDatabase, appDeploymentPromises, addUserBot, saveUserDeployment
+        createNeonDatabase, appDeploymentPromises
     } = moduleParams;
     
     let appName = vars.APP_NAME;
@@ -1924,12 +1924,19 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
              console.log(`[SilentRestore] Re-linking existing database for ${appName}.`);
         }
 
-        // --- Step 3: Set Buildpacks ---
+                // --- Step 3: Set Buildpacks ---
         await herokuApi.put(
           `/apps/${appName}/buildpack-installations`,
-          { updates: [/* ... your buildpacks ... */] },
+          {
+            updates: [
+              { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+              { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+              { buildpack: 'heroku/nodejs' }
+            ]
+          },
           { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
+
 
         // --- Step 4: Set Environment Variables ---
         const filteredVars = {};
