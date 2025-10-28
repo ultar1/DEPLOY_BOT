@@ -901,25 +901,52 @@ async function unbanUser(userId) {
  * @param {string} neonAccountId The Neon Account ID ('1' or '2') where the DB resides.
  */
 async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null, email = null, neonAccountId) {
-    // Ensure pool is initialized (assuming 'pool' is defined globally/passed during init)
     if (!pool) {
         console.error("[DB-Main] Main pool is not initialized in bot_services.");
-        // Consider throwing an error or returning a failure status
         return;
     }
     try {
-        // Validate or default neonAccountId
         const accountId = (neonAccountId === '1' || neonAccountId === '2') ? neonAccountId : '1';
         if (!neonAccountId || (neonAccountId !== '1' && neonAccountId !== '2')) {
             console.warn(`[DB-Main] Missing or invalid neonAccountId for ${appName} (received: ${neonAccountId}), defaulting to '1'.`);
         }
 
-        // Simple deep clone for configVars JSONB compatibility
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
-        const deployDate = new Date(); // Current time for new deployments
+        const deployDate = new Date();
 
-        // Determine expiration date: use provided one OR calculate new one (45 days for paid)
-        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 45) * 24
+        // **** CORRECTED LINE ****
+        // Use provided expiration date OR calculate new one (1 day free, 45 days paid)
+        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 45) * 24 * 60 * 60 * 1000);
+        // **** END CORRECTION ****
+
+        const query = `
+            INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial, email, neon_account_id)
+            VALUES($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10)
+            ON CONFLICT (user_id, app_name) DO UPDATE SET
+               session_id = EXCLUDED.session_id,
+               config_vars = EXCLUDED.config_vars,
+               bot_type = EXCLUDED.bot_type,
+               deleted_from_heroku_at = NULL,
+               is_free_trial = EXCLUDED.is_free_trial,
+               email = EXCLUDED.email,
+               neon_account_id = EXCLUDED.neon_account_id,
+               deploy_date = user_deployments.deploy_date,
+               expiration_date = user_deployments.expiration_date;
+        `;
+
+        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial, email, accountId]);
+
+        console.log(`[DB-Main] Saved/Updated deployment for app ${appName} (Neon Acc: ${accountId}). Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate.toISOString()}.`);
+    } catch (error) {
+        console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message, error.stack);
+        if (moduleParams && moduleParams.monitorSendTelegramAlert && moduleParams.ADMIN_ID) {
+            moduleParams.monitorSendTelegramAlert(`CRITICAL DB ERROR saving deployment for ${appName}. Check logs.`, moduleParams.ADMIN_ID);
+        } else {
+             console.error("[DB-Main] Cannot send admin alert: monitorSendTelegramAlert or ADMIN_ID missing from moduleParams.");
+        }
+    }
+}
+
 
 
 
