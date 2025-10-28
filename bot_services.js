@@ -1934,8 +1934,37 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
         await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
         
-        const expirationDateToUse = isRestore ? vars.expiration_date : null; 
-        
+        // --- START OF EXPIRATION DATE UPDATE ---
+        let expirationDateToUse = null; // Initialize variable
+
+        if (isRestore) {
+            // For restores, preserve the original expiration date from the backup vars if available
+            expirationDateToUse = vars.expiration_date ? new Date(vars.expiration_date) : null;
+            console.log(`[Build Restore] Preserving expiration date: ${expirationDateToUse ? expirationDateToUse.toISOString() : 'Not Set'}`);
+        } else {
+            // For new builds, use the user's provided logic based on vars.DAYS
+            if (vars.DAYS) { // Check if DAYS property exists in the vars object
+                const daysToAdd = parseInt(vars.DAYS, 10);
+                if (!isNaN(daysToAdd) && daysToAdd > 0) {
+                    const deployDate = new Date(); // Use current date
+                    expirationDateToUse = new Date(deployDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+                    console.log(`[Build] Calculated expiration date from vars.DAYS (${daysToAdd}): ${expirationDateToUse.toISOString()}`);
+                } else {
+                    console.warn(`[Build] Invalid vars.DAYS value (${vars.DAYS}). Falling back to saveUserDeployment default.`);
+                    expirationDateToUse = null; // Ensure it's null to trigger default in saveUserDeployment
+                }
+            } else if (isFreeTrial) {
+                 // Free trial logic - Pass null to let saveUserDeployment calculate the 1-day
+                 console.log(`[Build] Free trial - letting saveUserDeployment calculate expiration.`);
+                 expirationDateToUse = null;
+            } else {
+                // Paid deployment but vars.DAYS is missing - Pass null to trigger default in saveUserDeployment
+                console.warn(`[Build] vars.DAYS not provided for new paid deploy ${appName}. saveUserDeployment will use its default.`);
+                expirationDateToUse = null;
+            }
+        }
+        // --- END OF EXPIRATION DATE UPDATE ---
+
         await saveUserDeployment(
             targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, 
             finalConfigVarsAfterBuild, botType, isFreeTrial, 
