@@ -216,6 +216,7 @@ async function createAllTablesInPool(dbPool, dbName) {
             PRIMARY KEY (user_id, app_name)
           );
         `);
+      await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id TEXT DEFAULT '1';`);
 
         await client.query(`
           CREATE TABLE IF NOT EXISTS free_trial_monitoring (
@@ -1387,102 +1388,175 @@ function getAnimatedEmoji() {
     return emoji;
 }
 
-
-// In bot.js, REPLACE this entire function
+// In bot.js
 
 /**
- * Creates a new, empty database on your Neon project.
- * @param {string} newDbName The name of the database to create.
- * @returns {Promise<{success: boolean, db_name?: string, connection_string?: string, error?: string}>}
+ * Creates a new database on the appropriate Neon account based on capacity.
+ * @param {string} newDbName The desired name for the new database.
+ * @returns {Promise<{success: boolean, db_name?: string, connection_string?: string, account_id?: string, error?: string}>}
  */
 async function createNeonDatabase(newDbName) {
-    const { 
-        NEON_API_KEY, 
-        NEON_PROJECT_ID, 
-        NEON_BRANCH_ID, 
-        NEON_DB_HOST, 
-        NEON_DB_USER, 
-        NEON_DB_PASSWORD 
-    } = process.env;
+    const STORAGE_THRESHOLD_MB = 450; // Set your desired threshold here
+    let accountIdToUse = '1'; // Default to Account 1
 
-    // ❗️ FIX: Added NEON_DB_USER to the check, as it's now required for the payload.
-    // Also added host/pass, which are needed to build the final connection string.
-    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID || !NEON_DB_USER || !NEON_DB_HOST || !NEON_DB_PASSWORD) {
-        console.error("[Neon] API credentials are not fully configured.");
-        return { success: false, error: "One or more Neon environment variables (API_KEY, PROJECT_ID, BRANCH_ID, DB_USER, DB_HOST, DB_PASSWORD) are not set." };
+    console.log(`[Neon Create] Checking capacity for Account 1...`);
+    const stats1 = await getNeonStatsForAccount('1');
+
+    if (stats1.success) {
+        const usage1 = parseFloat(stats1.data.logical_size_mb);
+        console.log(`[Neon Create] Account 1 usage: ${usage1} MB`);
+        if (usage1 >= STORAGE_THRESHOLD_MB) {
+            console.log(`[Neon Create] Account 1 exceeds threshold (${STORAGE_THRESHOLD_MB} MB). Switching to Account 2.`);
+            accountIdToUse = '2';
+        }
+    } else {
+        console.warn(`[Neon Create] Could not get stats for Account 1: ${stats1.error}. Proceeding with Account 1 attempt anyway, but may fail.`);
+        // Keep accountIdToUse as '1', but be aware it might fail
     }
 
-    const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases`;
-    
+    // --- Attempt to create on the selected account ---
+    let result = await attemptCreateOnAccount(newDbName, accountIdToUse);
+
+    // --- Fallback Logic ---
+    // If the first attempt failed AND we initially tried Account 1 (either by default or because stats failed)
+    if (!result.success && accountIdToUse === '1') {
+        console.warn(`[Neon Create] Attempt failed on Account 1. Trying fallback to Account 2.`);
+        accountIdToUse = '2'; // Explicitly switch to 2
+        result = await attemptCreateOnAccount(newDbName, accountIdToUse); // Retry on Account 2
+    }
+    // If the first attempt failed AND we initially tried Account 2 (because Acc 1 was full)
+    else if (!result.success && accountIdToUse === '2') {
+         console.warn(`[Neon Create] Attempt failed on Account 2 (Account 1 was already full). No further fallback possible.`);
+         // Result already contains the error from the failed Account 2 attempt
+    }
+
+    return result; // Return the final result (success or error from the last attempt)
+}
+
+/**
+ * Helper function to attempt database creation on a specific Neon account.
+ * @param {string} dbName The name of the database to create.
+ * @param {string} accountId The account ID ('1' or '2') to use.
+ * @returns {Promise<{success: boolean, db_name?: string, connection_string?: string, account_id?: string, error?: string}>}
+ */
+async function attemptCreateOnAccount(dbName, accountId) {
+    console.log(`[Neon Create] Attempting creation on Account ${accountId} for DB: ${dbName}`);
+    // Select credentials based on accountId
+    const apiKey = process.env[`NEON_API_KEY_${accountId}`];
+    const projectId = process.env[`NEON_PROJECT_ID_${accountId}`];
+    const branchId = process.env[`NEON_BRANCH_ID_${accountId}`];
+    const dbHost = process.env[`NEON_DB_HOST_${accountId}`];
+    const dbUser = process.env[`NEON_DB_USER_${accountId}`];
+    const dbPassword = process.env[`NEON_DB_PASSWORD_${accountId}`];
+
+    // Validate necessary credentials for this account
+    if (!apiKey || !projectId || !branchId || !dbHost || !dbUser || !dbPassword) {
+        const missing = [
+            !apiKey && `API_KEY_${accountId}`, !projectId && `PROJECT_ID_${accountId}`, !branchId && `BRANCH_ID_${accountId}`,
+            !dbHost && `DB_HOST_${accountId}`, !dbUser && `DB_USER_${accountId}`, !dbPassword && `DB_PASSWORD_${accountId}`
+        ].filter(Boolean).join(', ');
+        const errorMsg = `Neon Account ${accountId} credentials incomplete. Missing: ${missing}`;
+        console.error(`[Neon Create Attempt ${accountId}] ${errorMsg}`);
+        return { success: false, error: errorMsg };
+    }
+
+    const apiUrl = `https://console.neon.tech/api/v2/projects/${projectId}/branches/${branchId}/databases`;
     const headers = {
-        'Authorization': `Bearer ${NEON_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
     };
-    
-    // ❗️ FIX: The 'owner_name' field is now correctly included in the payload.
     const payload = {
         database: {
-            name: newDbName,
-            owner_name: NEON_DB_USER 
+            name: dbName.replace(/-/g, '_'), // Sanitize name for Neon
+            owner_name: dbUser
         }
     };
 
     try {
         const response = await axios.post(apiUrl, payload, { headers });
-        
-        const dbName = response.data.database.name;
-        
-        // ❗️ FIX: Manually construct the correct new connection string.
-        const newConnectionString = `postgres://${NEON_DB_USER}:${NEON_DB_PASSWORD}@${NEON_DB_HOST}/${dbName}?sslmode=require`;
-        
-        console.log(`[Neon] Successfully created database: ${dbName}`);
-        
-        return { 
-            success: true, 
-            db_name: dbName, 
-            connection_string: newConnectionString // Return the full, correct URL
+        const createdDbName = response.data.database.name;
+
+        // Construct the connection string using the correct account's details
+        const newConnectionString = `postgres://${dbUser}:${dbPassword}@${dbHost}/${createdDbName}?sslmode=require`;
+
+        console.log(`[Neon Create Attempt ${accountId}] Successfully created database: ${createdDbName}`);
+        return {
+            success: true,
+            db_name: createdDbName,
+            connection_string: newConnectionString,
+            account_id: accountId // **Return the account ID used**
         };
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[Neon] Error creating database: ${errorMsg}`);
-        return { success: false, error: errorMsg };
+        console.error(`[Neon Create Attempt ${accountId}] Error creating database: ${errorMsg}`);
+        return { success: false, error: `Account ${accountId}: ${errorMsg}` };
     }
 }
 
+
+// In bot.js
+
 /**
- * Deletes a specific database from your Neon project. This is permanent.
- * @param {string} dbName The name of the database to delete.
+ * Deletes a specific database from the specified Neon account. This is permanent.
+ * @param {string} dbName The name of the database to delete (will be sanitized).
+ * @param {string} accountId The Neon account ID ('1' or '2') where the database resides.
  * @returns {Promise<{success: boolean, error?: string}>}
  */
-async function deleteNeonDatabase(dbName) {
-    // This function assumes your Neon credentials are in process.env
-    const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID } = process.env;
-    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
-        console.error("[Neon] API credentials are not fully configured.");
-        return { success: false, error: "Neon API credentials are not set." };
+async function deleteNeonDatabase(dbName, accountId) {
+    // Input validation
+    if (!accountId || (accountId !== '1' && accountId !== '2')) {
+        const errorMsg = `[Neon Delete] Invalid or missing accountId provided: '${accountId}'. Cannot proceed.`;
+        console.error(errorMsg);
+        return { success: false, error: errorMsg };
+    }
+    if (!dbName) {
+        const errorMsg = `[Neon Delete] Invalid or missing dbName provided. Cannot proceed.`;
+        console.error(errorMsg);
+        return { success: false, error: errorMsg };
     }
 
-    // Sanitize the app name to get the database name
+
+    console.log(`[Neon Delete] Attempting deletion on Account ${accountId} for DB: ${dbName}`);
+
+    // Select credentials based on accountId
+    const apiKey = process.env[`NEON_API_KEY_${accountId}`];
+    const projectId = process.env[`NEON_PROJECT_ID_${accountId}`];
+    const branchId = process.env[`NEON_BRANCH_ID_${accountId}`];
+
+    // Validate credentials for the specified account
+    if (!apiKey || !projectId || !branchId) {
+        const missing = [!apiKey && `API_KEY_${accountId}`, !projectId && `PROJECT_ID_${accountId}`, !branchId && `BRANCH_ID_${accountId}`].filter(Boolean).join(', ');
+        const errorMsg = `Neon Account ${accountId} credentials (KEY, PROJECT_ID, BRANCH_ID) are not set. Cannot delete ${dbName}.`;
+        console.error(`[Neon Delete Attempt ${accountId}] ${errorMsg}`);
+        return { success: false, error: errorMsg };
+    }
+
+    // Sanitize the database name for the API URL
     const neonDbName = dbName.replace(/-/g, '_');
-    const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases/${neonDbName}`;
-    const headers = { 'Authorization': `Bearer ${NEON_API_KEY}`, 'Accept': 'application/json' };
+    const apiUrl = `https://console.neon.tech/api/v2/projects/${projectId}/branches/${branchId}/databases/${neonDbName}`;
+    const headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+    };
 
     try {
         await axios.delete(apiUrl, { headers });
-        console.log(`[Neon] Successfully deleted database: ${neonDbName}`);
+        console.log(`[Neon Delete Attempt ${accountId}] Successfully deleted database: ${neonDbName}`);
         return { success: true };
     } catch (error) {
-        // A 404 error is fine, it just means the DB was already gone.
+        // A 404 error is acceptable, means it's already gone.
         if (error.response?.status === 404) {
-            console.log(`[Neon] Database ${neonDbName} not found. Assuming already deleted.`);
-            return { success: true };
+            console.log(`[Neon Delete Attempt ${accountId}] Database ${neonDbName} not found. Assuming already deleted.`);
+            return { success: true }; // Treat as success if already gone
         }
+        // Log and return other errors
         const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[Neon] Error deleting database: ${errorMsg}`);
-        return { success: false, error: errorMsg };
+        console.error(`[Neon Delete Attempt ${accountId}] Error deleting database ${neonDbName}: ${errorMsg}`);
+        return { success: false, error: `Account ${accountId}: ${errorMsg}` };
     }
 }
+
 
 /**
  * MASTER DELETION FUNCTION
@@ -2266,63 +2340,80 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
 }
 
 
-// In bot.js
-
 /**
- * Fetches detailed statistics for your Neon project, including all databases.
+ * Fetches detailed statistics for a specific Neon account.
+ * @param {string} accountId - The account identifier ('1' or '2').
  * @returns {Promise<{success: boolean, data?: object, error?: string}>}
  */
-async function getNeonStats() {
-    const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID } = process.env;
+async function getNeonStatsForAccount(accountId) {
+    // Select the correct environment variables based on the account ID
+    const apiKey = process.env[`NEON_API_KEY_${accountId}`];
+    const projectId = process.env[`NEON_PROJECT_ID_${accountId}`];
+    const branchId = process.env[`NEON_BRANCH_ID_${accountId}`];
 
-    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
-        console.error("[Neon] API credentials are not fully configured.");
-        return { success: false, error: "Neon API credentials are not set." };
+    // Basic validation
+    if (!apiKey || !projectId || !branchId) {
+        const missing = [!apiKey && `API_KEY_${accountId}`, !projectId && `PROJECT_ID_${accountId}`, !branchId && `BRANCH_ID_${accountId}`].filter(Boolean).join(', ');
+        console.error(`[Neon Stats ${accountId}] API credentials are not fully configured. Missing: ${missing}`);
+        // Return an error, but don't stop the whole /dbstats command if one account is missing
+        return { success: false, error: `Neon Account ${accountId} credentials (KEY, PROJECT_ID, BRANCH_ID) are not set.` };
     }
 
     const headers = {
-        'Authorization': `Bearer ${NEON_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Accept': 'application/json'
     };
-    
-    // API endpoint to get the list of databases
-    const dbsUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases`;
-    // API endpoint to get branch details (like storage size)
-    const branchUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}`;
+
+    // API endpoints using the specific project/branch IDs
+    const dbsUrl = `https://console.neon.tech/api/v2/projects/${projectId}/branches/${branchId}/databases`;
+    const branchUrl = `https://console.neon.tech/api/v2/projects/${projectId}/branches/${branchId}`;
 
     try {
-        // We make two API calls at the same time to get all the info
+        // Fetch data for the specific account
         const [dbsResponse, branchResponse] = await Promise.all([
             axios.get(dbsUrl, { headers }),
             axios.get(branchUrl, { headers })
         ]);
-        
+
         const databaseList = dbsResponse.data.databases;
         const branchData = branchResponse.data.branch;
 
-        // Extract the useful information
-        const logicalSizeMB = (branchData.logical_size / (1024 * 1024)).toFixed(2);
+        // Extract useful information
+        // Convert bytes to MB, handle potential null/undefined size
+        const logicalSizeMB = branchData.logical_size ? (branchData.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
         const databases = databaseList.map(db => ({
             name: db.name,
             owner: db.owner_name,
-            created_at: new Date(db.created_at).toLocaleDateString('en-US')
+            created_at: new Date(db.created_at).toLocaleDateString('en-US') // Or your preferred format
         }));
-        
-        return { 
-            success: true, 
+
+        // Return structured data including account info
+        return {
+            success: true,
             data: {
+                accountId: accountId, // Include which account this is for
                 logical_size_mb: logicalSizeMB,
                 databases: databases,
-                project_id: NEON_PROJECT_ID,
-                branch_id: NEON_BRANCH_ID
+                project_id: projectId,
+                branch_id: branchId
             }
         };
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[Neon] Error fetching stats: ${errorMsg}`);
-        return { success: false, error: errorMsg };
+        console.error(`[Neon Stats ${accountId}] Error fetching stats: ${errorMsg}`);
+        // Return specific error for this account
+        return { success: false, error: `Account ${accountId}: ${errorMsg}` };
     }
 }
+
+// Keep a simple getNeonStats function IF you need it elsewhere,
+// otherwise, you can remove it. This example assumes you might
+// still call it without args to default to account 1.
+async function getNeonStats() {
+   console.warn("[Neon Stats] Deprecated: getNeonStats() called without account ID. Defaulting to Account 1.");
+   return getNeonStatsForAccount('1');
+}
+
 
 
 /**
@@ -4750,75 +4841,86 @@ bot.onText(/^\/deployem$/, async (msg) => {
 });
 
 
+// In bot.js
+
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
+    if (adminId !== ADMIN_ID) return; // Ensure only admin can use
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching Neon database stats...");
+    const workingMsg = await bot.sendMessage(adminId, "Fetching Neon database stats for both accounts...");
 
     try {
-        // 1. Get Neon API data
-        const neonResult = await getNeonStats();
-        if (!neonResult.success) {
-            throw new Error(neonResult.error);
-        }
+        // --- NEW: Fetch stats for both accounts concurrently ---
+        const [neonResult1, neonResult2] = await Promise.all([
+            getNeonStatsForAccount('1'), // Fetch for Account 1
+            getNeonStatsForAccount('2')  // Fetch for Account 2
+        ]);
 
-        // 2. Get all bots from YOUR database
-        const allBots = await dbServices.getAllBotDeployments();
-        
-        // 3. Create a quick lookup map (app_name -> user_id)
+        // --- Get bot ownership data (remains the same for now) ---
+        const allBots = await dbServices.getAllBotDeployments(); // Assumes this gets bots regardless of Neon account for now
         const ownerMap = new Map();
         for (const bot of allBots) {
-            // ✅ --- THIS IS THE FIX --- ✅
-            // Only add to map if app_name is a valid string
             if (bot.bot_name && typeof bot.bot_name === 'string') {
+                // Store sanitized name -> owner mapping
                 ownerMap.set(bot.bot_name.replace(/-/g, '_'), bot.user_id);
             }
-            // ✅ --- END OF FIX --- ✅
         }
 
-        const { logical_size_mb, databases, project_id, branch_id } = neonResult.data;
-        
-        // 4. Build the list string using the lookup map
-        let dbListString = "No databases found.";
-        if (databases.length > 0) {
-            dbListString = databases.map(db => {
-                const ownerUserId = ownerMap.get(db.name);
-                const ownerString = ownerUserId ? `(Owner User ID: <code>${ownerUserId}</code>)` : '(Owner: Unknown/External)';
-                
-                return `  - <b>${escapeHTML(db.name)}</b> ${ownerString}\n    (Neon Role: <code>${escapeHTML(db.owner)}</code>, Created: ${escapeHTML(db.created_at)})`;
-            }).join('\n\n');
-        }
+        // --- Function to format stats for one account ---
+        const formatAccountStats = (result) => {
+            if (!result.success) {
+                // If fetching failed, return the error message
+                return `<b>Neon Account ${result.data?.accountId || '?'}</b>\nError: ${escapeHTML(result.error)}\n`;
+            }
 
-        // 5. Format the final message
+            const { accountId, logical_size_mb, databases, project_id, branch_id } = result.data;
+            let accountSection = `<b>Neon Account ${accountId}</b>\n`;
+            accountSection += `Project: <code>${escapeHTML(project_id)}</code>\n`;
+            accountSection += `Branch: <code>${escapeHTML(branch_id)}</code>\n`;
+            accountSection += `Storage Used: <i>${escapeHTML(logical_size_mb)} MB</i> / 512 MB\n`;
+            accountSection += `Databases (${databases.length}):\n`;
+
+            if (databases.length > 0) {
+                accountSection += databases.map(db => {
+                    const ownerUserId = ownerMap.get(db.name); // Try to find owner
+                    const ownerString = ownerUserId ? `(Owner: <code>${ownerUserId}</code>)` : '(Owner: Unknown/External)';
+                    return `  - <b>${escapeHTML(db.name)}</b> ${ownerString}`;
+                }).join('\n');
+            } else {
+                accountSection += "  No databases found.\n";
+            }
+            return accountSection;
+        };
+
+        // --- Combine the formatted results ---
         const finalMessage = `
 <b>Neon Database Statistics</b>
 
-<b>Project:</b> <code>${escapeHTML(project_id)}</code>
-<b>Branch:</b> <code>${escapeHTML(branch_id)}</code>
-<b>Total Storage Used:</b> <i>${escapeHTML(logical_size_mb)} MB</i> / 512 MB (Free Tier Limit)
-
-<b>Databases (${databases.length}):</b>
-${dbListString}
+${formatAccountStats(neonResult1)}
+--------------------
+${formatAccountStats(neonResult2)}
         `;
 
-        await bot.editMessageText(finalMessage, {
+        // --- Send the combined message ---
+        await bot.editMessageText(finalMessage.trim(), { // Use trim() to remove leading/trailing whitespace
             chat_id: adminId,
             message_id: workingMsg.message_id,
-            parse_mode: 'HTML'
+            parse_mode: 'HTML' // Switched to HTML for better formatting control
         });
 
-    } catch (error) {
+    } catch (error) { // Catch errors from Promise.all or getAllBotDeployments
+        console.error("[/dbstats] Error fetching combined stats:", error);
         await bot.editMessageText(
-            `<b>Failed to fetch stats!</b>\n\nReason: ${escapeHTML(error.message)}`, 
-            { 
-                chat_id: adminId, 
-                message_id: workingMsg.message_id, 
+            `<b>Failed to fetch combined stats!</b>\n\nReason: ${escapeHTML(error.message)}`,
+            {
+                chat_id: adminId,
+                message_id: workingMsg.message_id,
                 parse_mode: 'HTML'
             }
         ).catch(err => console.error("Error editing message:", err.message));
     }
 });
+
 
 
 
