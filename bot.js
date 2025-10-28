@@ -2116,9 +2116,9 @@ async function sendPricingTiers(chatId, messageId) {
     planButtons.push({ text: 'Premium: ₦2000 / 50 Days', callback_data: 'select_plan:2000:50' });
 
     // New Longer Plans
-    planButtons.push({ text: 'Quarterly: ₦3,500 / 3 months', callback_data: 'select_plan:3500:90' });
-    planButtons.push({ text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: 'select_plan:6000:180' });
-    planButtons.push({ text: 'Annual: ₦10,000 / 1 year', callback_data: 'select_plan:10000:360' });
+    planButtons.push({ text: 'Quarterly: ₦3,500 / 3 months', callback_data: 'select_plan:3500:92' });
+    planButtons.push({ text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: 'select_plan:6000:185' });
+    planButtons.push({ text: 'Annual: ₦10,000 / 1 year', callback_data: 'select_plan:10000:365' });
 
     // --- Arrange buttons into rows of 2 ---
     const pricingKeyboardRows = chunkArray(planButtons, 2); // Group into pairs
@@ -3785,9 +3785,9 @@ app.post('/flutterwave/webhook', async (req, res) => {
         
     
 let days;
-if (amount >= 10000) days = 360;    // Annual: ₦10,000
-else if (amount >= 6000) days = 180; // Semi-Annual: ₦6,000
-else if (amount >= 3500) days = 90;  // Quarterly: ₦3,500
+if (amount >= 10000) days = 365;    // Annual: ₦10,000
+else if (amount >= 6000) days = 185; // Semi-Annual: ₦6,000
+else if (amount >= 3500) days = 92;  // Quarterly: ₦3,500
 else if (amount >= 2000) days = 50;  // Premium: ₦2,000
 else if (amount >= 1500) days = 30;  // Standard: ₦1,500
 else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
@@ -9443,9 +9443,9 @@ if (action === 'renew_bot') {
         { text: 'Basic: ₦500 / 10 Days', callback_data: `select_renewal:500:10:${appName}` },
         { text: 'Standard: ₦1500 / 30 Days', callback_data: `select_renewal:1500:30:${appName}` },
         { text: 'Premium: ₦2000 / 50 Days', callback_data: `select_renewal:2000:50:${appName}` },
-        { text: 'Quarterly: ₦3,500 / 3 months', callback_data: `select_renewal:3500:90:${appName}` },
-        { text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: `select_renewal:6000:180:${appName}` },
-        { text: 'Annual: ₦10,000 / 1 year', callback_data: `select_renewal:10000:360:${appName}` },
+        { text: 'Quarterly: ₦3,500 / 3 months', callback_data: `select_renewal:3500:92:${appName}` },
+        { text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: `select_renewal:6000:185:${appName}` },
+        { text: 'Annual: ₦10,000 / 1 year', callback_data: `select_renewal:10000:365:${appName}` },
     ];
     // --- End list ---
 
