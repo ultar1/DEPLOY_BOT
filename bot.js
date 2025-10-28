@@ -2098,38 +2098,46 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
-// In bot.js, add this new helper function
 
 async function sendPricingTiers(chatId, messageId) {
-    // Check if the user has any existing bots
     const userBotsResult = await pool.query('SELECT 1 FROM user_bots WHERE user_id = $1 LIMIT 1', [chatId]);
     const isExistingUser = userBotsResult.rows.length > 0;
 
-    let pricingMessage = "Please select a plan to proceed with your payment.";
-    const pricingKeyboard = [];
+    let pricingMessage = "Please select a plan to proceed with your payment:"; // Default message
+    const planButtons = []; // Store all plan buttons here first
 
     // Basic Plan (New users ONLY)
     if (!isExistingUser) {
-        pricingKeyboard.push([{ text: 'Basic: ₦500 for 10 Days', callback_data: 'select_plan:500:10' }]);
-    } else {
-        pricingMessage = "Please select one to proceed:";
+        planButtons.push({ text: 'Basic: ₦500 / 10 Days', callback_data: 'select_plan:500:10' });
     }
 
-    // Standard & Premium Plans (Available to all)
-    pricingKeyboard.push([{ text: 'Standard: ₦1500 for 30 Days', callback_data: 'select_plan:1500:30' }]);
-    pricingKeyboard.push([{ text: 'Premium: ₦2000 for 50 Days', callback_data: 'select_plan:2000:50' }]);
-    
-    // Add a cancel button
-    pricingKeyboard.push([{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]);
+    // Standard & Premium Plans
+    planButtons.push({ text: 'Standard: ₦1500 / 30 Days', callback_data: 'select_plan:1500:30' });
+    planButtons.push({ text: 'Premium: ₦2000 / 50 Days', callback_data: 'select_plan:2000:50' });
+
+    // New Longer Plans
+    planButtons.push({ text: 'Quarterly: ₦3,500 / 3 months', callback_data: 'select_plan:3500:90' });
+    planButtons.push({ text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: 'select_plan:6000:180' });
+    planButtons.push({ text: 'Annual: ₦10,000 / 1 year', callback_data: 'select_plan:10000:360' });
+
+    // --- Arrange buttons into rows of 2 ---
+    const pricingKeyboardRows = chunkArray(planButtons, 2); // Group into pairs
+
+    // Add the Cancel button as a separate row at the end
+    pricingKeyboardRows.push([{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]);
+
+    // --- Final Keyboard Structure ---
+    const finalKeyboard = {
+        inline_keyboard: pricingKeyboardRows
+    };
 
     await bot.editMessageText(pricingMessage, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: {
-            inline_keyboard: pricingKeyboard
-        }
+        reply_markup: finalKeyboard // Use the structured keyboard
     });
 }
+
 
 
 // --- FIX: Corrected sendLatestKeyboard function for reliable database updates ---
@@ -9419,32 +9427,41 @@ if (action === 'buy_temp_num') {
       return;
   }
 
-  // In bot.js, REPLACE the existing 'renew_bot' handler
-
-// In bot.js, inside the callback_query handler
+  // In bot.js, inside bot.on('callback_query', ...) handler
 
 if (action === 'renew_bot') {
     const appName = payload;
-    const renewalMessage = `Your bot "*${appName}*" is about to expire. Please select a renewal plan to extend its runtime:`;
-    
-    // The keyboard now includes the ₦500 Basic plan
+    const renewalMessage = `Your bot "*${appName}*" is about to expire or has expired. Please select a renewal plan:`;
+
+    // --- Create list of plan buttons ---
+    const planButtons = [
+        { text: 'Basic: ₦500 / 10 Days', callback_data: `select_renewal:500:10:${appName}` },
+        { text: 'Standard: ₦1500 / 30 Days', callback_data: `select_renewal:1500:30:${appName}` },
+        { text: 'Premium: ₦2000 / 50 Days', callback_data: `select_renewal:2000:50:${appName}` },
+        { text: 'Quarterly: ₦3,500 / 3 months', callback_data: `select_renewal:3500:90:${appName}` },
+        { text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: `select_renewal:6000:180:${appName}` },
+        { text: 'Annual: ₦10,000 / 1 year', callback_data: `select_renewal:10000:360:${appName}` },
+    ];
+    // --- End list ---
+
+    // --- Arrange buttons into rows of 2 ---
+    const keyboardRows = chunkArray(planButtons, 2);
+
+    // Add the 'Back' button as its own row at the end
+    keyboardRows.push([{ text: '« Back', callback_data: `selectbot:${appName}` }]);
+    // --- End arrangement ---
+
     await bot.editMessageText(renewalMessage, {
         chat_id: cid,
         message_id: q.message.message_id,
         parse_mode: 'Markdown',
         reply_markup: {
-            inline_keyboard: [
-                // --- THIS LINE IS NEW ---
-                [{ text: 'Basic: ₦500 for 10 Days', callback_data: `select_renewal:500:10:${appName}` }],
-                // -------------------------
-                [{ text: 'Standard: ₦1500 for 30 Days', callback_data: `select_renewal:1500:30:${appName}` }],
-                [{ text: 'Premium: ₦2000 for 50 Days', callback_data: `select_renewal:2000:50:${appName}` }],
-                [{ text: '« Back', callback_data: `selectbot:${appName}` }]
-            ]
+            inline_keyboard: keyboardRows // Use the structured rows
         }
     });
     return;
 }
+
 
 
 
