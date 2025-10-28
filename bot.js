@@ -10717,7 +10717,7 @@ if (action === 'confirmdelete') {
     }
     // --- END ADDED BLOCK ---
 
-    await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku and Neon Account ${neonAccountIdToDelete}...`, { // Added Account ID to message
+    await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" ...`, { // Added Account ID to message
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'Markdown'
@@ -10741,7 +10741,7 @@ if (action === 'confirmdelete') {
                       bot.sendMessage(ADMIN_ID, `User ${cid} deleted ${appToDelete}, but failed to delete Neon DB (Account ${neonAccountIdToDelete}). Manual cleanup may be needed. Error: ${deleteResult.error}`).catch(()=>{});
                  }
                  // Inform the current user about the Neon failure but that local cleanup will proceed
-                 await bot.sendMessage(cid, `Note: Failed to automatically delete the associated Neon database (Account ${neonAccountIdToDelete}). Records will still be cleaned up here.`).catch(()=>{});
+                 await bot.sendMessage(cid, `Note: Failed. Records will still be cleaned up here.`).catch(()=>{});
             } else {
                  console.log(`[ConfirmDelete] Successfully deleted or confirmed deletion of Neon DB for ${appToDelete} from Account ${neonAccountIdToDelete}.`);
             }
