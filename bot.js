@@ -3783,10 +3783,15 @@ app.post('/flutterwave/webhook', async (req, res) => {
         const isRenewal = app_name && app_name.startsWith('renewal_');
         let finalAppName = app_name;
         
-        let days;
-        if (amount >= 2000) days = 50;
-        else if (amount >= 1500) days = 30;
-        else days = 10;
+    
+let days;
+if (amount >= 10000) days = 360;    // Annual: ₦10,000
+else if (amount >= 6000) days = 180; // Semi-Annual: ₦6,000
+else if (amount >= 3500) days = 90;  // Quarterly: ₦3,500
+else if (amount >= 2000) days = 50;  // Premium: ₦2,000
+else if (amount >= 1500) days = 30;  // Standard: ₦1,500
+else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
+
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
