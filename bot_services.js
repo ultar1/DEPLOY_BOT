@@ -884,77 +884,42 @@ async function unbanUser(userId) {
     }
 }
 
+
 // In bot_services.js
 
 /**
  * Saves or updates deployment details in the main database.
  * Preserves original deploy_date and expiration_date on conflict/update.
  * @param {string} userId
- * @param {string} appName
+ * @param {string} appName The app name used as the key (often originalAppName for restores).
  * @param {string} sessionId
  * @param {object} configVars
  * @param {string} botType
  * @param {boolean} [isFreeTrial=false]
  * @param {Date|null} [expirationDateToUse=null] Explicit expiration date (e.g., from restore).
  * @param {string|null} [email=null] User's email.
- * @param {string} neonAccountId The Neon Account ID ('1' or '2') where the DB resides. // **** ADDED ****
+ * @param {string} neonAccountId The Neon Account ID ('1' or '2') where the DB resides.
  */
-async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null, email = null, neonAccountId) { // **** ADDED neonAccountId ****
-    // Ensure pool is initialized (assuming 'pool' is defined globally in the module or passed during init)
+async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null, email = null, neonAccountId) {
+    // Ensure pool is initialized (assuming 'pool' is defined globally/passed during init)
     if (!pool) {
         console.error("[DB-Main] Main pool is not initialized in bot_services.");
-        return; // Or throw an error
+        // Consider throwing an error or returning a failure status
+        return;
     }
     try {
-        // **** ADDED: Validate neonAccountId, default to '1' if missing/invalid ****
+        // Validate or default neonAccountId
         const accountId = (neonAccountId === '1' || neonAccountId === '2') ? neonAccountId : '1';
         if (!neonAccountId || (neonAccountId !== '1' && neonAccountId !== '2')) {
             console.warn(`[DB-Main] Missing or invalid neonAccountId for ${appName} (received: ${neonAccountId}), defaulting to '1'.`);
         }
-        // **** END ADDED ****
 
+        // Simple deep clone for configVars JSONB compatibility
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date(); // Current time for new deployments
 
-        // Use a provided expiration date if it exists, otherwise calculate a new one.
-        // Adjusted paid duration back to 45 days as per previous logic.
-        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 45) * 24 * 60 * 60 * 1000);
-
-        // **** UPDATED QUERY: Added neon_account_id column and $10 placeholder ****
-        const query = `
-            INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial, email, neon_account_id)
-            VALUES($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10)
-            ON CONFLICT (user_id, app_name) DO UPDATE SET
-               session_id = EXCLUDED.session_id,
-               config_vars = EXCLUDED.config_vars,
-               bot_type = EXCLUDED.bot_type,
-               deleted_from_heroku_at = NULL, -- Mark as active on update/backup
-               is_free_trial = EXCLUDED.is_free_trial,
-               email = EXCLUDED.email,
-               neon_account_id = EXCLUDED.neon_account_id, -- Update account ID on conflict
-               -- Keep original dates on conflict (update)
-               deploy_date = user_deployments.deploy_date,
-               expiration_date = user_deployments.expiration_date;
-        `;
-        // **** END UPDATED QUERY ****
-
-        // **** UPDATED: Pass accountId as the 10th parameter ****
-        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial, email, accountId]);
-
-        // **** UPDATED: Console log includes accountId ****
-        console.log(`[DB-Main] Saved/Updated deployment for app ${appName} (Neon Acc: ${accountId}). Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate.toISOString()}.`);
-    } catch (error) {
-        console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message);
-        // Optionally notify admin on critical DB failure
-        if (moduleParams && moduleParams.monitorSendTelegramAlert && moduleParams.ADMIN_ID) { // Check if moduleParams and functions exist
-            moduleParams.monitorSendTelegramAlert(`CRITICAL DB ERROR saving deployment for ${appName}. Check logs.`, moduleParams.ADMIN_ID);
-        } else {
-             console.error("[DB-Main] Cannot send admin alert: monitorSendTelegramAlert or ADMIN_ID missing from moduleParams.");
-        }
-    }
-}
-
-
+        // Determine expiration date: use provided one OR calculate new one (45 days for paid)
+        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 45) * 24
 
 
 
@@ -1680,11 +1645,11 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     let primaryBuildMsg; // The message sent to the USER (targetChatId)
     
     let buildResult = false; 
+    let neonAccountId = '1';
     let primaryAnimateIntervalId; // The animation for the user's message
 
     // --- Define which message to animate ---
     let primaryAnimChatId;
-    let neonAccountId = '1';
     let primaryAnimMsgId;
 
     try {
@@ -1737,27 +1702,26 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
 
-        // --- Step 2: NEON DATABASE LOGIC ---
-            
+                // --- ❗️ STEP 2: NEON DATABASE LOGIC (MODIFIED with Account ID) ❗️ ---
         const hasNeonDB = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
-        // Determine primary chat/message ID for animation (usually ADMIN_ID, buildMsg.message_id)
         // Ensure primaryAnimChatId and primaryAnimMsgId are defined before this block
-        const primaryAnimChatId = ADMIN_ID; // Or targetChatId if appropriate for silent restore context
-        const primaryAnimMsgId = buildMsg ? buildMsg.message_id : null; // Use buildMsg if it exists
+        // (Assuming they are defined earlier in the function as per your previous code)
 
         if (!isRestore || (isRestore && !hasNeonDB)) {
             // This runs for NEW deploys or RESTORES needing DB migration.
             const actionText = isRestore ? "Replacing old Heroku DB with" : "Creating";
-             if (primaryAnimMsgId) { // Only edit if the message exists
+            // Edit message using primaryAnimChatId and primaryAnimMsgId
+            if (primaryAnimMsgId) { // Check if message ID exists before editing
                 await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText} new database...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
-             } else {
+            } else {
                  console.log(`[Build] Step 1/4: ${actionText} new database... (No message to edit)`);
-             }
+            }
+
 
             const dbName = appName.replace(/-/g, '_');
             // **** CAPTURE the result from createNeonDatabase ****
-            const neonResult = await createNeonDatabase(dbName); // createNeonDatabase is in bot.js
+            const neonResult = await createNeonDatabase(dbName); // createNeonDatabase function is in bot.js
 
             if (!neonResult.success) {
                 // If DB creation fails, throw the error to stop the build
@@ -1774,7 +1738,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             // Try to find the account ID from the backup record in the main DB.
              try {
                 // Query mainPool (where user_deployments are stored) using originalAppName
-                // Ensure mainPool is accessible here
+                // Ensure mainPool and originalAppName are accessible here
                 const backupInfo = await mainPool.query('SELECT neon_account_id FROM user_deployments WHERE user_id=$1 AND app_name=$2', [targetChatId, originalAppName]);
                  if (backupInfo.rows.length > 0 && backupInfo.rows[0].neon_account_id) {
                     neonAccountId = backupInfo.rows[0].neon_account_id; // Use the stored account ID
@@ -1788,14 +1752,14 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                  console.error(`[Build Restore] Error fetching account ID for ${originalAppName}, defaulting to '1': ${e.message}`);
                  neonAccountId = '1'; // Default on error
              }
-             // Update admin/status message
-              if (primaryAnimMsgId) { // Only edit if the message exists
-                 await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing database (Restore, Account ${neonAccountId})...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
-              } else {
-                   console.log(`[Build] Step 1/4: Re-linking existing database (Restore, Account ${neonAccountId})... (No message to edit)`);
-              }
+             // Update the message using primaryAnimChatId and primaryAnimMsgId, now including the account ID
+             if (primaryAnimMsgId) { // Check if message ID exists
+                await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing database (Restore, Account ${neonAccountId})...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+             } else {
+                  console.log(`[Build] Step 1/4: Re-linking existing database (Restore, Account ${neonAccountId})... (No message to edit)`);
+             }
         }
-        // --- End of Neon Logic ---
+        // --- End of Neon Logic Integration ---
 
         // --- End of Neon Logic ---
 
@@ -2107,7 +2071,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         const appSetup = { name: appName, region: 'us', stack: 'heroku-22' };
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
-                // --- Step 2: NEON DATABASE LOGIC (MODIFIED with Account ID) ---
+                // --- ❗️ STEP 2: NEON DATABASE LOGIC (MODIFIED with Account ID - SILENT) ❗️ ---
         // Ensure 'let neonAccountId = '1';' is declared *before* this block in the function.
         const hasNeonDB = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
@@ -2135,7 +2099,8 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             const dbName = appName.replace(/-/g, '_'); // Use the potentially new appName for the DB name
             console.log(`[SilentRestore] Migrating DB: Creating new Neon DB '${dbName}' for app '${appName}'...`);
             // **** CAPTURE the result from createNeonDatabase ****
-            const neonResult = await createNeonDatabase(dbName); // createNeonDatabase is in bot.js
+            // Ensure createNeonDatabase function is accessible here (passed via init or global)
+            const neonResult = await createNeonDatabase(dbName);
             if (!neonResult.success) {
                 // If DB creation fails during restore, return failure object immediately
                 return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
@@ -2146,7 +2111,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             neonAccountId = neonResult.account_id; // Update the variable defined *before* this block
             console.log(`[SilentRestore] Set DATABASE_URL for ${appName} to new Neon DB (Account: ${neonAccountId}) during migration.`);
         }
-        // --- End of Neon Logic ---
+        // --- End of Neon Logic Integration ---
 
 
                 // --- Step 3: Set Buildpacks ---
