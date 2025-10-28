@@ -8375,11 +8375,11 @@ if (action === 'select_restore_app') {
     return;
 }
 
-  // In bot.js, inside bot.on('callback_query', ...)
+  /// In bot.js, inside bot.on('callback_query', ...)
 
 if (action === 'confirm_restore_app') {
     const appName = payload;
-    
+
     await bot.editMessageText(`Fetching backup data for "*${escapeMarkdown(appName)}*" and starting the restore process. This may take a few minutes...`, {
         chat_id: cid,
         message_id: q.message.message_id,
@@ -8387,17 +8387,32 @@ if (action === 'confirm_restore_app') {
     });
 
     try {
-        // Fetch the specific deployment details from the backup database
-        const backupResult = await backupPool.query(
+        // --- START MODIFIED QUERY LOGIC ---
+        // 1. First, attempt to fetch the deployment details using the user's ID (cid) from the backup pool.
+        let backupResult = await backupPool.query(
             'SELECT * FROM user_deployments WHERE user_id = $1 AND app_name = $2',
             [cid, appName]
         );
 
+        // 2. If the record is NOT found under the user's ID, search globally by app name.
+        if (backupResult.rows.length === 0) {
+            console.warn(`[Restore] Backup not found for user ${cid}. Searching backup pool globally by app name.`);
+            backupResult = await backupPool.query( // Search globally in the backup pool
+                'SELECT * FROM user_deployments WHERE app_name = $1 LIMIT 1',
+                [appName]
+            );
+        }
+        // --- END MODIFIED QUERY LOGIC ---
+
         if (backupResult.rows.length === 0) {
             return bot.sendMessage(cid, 'Sorry, could not find the backup data for this app.');
         }
-        
+
+        // The configuration data, regardless of which user_id it was found under
         const deployment = backupResult.rows[0];
+        
+        // --- IMPORTANT: Ensure current user's ID (cid) is used as the owner, even if the backup record had a different or wiped ID ---
+        const originalOwnerId = deployment.user_id; // Store original owner ID if needed for logging
 
         // Prepare the variables for the build process
         const vars = { 
@@ -8407,7 +8422,8 @@ if (action === 'confirm_restore_app') {
             expiration_date: deployment.expiration_date // This preserves the original expiration date
         };
         
-        // Call your existing build function with the correct parameters for a restore
+        // Call your existing build function with the current user's ID (cid) as the owner
+        // buildWithProgress will redeploy the bot and assign ownership to cid.
         await dbServices.buildWithProgress(cid, vars, false, true, deployment.bot_type);
 
     } catch (error) {
@@ -8416,6 +8432,7 @@ if (action === 'confirm_restore_app') {
     }
     return;
 }
+
 
 
 // ... (existing code in bot.on('callback_query', async q => { ... })) ...
