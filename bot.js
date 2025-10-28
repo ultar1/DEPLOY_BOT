@@ -4660,8 +4660,9 @@ bot.onText(/^\/buytemp$/, async msg => {
     });
 });
 
-// Command to delete all 'logged_out' bots for the user from Heroku
-// Command for ADMIN to delete ALL logged-out bots from Heroku
+// In bot.js
+
+// Command for ADMIN to delete ALL logged-out bots' EXTERNAL resources (Heroku app, Neon DB)
 bot.onText(/^\/dellogout$/, async (msg) => {
     const adminId = msg.chat.id.toString();
 
@@ -4670,92 +4671,139 @@ bot.onText(/^\/dellogout$/, async (msg) => {
         return bot.sendMessage(adminId, "This command is for the admin only.");
     }
 
+    // Ensure dependencies needed within this function are available (passed via init or global)
+    // Make sure 'pool' (main DB), 'herokuApi', 'HEROKU_API_KEY', 'deleteNeonDatabase',
+    // 'ADMIN_ID', 'escapeMarkdown' are accessible here.
+    if (typeof deleteNeonDatabase !== 'function') {
+         console.error("[/dellogout Admin] CRITICAL: deleteNeonDatabase function is not accessible.");
+         return bot.sendMessage(ADMIN_ID, "Error: Neon deletion function is unavailable. Command aborted.");
+    }
+     if (!pool) {
+         console.error("[/dellogout Admin] CRITICAL: Main database pool (pool) is not accessible.");
+         return bot.sendMessage(ADMIN_ID, "Error: Database connection is unavailable. Command aborted.");
+     }
+
     let workingMsg;
     try {
-        workingMsg = await bot.sendMessage(adminId, "Finding all logged-out bots across all users...");
+        workingMsg = await bot.sendMessage(adminId, "Finding all logged-out bots to prune external resources (Heroku/Neon)...");
     } catch (sendError) {
         console.error("[/dellogout Admin] Failed to send initial message:", sendError);
         return; // Can't proceed
     }
 
-    let deletedCount = 0;
-    let failedCount = 0;
-    let notFoundOnHerokuCount = 0;
-    let botsToDelete = [];
+    let prunedCount = 0; // Counts bots where both Heroku + Neon deleted successfully
+    let failedHerokuCount = 0;
+    let failedNeonCount = 0;
+    let botsToPrune = [];
 
     try {
-        // --- Step 2: Correct Database Query (Get ALL logged-out bots) ---
+        // --- Step 2: Query main DB for ALL logged-out bots ---
+        // Fetches bots with status='logged_out' to target their external resources
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out'"
-            // No user_id filter here
         );
-        botsToDelete = result.rows; // Array of { user_id: '...', bot_name: '...' }
+        botsToPrune = result.rows; // Array of { user_id: '...', bot_name: '...' }
 
-        if (botsToDelete.length === 0) {
-            await bot.editMessageText("No logged-out bots found across any users.", { chat_id: adminId, message_id: workingMsg.message_id });
+        if (botsToPrune.length === 0) {
+            await bot.editMessageText("No logged-out bots found to prune external resources for.", { chat_id: adminId, message_id: workingMsg.message_id });
             return;
         }
 
-        await bot.editMessageText(`Found ${botsToDelete.length} logged-out bot(s). Starting deletion process... This might take a moment.`, { chat_id: adminId, message_id: workingMsg.message_id });
+        await bot.editMessageText(`Found ${botsToPrune.length} logged-out bot(s). Starting external resource deletion (Heroku app & Neon DB)... This might take a moment.\n\n⚠️ Local database records will NOT be deleted.`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
 
-        // --- Step 3: Loop and Delete (Using correct user_id for each bot) ---
-        for (const [index, botInfo] of botsToDelete.entries()) {
+        // --- Step 3: Loop and Delete External Resources ---
+        for (const [index, botInfo] of botsToPrune.entries()) {
             const userId = botInfo.user_id; // Get owner ID from query result
             const appName = botInfo.bot_name;
-            const progressText = `Deleting "${appName}" (Owner: ${userId})... (${index + 1}/${botsToDelete.length})`;
+            const progressText = `Pruning "${appName}" (Owner: ${userId})... (${index + 1}/${botsToPrune.length})`;
             await bot.editMessageText(progressText, { chat_id: adminId, message_id: workingMsg.message_id }).catch(() => {});
 
+            let herokuDeleted = false;
+            let neonDeleted = false;
+            let neonAccountIdToDelete = '1'; // Default
+
+            // --- Fetch Neon Account ID from user_deployments (main DB) ---
             try {
-                // Delete from Heroku
+                const deploymentInfo = await pool.query(
+                    'SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2',
+                    [userId, appName]
+                );
+                if (deploymentInfo.rows.length > 0 && deploymentInfo.rows[0].neon_account_id) {
+                    neonAccountIdToDelete = deploymentInfo.rows[0].neon_account_id;
+                } else {
+                    console.warn(`[/dellogout Admin] Neon account ID not found in user_deployments for ${appName}. Assuming Account '1'.`);
+                }
+            } catch (dbError) {
+                console.error(`[/dellogout Admin] Error fetching Neon Account ID for ${appName}, assuming Account '1':`, dbError.message);
+            }
+            // --- End Fetch ---
+
+            // --- Delete Heroku App ---
+            try {
                 console.log(`[/dellogout Admin] Attempting Heroku delete for ${appName} (Owner: ${userId})`);
                 await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 console.log(`[/dellogout Admin] Successfully deleted ${appName} from Heroku.`);
-                deletedCount++;
-
-                // Clean up database records using the correct userId
-                try {
-                    await dbServices.deleteUserBot(userId, appName);
-                    await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
-                    console.log(`[/dellogout Admin] Cleaned up DB records for ${appName} (Owner: ${userId}).`);
-                } catch (dbError) {
-                    console.error(`[/dellogout Admin] DB cleanup error for ${appName} (Owner: ${userId}):`, dbError);
-                    failedCount++; // Count DB cleanup failure
-                    // Notify admin about DB error specifically
-                    await bot.sendMessage(ADMIN_ID, `DB Cleanup failed for ${appName} (Owner: ${userId}) after /dellogout. Heroku app was deleted. Error: ${escapeMarkdown(dbError.message)}`, { parse_mode: 'Markdown' });
-                }
-
+                herokuDeleted = true;
             } catch (herokuError) {
-                // Handle Heroku 404
                 if (herokuError.response && herokuError.response.status === 404) {
-                    console.log(`[/dellogout Admin] Bot ${appName} (Owner: ${userId}) not found on Heroku (404). Cleaning up DB.`);
-                    notFoundOnHerokuCount++;
-                    // Clean up DB even if not found on Heroku
-                    try {
-                        await dbServices.deleteUserBot(userId, appName);
-                        await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
-                        console.log(`[/dellogout Admin] Cleaned up DB records for ${appName} (Owner: ${userId}) (Heroku 404).`);
-                    } catch (dbError) {
-                        console.error(`[/dellogout Admin] DB cleanup error for ${appName} (Owner: ${userId}) (Heroku 404):`, dbError);
-                        failedCount++;
-                        await bot.sendMessage(ADMIN_ID, `DB Cleanup failed for ${appName} (Owner: ${userId}) after /dellogout (Heroku 404). Error: ${escapeMarkdown(dbError.message)}`, { parse_mode: 'Markdown' });
-                    }
+                    console.log(`[/dellogout Admin] Bot ${appName} (Owner: ${userId}) not found on Heroku (404).`);
+                    herokuDeleted = true; // Treat as success for pruning purposes
                 } else {
-                    // Handle other Heroku API errors
                     const errorMsg = herokuError.response?.data?.message || herokuError.message || 'Unknown Heroku API error';
                     console.error(`[/dellogout Admin] Heroku API error deleting ${appName} (Owner: ${userId}):`, errorMsg);
-                    failedCount++;
-                    // Notify admin about the specific failure
-                    await bot.sendMessage(ADMIN_ID, `Failed to delete bot "${appName}" (Owner: ${userId}) from Heroku: ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+                    failedHerokuCount++;
+                    await bot.sendMessage(ADMIN_ID, `Failed Heroku delete for "${appName}" (Owner: ${userId}): ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+                    // Continue to Neon deletion attempt even if Heroku fails? Or skip? Let's skip.
+                    herokuDeleted = false; // Mark as failed
                 }
             }
+
+            // --- Delete Neon Database (only if Heroku delete succeeded or was 404) ---
+            if (herokuDeleted) {
+                const dbName = appName.replace(/-/g, '_'); // Sanitize name
+                try {
+                    console.log(`[/dellogout Admin] Attempting Neon DB delete: ${dbName} from Account ${neonAccountIdToDelete}`);
+                    const neonResult = await deleteNeonDatabase(dbName, neonAccountIdToDelete); // Call your delete function
+
+                    if (neonResult.success) {
+                        console.log(`[/dellogout Admin] Successfully deleted Neon DB ${dbName} from Account ${neonAccountIdToDelete}.`);
+                        neonDeleted = true;
+                    } else {
+                        // deleteNeonDatabase handles 404 as success, so this error is likely real
+                        throw new Error(neonResult.error || 'Unknown Neon deletion error');
+                    }
+                } catch (neonError) {
+                    console.error(`[/dellogout Admin] Failed to delete Neon DB ${dbName} from Account ${neonAccountIdToDelete}: ${neonError.message}`);
+                    failedNeonCount++;
+                    await bot.sendMessage(ADMIN_ID, `Failed Neon DB delete for ${appName} (Owner: ${userId}, Acc: ${neonAccountIdToDelete}): ${escapeMarkdown(neonError.message)}`, { parse_mode: 'Markdown' });
+                    neonDeleted = false;
+                }
+            } else {
+                 console.log(`[/dellogout Admin] Skipping Neon DB deletion for ${appName} because Heroku deletion failed.`);
+                 failedNeonCount++; // Count Neon as failed if Heroku failed
+            }
+
+
+            // --- Tally ---
+            if (herokuDeleted && neonDeleted) {
+                prunedCount++;
+                console.log(`[/dellogout Admin] Successfully pruned external resources for ${appName}.`);
+            } else {
+                 console.warn(`[/dellogout Admin] Failed to prune all external resources for ${appName}. Heroku success: ${herokuDeleted}, Neon success: ${neonDeleted}.`);
+                 // Don't increment overall failedCount here as individual failures are already counted
+            }
+
+            // *** NO LOCAL DB DELETION CALLS ***
+
             await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
         } // End loop
 
         // --- Step 4: Final Summary (Admin only) ---
-        let summary = `Logged-out bot deletion process finished.\n\n`;
-        summary += `Bots deleted from Heroku: ${deletedCount}\n`;
-        summary += `Bots already gone from Heroku (DB cleaned): ${notFoundOnHerokuCount}\n`;
-        summary += `Failures (check logs): ${failedCount}`;
+        let summary = `Logged-out bot external resource cleanup finished.\n\n`;
+        summary += `Bots pruned (Heroku+Neon): ${prunedCount}\n`;
+        summary += `Failed Heroku deletions: ${failedHerokuCount}\n`;
+        summary += `Failed Neon deletions: ${failedNeonCount}\n\n`;
+        summary += `Local database records remain untouched.`;
 
         await bot.editMessageText(summary, { chat_id: adminId, message_id: workingMsg.message_id });
 
