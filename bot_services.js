@@ -954,7 +954,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
 
         // **** CORRECTED LINE ****
         // Use provided expiration date OR calculate new one (1 day free, 45 days paid)
-        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 45) * 24 * 60 * 60 * 1000);
+        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 35) * 24 * 60 * 60 * 1000);
         // **** END CORRECTION ****
 
         const query = `
