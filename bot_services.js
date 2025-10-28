@@ -1684,7 +1684,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 
     // --- Define which message to animate ---
     let primaryAnimChatId;
-    let neonAccountId = '1'; // Default in case DB creation fails or is skipped
+    let neonAccountId = '1';
     let primaryAnimMsgId;
 
     try {
@@ -1738,51 +1738,66 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
 
         // --- Step 2: NEON DATABASE LOGIC ---
-        // --- ❗️ STEP 2: NEON DATABASE LOGIC (MODIFIED) ❗️ ---
-const hasNeonDB = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
+            
+        const hasNeonDB = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
-if (!isRestore || (isRestore && !hasNeonDB)) {
-    // This runs for NEW deploys or RESTORES needing DB migration.
-    const actionText = isRestore ? "Replacing old Heroku DB with" : "Creating";
-    await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText} new database...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+        // Determine primary chat/message ID for animation (usually ADMIN_ID, buildMsg.message_id)
+        // Ensure primaryAnimChatId and primaryAnimMsgId are defined before this block
+        const primaryAnimChatId = ADMIN_ID; // Or targetChatId if appropriate for silent restore context
+        const primaryAnimMsgId = buildMsg ? buildMsg.message_id : null; // Use buildMsg if it exists
 
-    const dbName = appName.replace(/-/g, '_');
-    // **** CAPTURE the result from createNeonDatabase ****
-    const neonResult = await createNeonDatabase(dbName); // createNeonDatabase is in bot.js
+        if (!isRestore || (isRestore && !hasNeonDB)) {
+            // This runs for NEW deploys or RESTORES needing DB migration.
+            const actionText = isRestore ? "Replacing old Heroku DB with" : "Creating";
+             if (primaryAnimMsgId) { // Only edit if the message exists
+                await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText} new database...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+             } else {
+                 console.log(`[Build] Step 1/4: ${actionText} new database... (No message to edit)`);
+             }
 
-    if (!neonResult.success) {
-        // If DB creation fails, throw the error to stop the build
-        throw new Error(`Neon DB creation failed: ${neonResult.error}`);
-    }
-    // Overwrite the DATABASE_URL with the new one
-    vars.DATABASE_URL = neonResult.connection_string;
-    // **** STORE the account ID that was used ****
-    neonAccountId = neonResult.account_id;
-    console.log(`[Build] Set DATABASE_URL for ${appName} to new Neon DB (Account: ${neonAccountId}).`);
+            const dbName = appName.replace(/-/g, '_');
+            // **** CAPTURE the result from createNeonDatabase ****
+            const neonResult = await createNeonDatabase(dbName); // createNeonDatabase is in bot.js
 
-} else if (isRestore && hasNeonDB) {
-    // This runs for RESTORES that ALREADY have a Neon DB URL in their backup config.
-    // Try to find the account ID from the backup record in the main DB.
-     try {
-        // Query mainPool (where user_deployments are stored)
-        const backupInfo = await mainPool.query('SELECT neon_account_id FROM user_deployments WHERE user_id=$1 AND app_name=$2', [targetChatId, originalAppName]);
-        if (backupInfo.rows.length > 0 && backupInfo.rows[0].neon_account_id) {
-            neonAccountId = backupInfo.rows[0].neon_account_id;
-            console.log(`[Build Restore] Re-linking existing Neon DB for ${appName} on Account ${neonAccountId}.`);
-        } else {
-            // If neon_account_id column is NULL or the record wasn't found (less likely here)
-            console.warn(`[Build Restore] Could not determine Neon account ID for existing DB ${appName} from backup record. Defaulting to '1'.`);
-            neonAccountId = '1'; // Default if not found in the backup record
+            if (!neonResult.success) {
+                // If DB creation fails, throw the error to stop the build
+                throw new Error(`Neon DB creation failed: ${neonResult.error}`);
+            }
+            // Overwrite the DATABASE_URL with the new one
+            vars.DATABASE_URL = neonResult.connection_string;
+            // **** STORE the account ID that was used ****
+            neonAccountId = neonResult.account_id; // Update the variable defined *before* this block
+            console.log(`[Build] Set DATABASE_URL for ${appName} to new Neon DB (Account: ${neonAccountId}).`);
+
+        } else if (isRestore && hasNeonDB) {
+            // This runs for RESTORES that ALREADY have a Neon DB URL in their backup config.
+            // Try to find the account ID from the backup record in the main DB.
+             try {
+                // Query mainPool (where user_deployments are stored) using originalAppName
+                // Ensure mainPool is accessible here
+                const backupInfo = await mainPool.query('SELECT neon_account_id FROM user_deployments WHERE user_id=$1 AND app_name=$2', [targetChatId, originalAppName]);
+                 if (backupInfo.rows.length > 0 && backupInfo.rows[0].neon_account_id) {
+                    neonAccountId = backupInfo.rows[0].neon_account_id; // Use the stored account ID
+                    console.log(`[Build Restore] Found existing Neon DB for ${originalAppName} on Account ${neonAccountId}.`);
+                } else {
+                    // If neon_account_id column is NULL or the record wasn't found
+                    console.warn(`[Build Restore] Could not determine Neon account ID for existing DB ${originalAppName} from backup record. Defaulting to '1'.`);
+                    neonAccountId = '1'; // Default if not found in the backup record
+                }
+             } catch(e) {
+                 console.error(`[Build Restore] Error fetching account ID for ${originalAppName}, defaulting to '1': ${e.message}`);
+                 neonAccountId = '1'; // Default on error
+             }
+             // Update admin/status message
+              if (primaryAnimMsgId) { // Only edit if the message exists
+                 await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing database (Restore, Account ${neonAccountId})...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+              } else {
+                   console.log(`[Build] Step 1/4: Re-linking existing database (Restore, Account ${neonAccountId})... (No message to edit)`);
+              }
         }
-     } catch(e) {
-        console.error(`[Build Restore] Error fetching account ID for ${appName}, defaulting to '1': ${e.message}`);
-        neonAccountId = '1'; // Default on error
-     }
-     // Update admin message
-     await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Re-linking existing database (Restore, Account ${neonAccountId})...`, { chat_id: ADMIN_ID, message_id: buildMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
-}
-// --- End of Neon Logic ---
+        // --- End of Neon Logic ---
 
+        // --- End of Neon Logic ---
 
         // --- Step 3: Set Buildpacks ---
         await herokuApi.put(
@@ -1894,7 +1909,7 @@ if (!isRestore || (isRestore && !hasNeonDB)) {
         
         await saveUserDeployment(
             targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, 
-            finalConfigVarsAfterBuild, botType, isFreeTrial,
+            finalConfigVarsAfterBuild, botType, isFreeTrial, 
             expirationDateToUse,
             vars.email || null, neonAccountId
         );
@@ -2069,9 +2084,9 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
     let appName = vars.APP_NAME;
     const originalAppName = appName;
     let buildResult = false;
-    let neonAccountId = '1';
     
     const isRestore = true; 
+    let neonAccountId = '1';
     const isFreeTrial = false;
 
     try {
@@ -2092,7 +2107,8 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         const appSetup = { name: appName, region: 'us', stack: 'heroku-22' };
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
-                // --- Step 2: NEON DATABASE LOGIC (MODIFIED) ---
+                // --- Step 2: NEON DATABASE LOGIC (MODIFIED with Account ID) ---
+        // Ensure 'let neonAccountId = '1';' is declared *before* this block in the function.
         const hasNeonDB = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
         // This function runs only for restores (isRestore is true).
@@ -2100,12 +2116,13 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             // Restore has existing Neon DB URL. Find its account ID.
              try {
                 // Query mainPool (where user_deployments are stored) using originalAppName
+                // Ensure mainPool and originalAppName are accessible here
                 const backupInfo = await mainPool.query('SELECT neon_account_id FROM user_deployments WHERE user_id=$1 AND app_name=$2', [targetChatId, originalAppName]);
                  if (backupInfo.rows.length > 0 && backupInfo.rows[0].neon_account_id) {
                     neonAccountId = backupInfo.rows[0].neon_account_id; // Use the stored account ID
-                    console.log(`[SilentRestore] Re-linking existing Neon DB for ${appName} on Account ${neonAccountId}.`);
+                    console.log(`[SilentRestore] Found existing Neon DB for ${originalAppName} on Account ${neonAccountId}. Re-linking for ${appName}.`);
                 } else {
-                    // If neon_account_id column is NULL or the backup record is missing (less likely)
+                    // If neon_account_id column is NULL or the backup record is missing
                     console.warn(`[SilentRestore] Could not determine Neon account ID for existing DB ${originalAppName} from backup record. Defaulting to '1'.`);
                     neonAccountId = '1'; // Default if not found in the backup record
                 }
@@ -2126,7 +2143,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             // Update the DATABASE_URL in the vars object to be saved later
             vars.DATABASE_URL = neonResult.connection_string;
             // **** STORE the account ID that was used ****
-            neonAccountId = neonResult.account_id;
+            neonAccountId = neonResult.account_id; // Update the variable defined *before* this block
             console.log(`[SilentRestore] Set DATABASE_URL for ${appName} to new Neon DB (Account: ${neonAccountId}) during migration.`);
         }
         // --- End of Neon Logic ---
