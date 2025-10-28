@@ -1045,10 +1045,9 @@ async function getAllDeploymentsFromBackup(botType) {
     }
     try {
         // --- THIS IS THE UPDATED QUERY ---
-        // It now fetches from the backupPool and joins user_deployments with user_bots
-        // to filter based on the status stored in the backup's user_bots table.
+        // Added ud.expiration_date to the selected columns
         const result = await backupPool.query(
-            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars
+            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars, ud.expiration_date -- <<< ADDED expiration_date
              FROM user_deployments ud
              INNER JOIN user_bots ub ON ud.user_id = ub.user_id AND ud.app_name = ub.bot_name
              WHERE ud.bot_type = $1 AND ub.status = 'online' -- Only select bots that were 'online'
@@ -1058,7 +1057,7 @@ async function getAllDeploymentsFromBackup(botType) {
         // --- END OF UPDATED QUERY ---
 
         console.log(`[DB-Backup] Fetched ${result.rows.length} 'online' deployments of type ${botType} for mass restore from backup pool.`);
-        return result.rows;
+        return result.rows; // Now includes expiration_date
     } catch (error) {
         console.error(`[DB-Backup] Failed to get 'online' deployments for mass restore:`, error.message);
         // Attempt to log the specific SQL error if available
@@ -1074,7 +1073,6 @@ async function getAllDeploymentsFromBackup(botType) {
         return [];
     }
 }
-
 
 
 
