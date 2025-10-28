@@ -105,52 +105,82 @@ const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 
+// In bot_services.js
+
 /**
- * Automatically prunes (deletes) the external resources for bots marked as 'logged_out'.
- * This deletes the Heroku app and the associated Neon database but LEAVES the
- * user's records in the main database intact.
+ * Automatically prunes (deletes) the external resources (Heroku app, Neon DB)
+ * for bots marked as 'logged_out' in the main DB.
+ * Does NOT delete local database records.
  * @returns {Promise<{pruned: number, failedHeroku: number, failedNeon: number}>} - A summary.
  */
 async function pruneLoggedOutBot() {
     console.log('[Prune] Starting scheduled job to prune logged-out resources...');
-    
-    // 1. Get the 'deleteNeonDatabase' function from moduleParams
-    // We MUST assume this function is passed in from bot.js, just like 'createNeonDatabase'
-    const { deleteNeonDatabase } = moduleParams;
 
+    // 1. Get dependencies from moduleParams
+    const { deleteNeonDatabase, mainPool, monitorSendTelegramAlert, ADMIN_ID, herokuApi, HEROKU_API_KEY } = moduleParams; // Ensure mainPool is available
+
+    // Validate essential dependencies
     if (!deleteNeonDatabase) {
         console.error('[Prune] CRITICAL: `deleteNeonDatabase` function not found in moduleParams. Prune job aborted.');
-        if (monitorSendTelegramAlert) {
-            monitorSendTelegramAlert('CRITICAL PRUNE ERROR: `deleteNeonDatabase` function not provided. Prune job aborted. Please update bot code.', ADMIN_ID);
+        if (monitorSendTelegramAlert && ADMIN_ID) {
+            monitorSendTelegramAlert('CRITICAL PRUNE ERROR: `deleteNeonDatabase` function not provided. Prune job aborted.', ADMIN_ID);
         }
         return { pruned: 0, failedHeroku: -1, failedNeon: -1 };
     }
+    if (!mainPool) {
+         console.error('[Prune] CRITICAL: `mainPool` (main DB connection) not found in moduleParams. Prune job aborted.');
+         if (monitorSendTelegramAlert && ADMIN_ID) {
+            monitorSendTelegramAlert('CRITICAL PRUNE ERROR: `mainPool` not provided. Cannot fetch Neon account IDs. Prune job aborted.', ADMIN_ID);
+         }
+         return { pruned: 0, failedHeroku: -1, failedNeon: -1 };
+    }
 
-    // 2. Get all bots marked as 'logged_out'
-    const loggedOutBots = await getLoggedOutBots(); // This is your existing function
+
+    // 2. Get all bots marked as 'logged_out' from the *main* database
+    const loggedOutBots = await getLoggedOutBots(); // Uses main 'pool' internally
 
     if (loggedOutBots.length === 0) {
-        console.log('[Prune] No logged-out bots found to prune.');
+        console.log('[Prune] No logged-out bots found in main DB to prune external resources for.');
         return { pruned: 0, failedHeroku: 0, failedNeon: 0 };
     }
 
-    console.log(`[Prune] Found ${loggedOutBots.length} logged-out bots. Starting resource deletion...`);
-    
+    console.log(`[Prune] Found ${loggedOutBots.length} logged-out bots. Starting external resource deletion...`);
+
     let prunedCount = 0;
     let failedHerokuCount = 0;
     let failedNeonCount = 0;
 
-    // 3. Loop through each bot and delete its resources
+    // 3. Loop through each bot and delete its external resources
     for (const bot of loggedOutBots) {
-        const { user_id, app_name } = bot;
+        const { user_id, app_name } = bot; // app_name comes from getLoggedOutBots alias
         let herokuDeleted = false;
         let neonDeleted = false;
+        let neonAccountIdToDelete = '1'; // Default
+
+        // --- ADDED: Fetch Neon Account ID ---
+        try {
+            const deploymentInfo = await mainPool.query( // Query the MAIN pool
+                'SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2',
+                [user_id, app_name]
+            );
+            if (deploymentInfo.rows.length > 0 && deploymentInfo.rows[0].neon_account_id) {
+                neonAccountIdToDelete = deploymentInfo.rows[0].neon_account_id;
+                console.log(`[Prune] Found Neon Account ID ${neonAccountIdToDelete} for ${app_name}.`);
+            } else {
+                console.warn(`[Prune] Neon account ID not found in main DB for ${app_name}. Assuming Account '1' for deletion attempt.`);
+                // Keep default '1'
+            }
+        } catch (dbError) {
+            console.error(`[Prune] Error fetching Neon Account ID for ${app_name}, assuming Account '1':`, dbError.message);
+            // Keep default '1'
+        }
+        // --- END Fetch ---
 
         // --- Part A: Delete Heroku App ---
         try {
             console.log(`[Prune] Deleting Heroku app: ${app_name} (User: ${user_id})`);
             await herokuApi.delete(`/apps/${app_name}`, {
-                headers: { 
+                headers: {
                     'Authorization': `Bearer ${HEROKU_API_KEY}`,
                     'Accept': 'application/vnd.heroku+json; version=3'
                 }
@@ -159,61 +189,69 @@ async function pruneLoggedOutBot() {
             herokuDeleted = true;
         } catch (error) {
             if (error.response && error.response.status === 404) {
-                // If it's already gone, count it as a success
                 console.warn(`[Prune] Heroku app ${app_name} was already deleted.`);
-                herokuDeleted = true; 
+                herokuDeleted = true; // Count as success if already gone
             } else {
                 console.error(`[Prune] Failed to delete Heroku app ${app_name}:`, error.message);
                 failedHerokuCount++;
             }
         }
 
-        // --- Part B: Delete Neon Database ---
+        // --- Part B: Delete Neon Database (Using Account ID) ---
         const dbName = app_name.replace(/-/g, '_'); // Recreate the DB name
         try {
-            console.log(`[Prune] Deleting Neon database: ${dbName} (for app: ${app_name})`);
-            const neonResult = await deleteNeonDatabase(dbName);
-            
+            console.log(`[Prune] Deleting Neon database: ${dbName} from Account ${neonAccountIdToDelete} (for app: ${app_name})`);
+            // **** UPDATED CALL: Pass neonAccountIdToDelete ****
+            const neonResult = await deleteNeonDatabase(dbName, neonAccountIdToDelete);
+
             if (neonResult.success) {
-                console.log(`[Prune] Successfully deleted Neon DB: ${dbName}`);
+                console.log(`[Prune] Successfully deleted Neon DB: ${dbName} from Account ${neonAccountIdToDelete}`);
                 neonDeleted = true;
             } else {
-                // If it's already gone, count it as a success
-                if (neonResult.error && (neonResult.error.includes('not found') || neonResult.error.includes('Project not found'))) {
-                    console.warn(`[Prune] Neon DB ${dbName} was already deleted.`);
-                    neonDeleted = true;
-                } else {
-                    throw new Error(neonResult.error || 'Unknown Neon deletion error');
-                }
+                 // Error handled within deleteNeonDatabase includes 404 check
+                 throw new Error(neonResult.error || 'Unknown Neon deletion error');
             }
         } catch (error) {
-            console.error(`[Prune] Failed to delete Neon DB ${dbName}:`, error.message);
-            failedNeonCount++;
+             // Catch errors from deleteNeonDatabase call itself (like 404 which is treated as success, or other failures)
+             // deleteNeonDatabase already logs specific errors and handles 404.
+             // We check the result here again.
+            if (error.message.includes('not found') || (error.response && error.response.status === 404)) { // Crude check for 404 / already deleted case
+                 console.warn(`[Prune] Neon DB ${dbName} on Account ${neonAccountIdToDelete} was likely already deleted.`);
+                 neonDeleted = true; // Count as success if already gone
+            } else {
+                console.error(`[Prune] Failed to delete Neon DB ${dbName} from Account ${neonAccountIdToDelete}:`, error.message);
+                failedNeonCount++;
+            }
         }
 
         // --- Part C: Tally ---
+        // Increment only if BOTH Heroku and Neon deletion succeeded (or were already gone)
         if (herokuDeleted && neonDeleted) {
             prunedCount++;
-            console.log(`[Prune] Successfully pruned all resources for ${app_name}. DB record remains.`);
+            console.log(`[Prune] Successfully pruned external resources for ${app_name}. Local DB record remains.`);
+            // *** NO LOCAL DB DELETION CALLS HERE ***
+        } else {
+             console.warn(`[Prune] Failed to prune all external resources for ${app_name}. Heroku success: ${herokuDeleted}, Neon success: ${neonDeleted}. Local DB record remains.`);
         }
-    }
+    } // End loop
 
     // --- 4. Report to Admin ---
-    console.log(`[Prune] Job finished. Fully pruned: ${prunedCount}, Heroku fails: ${failedHerokuCount}, Neon fails: ${failedNeonCount}.`);
-    
+    console.log(`[Prune] Job finished. Fully pruned external resources for: ${prunedCount} bots. Heroku fails: ${failedHerokuCount}, Neon fails: ${failedNeonCount}.`);
+
     if (monitorSendTelegramAlert && ADMIN_ID && (prunedCount > 0 || failedHerokuCount > 0 || failedNeonCount > 0)) {
          monitorSendTelegramAlert(
-            `*Weekly Resource Prune Report* \n\n` +
-            `Bots fully pruned (Heroku + Neon): ${prunedCount}\n` +
+            `*Weekly Resource Prune Report*\n\n` +
+            `External resources pruned (Heroku+Neon): ${prunedCount}\n` +
             `Failed Heroku deletions: ${failedHerokuCount}\n` +
             `Failed Neon DB deletions: ${failedNeonCount}\n\n` +
-            `Note: User database records were *not* deleted, only external apps and databases.`,
+            `Note: User database records were *not* deleted.`, // Updated note
             ADMIN_ID
          );
     }
-    
+
     return { pruned: prunedCount, failedHeroku: failedHerokuCount, failedNeon: failedNeonCount };
 }
+
 
 
 
