@@ -1433,56 +1433,102 @@ async function attemptCreateOnAccount(dbName, accountId) {
 
 
  
-async function deleteNeonDatabase(dbName, accountId) {
-    // NOTE: This function assumes the NEON_ACCOUNTS array is defined/imported in the bot.js scope.
-
-    // --- Step 1: Input validation ---
-    if (!accountId || isNaN(parseInt(accountId))) {
-        const errorMsg = `[Neon Delete] Invalid or missing accountId provided: '${accountId}'. Must be a number/string ID.`;
-        console.error(errorMsg);
-        return { success: false, error: errorMsg };
-    }
+/**
+ * Deletes a specific database from the expected Neon account. If deletion fails,
+ * it cycles through ALL other accounts as a fallback to ensure removal.
+ * * @param {string} dbName The name of the database to delete (e.g., 'horlar12_9251').
+ * @param {string} expectedAccountId The primary, expected account ID (e.g., '1' through '6').
+ * @returns {Promise<{success: boolean, error?: string, accounts_checked: number}>}
+ */
+async function deleteNeonDatabase(dbName, expectedAccountId) {
+    // --- Step 1: Input Validation ---
     if (!dbName) {
-        const errorMsg = `[Neon Delete] Invalid or missing dbName provided. Cannot proceed.`;
-        console.error(errorMsg);
-        return { success: false, error: errorMsg };
+        return { success: false, error: "Missing dbName provided.", accounts_checked: 0 };
     }
 
-    // --- Step 2: Retrieve Credentials from the array ---
-    const account = NEON_ACCOUNTS.find(acc => String(acc.id) === String(accountId));
-
-    if (!account || !account.api_key || !account.project_id || !account.branch_id) {
-        const missing = !account ? 'Account config not found in array.' : 'Missing API Key/Project ID/Branch ID in config.';
-        const errorMsg = `Neon Account ${accountId} credentials issue: ${missing}`;
-        console.error(`[Neon Delete Attempt ${accountId}] ${errorMsg}`);
-        return { success: false, error: errorMsg };
-    }
-
-    console.log(`[Neon Delete] Attempting deletion on Account ${accountId} for DB: ${dbName}`);
-
-    // Sanitize the database name for the API URL
+    let accountsChecked = 0;
+    const allAccountIds = NEON_ACCOUNTS.map(acc => String(acc.id));
     const neonDbName = dbName.replace(/-/g, '_');
-    const apiUrl = `https://console.neon.tech/api/v2/projects/${account.project_id}/branches/${account.branch_id}/databases/${neonDbName}`;
-    const headers = {
-        'Authorization': `Bearer ${account.api_key}`,
-        'Accept': 'application/json'
-    };
 
-    try {
-        await axios.delete(apiUrl, { headers });
-        console.log(`[Neon Delete Attempt ${accountId}] Successfully deleted database: ${neonDbName}`);
-        return { success: true };
-    } catch (error) {
-        // A 404 error is acceptable, means it's already gone.
-        if (error.response?.status === 404) {
-            console.log(`[Neon Delete Attempt ${accountId}] Database ${neonDbName} not found. Assuming already deleted.`);
-            return { success: true }; // Treat as success if already gone
+    // --- Step 2: Primary Deletion Attempt (Expected Account) ---
+    const primaryAccount = NEON_ACCOUNTS.find(acc => String(acc.id) === String(expectedAccountId));
+
+    if (primaryAccount) {
+        accountsChecked++;
+        console.log(`[Neon Delete] Tier 1: Attempting deletion on Account ${expectedAccountId} (Expected).`);
+        
+        try {
+            // Check credentials before making the call
+            if (!primaryAccount.api_key || !primaryAccount.project_id || !primaryAccount.branch_id) {
+                 throw new Error("Missing API/Project/Branch credentials in array config.");
+            }
+            
+            const apiUrl = `https://console.neon.tech/api/v2/projects/${primaryAccount.project_id}/branches/${primaryAccount.branch_id}/databases/${neonDbName}`;
+            const headers = { 'Authorization': `Bearer ${primaryAccount.api_key}`, 'Accept': 'application/json' };
+
+            await axios.delete(apiUrl, { headers });
+            
+            // Success! Stop here.
+            console.log(`[Neon Delete] SUCCESS on Account ${expectedAccountId}.`);
+            return { success: true, accounts_checked: accountsChecked };
+            
+        } catch (error) {
+            // Log failure, but continue to secondary check
+            if (error.response?.status === 404) {
+                 console.log(`[Neon Delete] Account ${expectedAccountId} reported 404 (DB already deleted). Treating as success.`);
+                 return { success: true, accounts_checked: accountsChecked };
+            }
+            const primaryErrorMsg = error.response?.data?.message || error.message;
+            console.warn(`[Neon Delete] Tier 1 FAIL (Account ${expectedAccountId}): ${primaryErrorMsg}. Initiating fallback.`);
         }
-        // Log and return other errors
-        const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[Neon Delete Attempt ${accountId}] Error deleting database ${neonDbName}: ${errorMsg}`);
-        return { success: false, error: `Account ${accountId}: ${errorMsg}` };
+    } else {
+        console.warn(`[Neon Delete] Expected Account ${expectedAccountId} not found in NEON_ACCOUNTS array. Initiating fallback.`);
     }
+
+    // --- Step 3: Secondary Deletion Attempt (Fallback Search) ---
+    
+    // Create a list of accounts to search (all defined accounts)
+    const fallbackAccounts = NEON_ACCOUNTS;
+
+    for (const fallbackAccount of fallbackAccounts) {
+        const fallbackAccountId = String(fallbackAccount.id);
+        
+        // Skip the expected account if we already tried it
+        if (fallbackAccountId === expectedAccountId && accountsChecked > 0) continue;
+        
+        accountsChecked++;
+        console.log(`[Neon Delete] Fallback Search: Checking Account ${fallbackAccountId}...`);
+
+        try {
+            // Check essential credentials
+            if (!fallbackAccount.api_key || !fallbackAccount.project_id || !fallbackAccount.branch_id) {
+                 throw new Error("Missing API/Project/Branch credentials in array config.");
+            }
+            
+            const apiUrl = `https://console.neon.tech/api/v2/projects/${fallbackAccount.project_id}/branches/${fallbackAccount.branch_id}/databases/${neonDbName}`;
+            const headers = { 'Authorization': `Bearer ${fallbackAccount.api_key}`, 'Accept': 'application/json' };
+
+            await axios.delete(apiUrl, { headers });
+            
+            // Success on fallback!
+            console.log(`[Neon Delete] SUCCESS on Fallback Account ${fallbackAccountId}.`);
+            return { success: true, accounts_checked: accountsChecked };
+            
+        } catch (error) {
+             if (error.response?.status === 404) {
+                 // 404 is good, keep searching or proceed
+                 continue; 
+             }
+             // Log the error but continue searching
+             const fallbackErrorMsg = error.response?.data?.message || error.message;
+             console.warn(`[Neon Delete] Fallback FAIL on Account ${fallbackAccountId}: ${fallbackErrorMsg}.`);
+        }
+    }
+    
+    // --- Step 4: Final Failure ---
+    const finalErrorMsg = `Failed to delete database ${dbName}. Attempted checks on ${accountsChecked} accounts (Primary failed, Fallback search completed).`;
+    console.error(`[Neon Delete] FINAL FAILURE: ${finalErrorMsg}`);
+    return { success: false, error: finalErrorMsg, accounts_checked: accountsChecked };
 }
 
 
@@ -9144,28 +9190,70 @@ if (action === 'levanter_wa_fallback') {
     return;
 }
 
+// In bot.js, inside bot.on('callback_query', async q => { ... })
+
 if (action === 'neon_del_confirm') {
     const cid = q.message.chat.id.toString();
-    const dbName = payload; // This is the sanitized DB name (e.g., 'atttesttt')
+    const dbName = payload; // The database name selected by the admin (e.g., 'atttesttt')
+    let neonAccountIdToQuery = '1'; // Default: Start query with Account 1
 
-    const workingMsg = await bot.editMessageText(`Deleting external database \`${dbName}\` from Neon...`, {
+    // 1. Sanitize the database name to guess the Heroku app name for ownership lookup
+    let potentialAppName = dbName.replace(/_/g, '-');
+    if (potentialAppName.startsWith('backup-')) {
+         potentialAppName = potentialAppName.substring(7); // Remove 'backup-' prefix if present
+    }
+
+    const workingMsg = await bot.editMessageText(`Deleting external database \`${dbName}\`...`, {
         chat_id: cid,
         message_id: q.message.message_id,
         parse_mode: 'Markdown'
     });
 
-    // --- 1. EXECUTE EXTERNAL DELETION (Searches all accounts) ---
-    // This call now handles iterating through ALL NEON_ACCOUNTS and returns the specific account ID.
-    const result = await findAndDeleteNeonDatabase(dbName); 
+    // --- STEP 2: QUERY DB FOR LAST KNOWN NEON ACCOUNT ID ---
+    // We try to find the last stored location to attempt Tier 1 deletion first.
+    try {
+        const deploymentInfo = await pool.query(
+            'SELECT neon_account_id FROM user_deployments WHERE app_name = $1 LIMIT 1',
+            [potentialAppName]
+        );
+        
+        if (deploymentInfo.rows.length > 0 && deploymentInfo.rows[0].neon_account_id) {
+            // Found a stored account ID (e.g., '2', '3', '34')
+            neonAccountIdToQuery = deploymentInfo.rows[0].neon_account_id;
+            console.log(`[/delbotdb Confirm] Found Neon Account ID ${neonAccountIdToQuery} for DB ${dbName}.`);
+        } else {
+            console.warn(`[/delbotdb Confirm] Account ID not found in DB for app matching ${dbName}. Starting multi-tier search.`);
+            // Keep default '1' to start the search sequence
+        }
+    } catch (dbError) {
+        console.error(`[/delbotdb Confirm] Error fetching Neon Account ID: ${dbError.message}. Starting multi-tier search.`);
+        // Default remains '1' on DB error
+    }
+    // --- END QUERY ---
 
-    // --- 2. REPORT RESULT ---
+    // --- STEP 3: EXECUTE MULTI-ACCOUNT DELETION ---
+    // We use the robust deleteNeonDatabase function which handles primary failure and fallback.
+    const result = await deleteNeonDatabase(dbName, neonAccountIdToQuery); // Pass the first ID to check
+
+    // --- STEP 4: REPORT RESULT ---
     if (result.success) {
-        // The result.accountId will now be the CORRECT ID (e.g., '3', '4', '6')
-        const accountId = result.accountId || 'Unknown';
-        const deleteStatus = result.databaseGone ? 'already deleted' : 'permanently deleted';
+        // Neon deletion was successful OR the database was already gone (404 handled as success)
+
+        // **IMPORTANT:** Admin action confirms the deletion of the external resource.
+        // We now attempt to remove the deployment record locally as well.
+        try {
+            // We use permanentlyDeleteBotRecord(null, appName) to delete records globally by appName
+            // Note: permanentlyDeleteBotRecord should handle cases where userId is null
+            await dbServices.permanentlyDeleteBotRecord(null, potentialAppName); 
+            console.log(`[/delbotdb Confirm] Successfully removed local deployment records for ${potentialAppName}.`);
+        } catch (localCleanupError) {
+             console.error(`[/delbotdb Confirm] Warning: Failed to clean up local deployment records for ${potentialAppName}.`, localCleanupError.message);
+        }
+        
+        const finalAccountUsed = result.accounts_checked ? `Account ${result.accounts_checked}` : 'Account 1 (Primary)';
 
         await bot.editMessageText(
-            `**Database Deleted!**\n\nThe external database \`${dbName}\` was **${deleteStatus}** from <b>Neon Account ${accountId}</b>.`,
+            `**Database Deleted!**\n\nThe external database \`${dbName}\` has been permanently removed (Cleaned up via <b>${finalAccountUsed}</b>).`,
             {
                 chat_id: cid,
                 message_id: workingMsg.message_id,
@@ -9173,11 +9261,9 @@ if (action === 'neon_del_confirm') {
             }
         );
     } else {
-        // Report failure (e.g., API error, or DB was not found in any account)
-        const accountId = result.accountId || 'N/A'; 
-
+        // Report failure (the final error from the deletion routine)
         await bot.editMessageText(
-            `**Deletion Failed!**\n\nCould not delete \`${dbName}\`.\n\n*Reason:* ${escapeMarkdown(result.error)}`,
+            `**Deletion Failed!**\n\nCould not find/delete \`${dbName}\` after checking ${result.accounts_checked} tiers.\n\n*Reason:* ${escapeMarkdown(result.error)}`,
             {
                 chat_id: cid,
                 message_id: workingMsg.message_id,
@@ -9185,8 +9271,9 @@ if (action === 'neon_del_confirm') {
             }
         );
     }
-    return;
+    return; // Stop processing
 }
+
 
 
 
