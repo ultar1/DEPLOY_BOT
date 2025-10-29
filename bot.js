@@ -4270,6 +4270,49 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 });
 
 
+
+bot.onText(/^\/deldb\s+([\w-]+)\s+(\d+)$/i, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+
+    // 1. Admin Check
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "This command is restricted to the administrator.");
+    }
+
+    const dbName = match[1];     // e.g., 'atttesttt'
+    const accountId = match[2];  // e.g., '3' (the tier ID from your NEON_ACCOUNTS array)
+    
+    const workingMsg = await bot.sendMessage(adminId, `Attempting to forcibly delete external database \`${dbName}\` from <b>Neon Account ${accountId}</b>...`, {
+        parse_mode: 'HTML'
+    });
+
+    try {
+        // 2. Execute Deletion using the reliable multi-account fallback function
+        // NOTE: This call will try Account ID $X first, and if it fails (e.g., bad key), it will cycle through ALL 6+ accounts defined in NEON_ACCOUNTS until it succeeds or fails globally.
+        const result = await deleteNeonDatabase(dbName, accountId); 
+
+        // 3. Report Result (Success or Detailed Failure)
+        if (result.success) {
+            const finalAccountUsed = result.accounts_checked ? `Account ${result.accounts_checked}` : accountId;
+            
+            // Success message
+            await bot.editMessageText(
+                `**Success! Database Forcibly Deleted.**\n\nExternal database \`${dbName}\` has been removed (Cleaned up via <b>Neon Account ${finalAccountUsed}</b>).`,
+                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
+            );
+        } else {
+            // Failure message
+            await bot.editMessageText(
+                `**Deletion Failed!**\n\nCould not delete \`${dbName}\` after checking ${result.accounts_checked} tiers.\n\n*Reason:* ${escapeMarkdown(result.error)}`,
+                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+            );
+        }
+    } catch (error) {
+        console.error(`[Forced Delete] Fatal error during deletion for ${dbName}:`, error.message);
+        await bot.editMessageText(`**FATAL ERROR:** Cannot execute command. Check logs.`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+    }
+});
+
 // This new /id command is smarter and provides guidance.
 bot.onText(/^\/id$/, async (msg) => {
     const cid = msg.chat.id.toString();
