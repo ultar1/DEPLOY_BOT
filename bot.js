@@ -217,7 +217,7 @@ async function createAllTablesInPool(dbPool, dbName) {
             PRIMARY KEY (user_id, app_name)
           );
         `);
-      await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id TEXT DEFAULT '1';`);
+      await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id INTEGER DEFAULT '1';`);
 
         await client.query(`
           CREATE TABLE IF NOT EXISTS free_trial_monitoring (
