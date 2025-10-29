@@ -75,7 +75,7 @@ const NEON_ACCOUNTS = [
     active_db_limit: 3,
     api_key: 'napi_auin6afjtou5sxffq1x9w02b0pcdf7uet5w5uuksyqpfat9e3940zb96qlk895az',
     project_id: 'young-truth-69765005',
-    branch_id: 'br-nameless-shape-a44m82fa',
+    branch_id: 'br-icy-voice-a4oxcxlt',
     db_host: 'ep-nameless-shape-a44m82fa-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_FGpmJsSc43le'
