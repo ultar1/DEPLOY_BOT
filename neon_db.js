@@ -277,9 +277,62 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-falling-salad-ada32osp-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_itWjekqa3ho9'
+},
+
+  {
+    id: 26,
+    active_db_limit: 3,
+    api_key: 'napi_bt0921focbtlyzh11qthdk0eex861gg5bhj36fo68jev3y1ejbn43kpkm5eazuqe',
+    project_id: 'hidden-shape-00757804',
+    branch_id: 'br-muddy-art-ahbayv3r',
+    db_host: 'ep-late-wind-ahla5vkh-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_WVozmu9fNe6g'
+},
+
+  {
+    id: 27,
+    active_db_limit: 3,
+    api_key: 'napi_3hna9ekv43tdu1dydxf7h9plsboj7g91mupfnnim7qyhgcw5fxxy60w5d919if93',
+    project_id: 'hidden-term-06542167',
+    branch_id: 'br-wild-poetry-a42bg2a0',
+    db_host: 'ep-divine-thunder-a44ots4b-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_GfEaSIMFkj90'
+},
+
+  {
+    id: 28,
+    active_db_limit: 3,
+    api_key: 'napi_o992abcciek50a64glxf79eh724gc7xv42hbga9uvg3cjiyvflfj2hm46rjwyorm',
+    project_id: 'dry-salad-47465960',
+    branch_id: 'br-square-moon-ad5l6pdu',
+    db_host: 'ep-withered-bonus-ado2a38f-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_uMlQoJze57WU'
+},
+
+  {
+    id: 29,
+    active_db_limit: 3,
+    api_key: 'napi_39k25cgrs9out7bognjhu1tv5lw21bl9r9se2mp9cx5osodhg1m1vxus0qy6nh0t',
+    project_id: 'wild-king-93708280',
+    branch_id: 'br-solitary-moon-a4wsq990',
+    db_host: 'ep-wild-fire-a45ylvee-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_jfGI0K3yhuTr'
+},
+
+  {
+    id: 30,
+    active_db_limit: 3,
+    api_key: 'napi_m2xawhlu8w03hgd6rynet95wyf990rsdaand2el94c2jzq01ba8ks73hj6hrfadm',
+    project_id: 'still-scene-98589426',
+    branch_id: 'br-billowing-violet-ahkoorxf',
+    db_host: 'ep-dark-haze-ahfji2a0-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_g9xz4ZkvGMHh'
 }
-
-
 
 ];
 
