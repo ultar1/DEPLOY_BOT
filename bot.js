@@ -5216,7 +5216,8 @@ You can now use /stats or /bapp to see the updated count of all your bots.
         });
     }
 });
-// bot.js (New command to add a new Heroku API key)
+// In bot.js, inside bot.onText(/^\/addapi (.+)$/, async (msg, match) => { ... })
+
 bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -5228,10 +5229,15 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     }
 
     try {
+        // --- CRITICAL FIX ---
+        // Explicitly include the 'id' column and set its value to 'DEFAULT'.
+        // This forces PostgreSQL to use the SERIAL sequence, fixing the 23502 error.
         await pool.query(
-            "INSERT INTO heroku_api_keys (api_key, added_by) VALUES ($1, $2)",
+            "INSERT INTO heroku_api_keys (id, api_key, added_by) VALUES (DEFAULT, $1, $2)",
             [newKey, adminId]
         );
+        // --------------------
+
         await bot.sendMessage(adminId, `New Heroku API Key added successfully! The bot will use this key automatically if the current one fails.`, { parse_mode: 'Markdown' });
     } catch (e) {
         if (e.code === '23505') { // Unique violation
@@ -5241,6 +5247,7 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
         await bot.sendMessage(adminId, `Failed to add API key: ${e.message}`);
     }
 });
+
 
 bot.onText(/^\/apilist$/, async (msg) => {
     const adminId = msg.chat.id.toString();
