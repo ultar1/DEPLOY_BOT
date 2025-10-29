@@ -774,6 +774,46 @@ async function getAllDeployKeys() {
     }
 }
 
+/**
+ * Scans all defined NEON_ACCOUNTS to see if a database with the given name exists.
+ * @param {string} dbName The underscore-separated database name (e.g., 'my_app_name').
+ * @returns {Promise<{exists: boolean, account_id?: string, connection_string?: string}>}
+ */
+async function checkIfDatabaseExists(dbName) {
+    const neonDbName = dbName.replace(/-/g, '_');
+
+    for (const accountConfig of NEON_ACCOUNTS) {
+        const accountId = String(accountConfig.id);
+        const { api_key, project_id, branch_id, db_user, db_password, db_host } = accountConfig;
+        
+        // Use the API endpoint to list databases
+        const dbsUrl = `https://console.neon.tech/api/v2/projects/${project_id}/branches/${branch_id}/databases`;
+        const headers = { 'Authorization': `Bearer ${api_key}`, 'Accept': 'application/json' };
+
+        try {
+            const dbsResponse = await axios.get(dbsUrl, { headers });
+            
+            const foundDb = dbsResponse.data.databases.find(db => db.name === neonDbName);
+
+            if (foundDb) {
+                // Database exists! Return its details and connection string
+                const connectionString = `postgresql://${db_user}:${db_password}@${db_host}/${neonDbName}?sslmode=require`;
+                
+                console.log(`[Neon Check] Found existing DB '${neonDbName}' on Account ${accountId}.`);
+                return { 
+                    exists: true, 
+                    account_id: accountId, 
+                    connection_string: connectionString 
+                };
+            }
+        } catch (error) {
+            // Log API failure but continue to the next account
+            console.warn(`[Neon Check] Failed to check Account ${accountId}: ${error.message.substring(0, 50)}`);
+        }
+    }
+    return { exists: false };
+}
+
 
 async function deleteDeployKey(key) {
   try {
@@ -1748,30 +1788,68 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
 
-        // Determine action text based on isRestore, but always create DB
-        const actionText = isRestore ? "Creating NEW database for restore" : "Creating";
+                // Determine action text based on isRestore
+        let actionText = "Creating";
+        
         // Edit message using primaryAnimChatId and primaryAnimMsgId
         if (primaryAnimMsgId) { // Check if message ID exists before editing
-            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText}...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Provisioning database...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         } else {
-             console.log(`[Build] Step 1/4: ${actionText}... (No message to edit)`);
+             console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
         }
 
-        const dbName = appName.replace(/-/g, '_'); // Use the current (potentially new) appName
-        // **** ALWAYS CREATE NEW DB ****
-        console.log(`[Build/${isRestore ? 'Restore' : 'New'}] Forcing creation of NEW Neon DB: ${dbName}`);
-        const neonResult = await createNeonDatabase(dbName); // createNeonDatabase function is in bot.js
+        const dbName = appName.replace(/-/g, '_'); // Canonical database name
 
-        if (!neonResult.success) {
-            // If DB creation fails, throw the error to stop the build/restore
-            throw new Error(`Neon DB creation failed: ${neonResult.error}`);
+        if (isRestore && vars.DATABASE_URL) {
+            // --- RESTORE PATH: Check if the OLD DB still exists ---
+            actionText = "Checking for existing database";
+
+            // 1. Check the old database name (underscored) for existence
+            const dbCheckResult = await checkIfDatabaseExists(dbName); 
+
+            if (dbCheckResult.exists) {
+                // 2. Database found! Use the existing connection string and account ID.
+                actionText = "Re-using existing database";
+                vars.DATABASE_URL = dbCheckResult.connection_string; // Ensure connection string is correct
+                neonAccountId = dbCheckResult.account_id;
+                console.log(`[Build/Restore] Re-using existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
+                
+            } else {
+                // 3. Database not found or deleted. Proceed to create a new one.
+                actionText = "Creating NEW database (Old one not found)";
+                console.log(`[Build/Restore] Old Neon DB not found. Creating NEW Neon DB: ${dbName}`);
+                
+                const neonResult = await createNeonDatabase(dbName);
+
+                if (!neonResult.success) {
+                    throw new Error(`Neon DB creation failed: ${neonResult.error}`);
+                }
+                vars.DATABASE_URL = neonResult.connection_string;
+                neonAccountId = neonResult.account_id;
+                console.log(`[Build/Restore] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
+            }
+        } else {
+            // --- NEW DEPLOY PATH: Always create new DB ---
+            actionText = "Creating NEW database";
+            console.log(`[Build/New] Creating NEW Neon DB: ${dbName}`);
+            
+            const neonResult = await createNeonDatabase(dbName);
+
+            if (!neonResult.success) {
+                throw new Error(`Neon DB creation failed: ${neonResult.error}`);
+            }
+            vars.DATABASE_URL = neonResult.connection_string;
+            neonAccountId = neonResult.account_id;
+            console.log(`[Build/New] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
         }
-        // Overwrite the DATABASE_URL (even if one existed in backup vars)
-        vars.DATABASE_URL = neonResult.connection_string;
-        // **** STORE the account ID that was used ****
-        neonAccountId = neonResult.account_id; // Update the variable defined *before* this block
-        console.log(`[Build/${isRestore ? 'Restore' : 'New'}] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
+        
+        // Update message with final action text
+        if (primaryAnimMsgId) {
+             await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText}...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+        }
+
         // --- End of Neon Logic Integration ---
+
 
         // --- Step 3: Set Buildpacks ---
         await herokuApi.put(
@@ -2333,6 +2411,7 @@ module.exports = {
     banUser,
     addReferralAndSecondLevelReward,
     unbanUser,
+    checkIfDatabaseExists,
     saveUserDeployment,
     getUserDeploymentsForRestore,
     deleteUserDeploymentFromBackup,
