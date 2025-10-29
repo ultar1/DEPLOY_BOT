@@ -4986,68 +4986,50 @@ bot.onText(/^\/deployem$/, async (msg) => {
 });
 
 
-
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    // The working message should reflect the process
-    const workingMsg = await bot.sendMessage(adminId, "Fetching live capacity report...");
+    const workingMsg = await bot.sendMessage(adminId, "📊 Fetching live statistics from all defined Neon Accounts...");
 
+    // --- Helper function to get stats for one account (assuming it's defined elsewhere) ---
+    // If not defined, ensure the helper function logic from the previous step is accessible.
+    
     // --- 1. Fetch Local Bot Ownership Data ---
     const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
     // Map sanitized DB name back to owner ID
     const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
-
+    
     // --- 2. Iterate and Fetch Stats for ALL Accounts ---
-    // *** IMPORTANT: Assuming getNeonStatsForAccount is the correct modern helper, 
-    // it must be able to return all necessary stats (id, success, error, dbList, storageUsed).
-    // The call is adjusted back to pass the entire config object if needed, 
-    // or kept as ID if that's what the helper now expects. Sticking to the new code's call for now:
-    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonStatsForAccount(String(accountConfig.id))); 
+    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(accountConfig)); // Assuming this helper is defined
     const allResults = await Promise.all(resultsPromises);
     
     let combinedMessage = `<b>Neon Capacity Report</b> (Total Accounts: ${NEON_ACCOUNTS.length})\n\n`;
     
-    // Global Accumulators and Constants
+    // Global Accumulators
     let totalStorageUsedMB = 0;
-    let totalUserDBs = 0; 
-    let totalSlotsLeft = 0;
     const MAX_STORAGE_MB_PER_ACCOUNT = 512; // Free Tier Limit
-    const MAX_DB_COUNT = 3; // The enforced limit per account
-    let accountsWithCapacity = 0;
-
-    // --- 3. Format Individual Account Reports (Combining Old Structure & New Metrics) ---
+    const MAX_DB_COUNT = 3; 
+    let accountsWithSpace = 0;
     
+    // --- 3. Format and Combine Results ---
     for (const result of allResults) {
-        
-        // Ensure the ID is a string, falling back if necessary
-        const reportId = result.id ? String(result.id) : 'N/A';
-
-        if (result.success && result.dbList) { 
+        if (result.success) {
             const userDBs = result.dbList.filter(db => db.name !== 'neondb'); // Filter out default DB
             
-            const dbCount = userDBs.length;
-            const slotsLeft = MAX_DB_COUNT - dbCount;
-
-            // Accumulate global totals
-            totalUserDBs += dbCount;
-            totalSlotsLeft += slotsLeft;
-            // Accumulate storage used (ensuring safe conversion)
-            totalStorageUsedMB += parseFloat(result.storageUsed || 0); 
-
-            if (dbCount < MAX_DB_COUNT) {
-                 accountsWithCapacity++;
+            // Accumulate total usage
+            totalStorageUsedMB += parseFloat(result.storageUsed);
+            
+            if (userDBs.length < MAX_DB_COUNT) {
+                 accountsWithSpace++;
             }
 
-            // Status indicators (with Emojis and better text)
+            const dbCount = userDBs.length;
             const statusEmoji = dbCount < MAX_DB_COUNT ? '🟢' : '🔴';
-            const statusText = dbCount < MAX_DB_COUNT ? 'AVAILABLE' : 'FULL';
+            const statusText = dbCount < MAX_DB_COUNT ? 'HAS SPACE' : 'FULL';
 
-            // --- Start of Account Block (from Old Code) ---
-            combinedMessage += `┏━━━━━⌠ <b>Account ${reportId}</b> ${statusEmoji} ⌡\n`;
-            combinedMessage += `┃ Status: <b>${statusText}</b> (${dbCount}/${MAX_DB_COUNT} DBs used)\n`;
-            combinedMessage += `┃ Slots Left: <b>${slotsLeft}</b>\n`; // New Metric
+            combinedMessage += `┏━━━━━⌠ <b>Account ${result.id}</b> ${statusEmoji} ⌡\n`;
+            combinedMessage += `┃ Status: <b>${statusText}</b> (${dbCount}/${MAX_DB_COUNT} DBs)\n`;
             
             // List active user databases
             if (userDBs.length > 0) {
@@ -5061,29 +5043,25 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             } else {
                  combinedMessage += `┃ (No user databases active)\n`;
             }
-            combinedMessage += `┗━━━━━━━━━━━━━━━━━━━━━❍\n\n`;
-            // --- End of Account Block ---
-            
+            combinedMessage += `┗━━━━━━━━━━━━━━━━━━━━━❍\n`;
         } else {
-            // Handle API failure (from Old Code)
-            combinedMessage += `┏━━━━━⌠ <b>Account ${reportId}</b> ❌ ⌡\n`;
+            // Handle API failure
+            combinedMessage += `┏━━━━━⌠ <b>Account ${result.id}</b> ❌ ⌡\n`;
             combinedMessage += `┃ Status: API Failure\n`;
-            combinedMessage += `┃ Error: ${escapeHTML(result.error || 'Unknown Error').substring(0, 100)}...\n`;
+            combinedMessage += `┃ Error: ${escapeHTML(result.error).substring(0, 100)}...\n`;
             combinedMessage += `┗━━━━━━━━━━━━━━━━━━━━━❍\n\n`;
         }
     }
 
-    // --- 4. Final Global Summary (From New Code) ---
+    // --- 4. Final Global Summary ---
     const totalMaxStorage = NEON_ACCOUNTS.length * MAX_STORAGE_MB_PER_ACCOUNT;
     const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
     
     combinedMessage += `\n========================================\n`;
     combinedMessage += `<b>GLOBAL RESOURCE SUMMARY</b>\n`;
-    combinedMessage += `▪️ Total Slots Available: <b>${totalSlotsLeft}</b>\n`;
-    combinedMessage += `▪️ Total Active User DBs: <b>${totalUserDBs}</b>\n`;
-    combinedMessage += `▪️ Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
-    combinedMessage += `▪️ Total Storage Used: <b>${totalStorageUsedMB.toFixed(2)} MB</b>\n`;
-    combinedMessage += `▪️ Total Storage Left: <b>${storageRemaining.toFixed(2)} MB</b>\n`;
+    combinedMessage += `Accounts with Capacity (0-${MAX_DB_COUNT-1} DBs): <b>${accountsWithSpace} / ${NEON_ACCOUNTS.length}</b>\n`;
+    combinedMessage += `Total Storage Used: <b>${totalStorageUsedMB.toFixed(2)} MB</b>\n`;
+    combinedMessage += `Total Storage Left: <b>${storageRemaining.toFixed(2)} MB</b>\n`;
     combinedMessage += `========================================\n`;
 
 
