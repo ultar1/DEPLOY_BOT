@@ -4939,8 +4939,7 @@ bot.onText(/^\/deployem$/, async (msg) => {
 });
 
 
-
-                // NOTE: This assumes NEON_ACCOUNTS array is loaded, and helper functions (axios, pool, escapeHTML) are available.
+// In bot.js, replace your entire bot.onText(/^\/dbstats$/, async (msg) => { ... }) function with this:
 
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
@@ -5003,6 +5002,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     }
     
     // --- 1. Fetch Local Bot Ownership Data ---
+    // Fetch all user_bots records and create a map of sanitized DB name to owner ID.
     const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
     const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
@@ -5010,18 +5010,18 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(accountConfig));
     const allResults = await Promise.all(resultsPromises);
     
-    // Global Accumulators and Constants (Needed for Summary)
+    // Global Accumulators and Constants
     let totalStorageUsedMB = 0;
     let totalUserDBs = 0; 
     let totalSlotsLeft = 0; 
-    const MAX_STORAGE_MB_PER_ACCOUNT = 512; // Used only for global storage calculation
-    const DEFAULT_MAX_DB_COUNT = 3; // Used only for total slot calculation
+    const MAX_STORAGE_MB_PER_ACCOUNT = 512; 
+    const DEFAULT_MAX_DB_COUNT = 3; 
     let accountsWithCapacity = 0;
     
     let dbCounter = 1;
-    let consolidatedDBListMessage = `<b>ALL ACTIVE USER DATABASES:</b>\n\n`;
+    let consolidatedDBListMessage = ``; // Start empty
 
-    // --- 3. Accumulate Totals and Build Database List ---
+    // --- 3. Accumulate Totals and Build Database List (RESTRICTED FORMAT) ---
     for (const result of allResults) {
         const accountId = result.id ? String(result.id) : 'N/A';
         
@@ -5039,16 +5039,19 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             // Build Consolidated List
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
-                    const dbName = db.name.replace(/-/g, '_');
-                    const ownerUserId = ownerMap.get(dbName);
+                    // Sanitize DB name to match map key
+                    const dbNameSanitized = db.name.replace(/-/g, '_'); 
+                    const ownerUserId = ownerMap.get(dbNameSanitized);
+                    const ownerDisplay = ownerUserId || 'Unknown';
                     
-                    consolidatedDBListMessage += `▪️ #${dbCounter++} (Acc <b>${accountId}</b>)\n`;
-                    consolidatedDBListMessage += `  - DB Name: <code>${escapeHTML(db.name)}</code>\n`;
-                    consolidatedDBListMessage += `  - Owner ID: <code>${ownerUserId || 'Unknown'}</code>\n\n`;
+                    // Condense everything to one line for space saving
+                    // Format: #N (Acc X) DB Name | Owner ID
+                    consolidatedDBListMessage += 
+                        `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerDisplay}</code>\n`;
                 });
             }
         } else {
-            // Log API failure for the admin (separate from the main list)
+            // Log API failure for the admin
             consolidatedDBListMessage += `Account ${accountId} failed to retrieve data. Error: ${escapeHTML(result.error || 'Unknown API Error').substring(0, 50)}...\n\n`;
         }
     }
@@ -5056,27 +5059,20 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     let combinedMessage = "";
 
     // --- A. Consolidated DB List ---
-    if (totalUserDBs > 0) {
-        // Update header with final count
-        combinedMessage += consolidatedDBListMessage.replace(`<b>ALL ACTIVE USER DATABASES:</b>`, `<b>✅ ALL ACTIVE USER DATABASES (${totalUserDBs}):</b>`);
-    } else {
-        combinedMessage += `<b>ALL ACTIVE USER DATABASES (0):</b>\n\nNo active user-created databases found across ${NEON_ACCOUNTS.length} accounts.\n\n`;
-    }
-
-    // --- B. Global Resource Summary ---
-
-    // Constants for summary calculation
+    // Recalculate total slots and storage based on final accumulated values
     const totalMaxStorage = NEON_ACCOUNTS.length * MAX_STORAGE_MB_PER_ACCOUNT;
     const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
-    // Total Possible User Slots (Hard Limit - 1 default DB)
-    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * (DEFAULT_MAX_DB_COUNT - 1); 
+    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * (DEFAULT_MAX_DB_COUNT); 
+    
+    combinedMessage += `<b>ALL ACTIVE USER DATABASES (${totalUserDBs}):</b>\n\n`;
+    combinedMessage += consolidatedDBListMessage;
+
+    // --- B. Global Resource Summary ---
     
     combinedMessage += `\n========================================\n`;
     combinedMessage += `<b>GLOBAL RESOURCE SUMMARY</b>\n`;
     
-    // Total Slots Available: Available / Total Possible
     combinedMessage += `Total Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b> (Total DBs Capacity)\n`;
-    
     combinedMessage += `Total Active User DBs: <b>${totalUserDBs}</b>\n`;
     combinedMessage += `Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
     combinedMessage += `Total Storage Used: <b>${totalStorageUsedMB.toFixed(2)} MB</b>\n`;
@@ -5095,8 +5091,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         bot.sendMessage(adminId, "Error: Could not format all stats. Check logs.");
     });
 });
-
-
 
 
 // --- NEW COMMAND: /sync ---
