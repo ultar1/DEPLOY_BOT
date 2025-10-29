@@ -13,19 +13,20 @@ const NEON_ACCOUNTS = [
         db_password: 'npg_n0Q8PeICthOw'
     },
     
+      
     {
         id: 2,
         active_db_limit: 3,
-        api_key: 'YOUR_NEON_API_KEY_2',
-        project_id: 'late-sky-11531843',
-        branch_id: 'br-plain-sea-ah8rvcfe',
-        db_host: 'ep-example-host-2.aws.neon.tech',
-        db_user: 'neondb_owner_2',
-        db_password: 'your_password_2'
+        api_key: 'napi_fl3f6mbrtpmfu5r54z072silsu1y6cnfsm6mjj9x6r71itinuvwaf3qa6f04wg4d', 
+        project_id: 'weathered-bush-38000036', 
+        branch_id: 'br-red-flower-ahd3oxcy', 
+        db_host: 'ep-hidden-cloud-aht0m05k-pooler.c-3.us-east-1.aws.neon.tech', 
+        db_user: 'neondb_owner', 
+        db_password: 'npg_KCp7QdTo8sUY'
     },
   
     {
-        id: 34,
+        id: 3,
         active_db_limit: 3,
         api_key: 'YOUR_NEON_API_KEY_34',
         project_id: 'project_id_34',
