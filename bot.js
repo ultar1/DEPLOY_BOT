@@ -5001,7 +5001,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
     // --- 2. Iterate and Fetch Stats for ALL Accounts ---
     // **** FIX: Pass the simple ID string (e.g., '1', '2') to the helper ****
-    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(String(accountConfig.id))); 
+    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonStatsForAccount(String(accountConfig.id))); 
     const allResults = await Promise.all(resultsPromises);
     
     let combinedMessage = `<b>Neon Capacity Report</b> (Total Accounts: ${NEON_ACCOUNTS.length})\n\n`;
