@@ -4992,7 +4992,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const workingMsg = await bot.sendMessage(adminId, "📊 Fetching live capacity report...");
+    const workingMsg = await bot.sendMessage(adminId, "Fetching live capacity report...");
 
     // --- Helper function to get stats for one account (assuming it's defined elsewhere) ---
     // Note: The logic for this helper function must be updated to NOT return emojis.
@@ -5003,7 +5003,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
     // --- 2. Iterate and Fetch Stats for ALL Accounts ---
-    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(accountConfig)); // Assuming this helper is defined
+    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonStatsForAccount(accountConfig)); // Assuming this helper is defined
     const allResults = await Promise.all(resultsPromises);
     
     let combinedMessage = `<b>Neon Capacity Report</b> (Total Accounts: ${NEON_ACCOUNTS.length})\n\n`;
