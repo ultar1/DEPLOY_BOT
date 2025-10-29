@@ -5247,27 +5247,30 @@ You can now use /stats or /bapp to see the updated count of all your bots.
 });
 // In bot.js, inside bot.onText(/^\/addapi (.+)$/, async (msg, match) => { ... })
 
+// In bot.js, inside bot.onText(/^\/addapi (.+)$/, async (msg, match) => { ... })
+
 bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const newKey = match[1].trim();
+    // ... (logic to get finalNewKey remains the same) ...
+    const finalNewKey = msg.text.substring(msg.text.indexOf(' ')).trim();
 
-    if (newKey.length < 30) {
+
+    if (finalNewKey.length < 30) {
         return bot.sendMessage(adminId, "Invalid key length. Heroku API keys are long tokens. Please provide the full key.");
     }
 
     try {
-        // --- CRITICAL FIX ---
-        // Explicitly include the 'id' column and set its value to 'DEFAULT'.
-        // This forces PostgreSQL to use the SERIAL sequence, fixing the 23502 error.
+        // --- CRITICAL FIX: Explicitly insert TRUE into the is_active column. ---
         await pool.query(
-            "INSERT INTO heroku_api_keys (id, api_key, added_by) VALUES (DEFAULT, $1, $2)",
-            [newKey, adminId]
+            `INSERT INTO heroku_api_keys (id, api_key, added_by, is_active) 
+             VALUES (DEFAULT, $1, $2, TRUE)`, // <--- ADDED is_active: TRUE
+            [finalNewKey, adminId]
         );
-        // --------------------
+        // ------------------------------------------------------------------------
 
-        await bot.sendMessage(adminId, `New Heroku API Key added successfully! The bot will use this key automatically if the current one fails.`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(adminId, `New Heroku API Key added successfully and marked **🟢 Active**!`, { parse_mode: 'Markdown' });
     } catch (e) {
         if (e.code === '23505') { // Unique violation
             return bot.sendMessage(adminId, `Key already exists in the database.`);
@@ -5276,6 +5279,7 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
         await bot.sendMessage(adminId, `Failed to add API key: ${e.message}`);
     }
 });
+
 
 
 bot.onText(/^\/apilist$/, async (msg) => {
