@@ -4988,84 +4988,121 @@ bot.onText(/^\/deployem$/, async (msg) => {
 
 // In bot.js
 
+// NOTE: This assumes NEON_ACCOUNTS array is loaded, and helper functions (getNeonAccount, etc.) are available in scope.
+
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return; // Ensure only admin can use
+    if (adminId !== ADMIN_ID) return;
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching Neon database stats for both accounts...");
+    const workingMsg = await bot.sendMessage(adminId, "Fetching live statistics from all defined Neon Accounts (1 through " + NEON_ACCOUNTS.length + ")...");
+    
+    // --- Helper function to get credentials from the array ---
+    const getNeonAccountConfig = (accountId) => NEON_ACCOUNTS.find(acc => String(acc.id) === String(accountId));
+    
+    // --- Helper function to fetch stats for one account (combined logic) ---
+    async function getNeonAccountStats(accountConfig) {
+        const accountId = accountConfig.id;
+        const limit = accountConfig.active_db_limit || 3;
+        
+        const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}`;
+        const dbsUrl = `${apiUrl}/databases`;
+        
+        const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
 
-    try {
-        // --- NEW: Fetch stats for both accounts concurrently ---
-        const [neonResult1, neonResult2] = await Promise.all([
-            getNeonStatsForAccount('1'), // Fetch for Account 1
-            getNeonStatsForAccount('2')  // Fetch for Account 2
-        ]);
+        try {
+            // Fetch DB list and Branch usage concurrently
+            const [dbsResponse, branchResponse] = await Promise.all([
+                axios.get(dbsUrl, { headers }),
+                axios.get(apiUrl, { headers })
+            ]);
 
-        // --- Get bot ownership data (remains the same for now) ---
-        const allBots = await dbServices.getAllBotDeployments(); // Assumes this gets bots regardless of Neon account for now
-        const ownerMap = new Map();
-        for (const bot of allBots) {
-            if (bot.bot_name && typeof bot.bot_name === 'string') {
-                // Store sanitized name -> owner mapping
-                ownerMap.set(bot.bot_name.replace(/-/g, '_'), bot.user_id);
-            }
+            const dbList = dbsResponse.data.databases;
+            const branchData = branchResponse.data.branch;
+
+            const logicalSizeMB = branchData.logical_size ? (branchData.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
+            const dbCount = dbList.length;
+            const statusEmoji = dbCount < limit ? '🟢' : '🟡';
+            const statusText = dbCount < limit ? 'Has Capacity' : 'FULL (DB Count)';
+            const usageStatusEmoji = parseFloat(logicalSizeMB) > 400 ? '🔴' : '🟢';
+
+            return {
+                success: true,
+                id: accountId,
+                projectId: accountConfig.project_id,
+                dbCount: dbCount,
+                dbLimit: limit,
+                storageUsed: logicalSizeMB,
+                dbList: dbList,
+                statusEmoji: statusEmoji,
+                statusText: statusText,
+                usageStatusEmoji: usageStatusEmoji,
+                error: null
+            };
+        } catch (error) {
+            const errorMsg = error.response?.data?.message || error.message;
+            return {
+                success: false,
+                id: accountId,
+                statusEmoji: '❌',
+                statusText: 'API/Credential Failure',
+                error: errorMsg
+            };
         }
-
-        // --- Function to format stats for one account ---
-        const formatAccountStats = (result) => {
-            if (!result.success) {
-                // If fetching failed, return the error message
-                return `<b>Neon Account ${result.data?.accountId || '?'}</b>\nError: ${escapeHTML(result.error)}\n`;
-            }
-
-            const { accountId, logical_size_mb, databases, project_id, branch_id } = result.data;
-            let accountSection = `<b>Neon Account ${accountId}</b>\n`;
-            accountSection += `Project: <code>${escapeHTML(project_id)}</code>\n`;
-            accountSection += `Branch: <code>${escapeHTML(branch_id)}</code>\n`;
-            accountSection += `Storage Used: <i>${escapeHTML(logical_size_mb)} MB</i> / 512 MB\n`;
-            accountSection += `Databases (${databases.length}):\n`;
-
-            if (databases.length > 0) {
-                accountSection += databases.map(db => {
-                    const ownerUserId = ownerMap.get(db.name); // Try to find owner
-                    const ownerString = ownerUserId ? `(Owner: <code>${ownerUserId}</code>)` : '(Owner: Unknown/External)';
-                    return `  - <b>${escapeHTML(db.name)}</b> ${ownerString}`;
-                }).join('\n');
-            } else {
-                accountSection += "  No databases found.\n";
-            }
-            return accountSection;
-        };
-
-        // --- Combine the formatted results ---
-        const finalMessage = `
-<b>Neon Database Statistics</b>
-
-${formatAccountStats(neonResult1)}
---------------------
-${formatAccountStats(neonResult2)}
-        `;
-
-        // --- Send the combined message ---
-        await bot.editMessageText(finalMessage.trim(), { // Use trim() to remove leading/trailing whitespace
-            chat_id: adminId,
-            message_id: workingMsg.message_id,
-            parse_mode: 'HTML' // Switched to HTML for better formatting control
-        });
-
-    } catch (error) { // Catch errors from Promise.all or getAllBotDeployments
-        console.error("[/dbstats] Error fetching combined stats:", error);
-        await bot.editMessageText(
-            `<b>Failed to fetch combined stats!</b>\n\nReason: ${escapeHTML(error.message)}`,
-            {
-                chat_id: adminId,
-                message_id: workingMsg.message_id,
-                parse_mode: 'HTML'
-            }
-        ).catch(err => console.error("Error editing message:", err.message));
     }
-});
+    
+    // --- 1. Fetch Local Bot Ownership Data ---
+    // This allows us to map the DB name back to the user_id
+    const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
+    const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
+    // --- 2. Iterate and Fetch Stats for ALL Accounts ---
+    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(accountConfig));
+    const allResults = await Promise.all(resultsPromises);
+    
+    let combinedMessage = `<b>Neon Multi-Account Statistics</b> (Total Accounts: ${NEON_ACCOUNTS.length})\n\n`;
+    
+    // --- 3. Format and Combine Results ---
+    for (const result of allResults) {
+        if (result.success) {
+            const usageBar = result.storageUsed > 400 ? '⚠️' : '✅';
+            
+            combinedMessage += `┏━━━━━⌠ <b>Account ${result.id}</b> ${result.statusEmoji} ⌡\n`;
+            combinedMessage += `┃ Project: <code>${result.projectId}</code>\n`;
+            combinedMessage += `┃ Status: ${result.statusText} (${result.dbCount}/${result.dbLimit} DBs)\n`;
+            combinedMessage += `┃ Storage: ${result.usageStatusEmoji} <b>${result.storageUsed} MB</b> / 512 MB\n`;
+            combinedMessage += `┗━━━━━━━━━━━━━━━━━━━━━❍\n`;
+            
+            if (result.dbList.length > 0) {
+                combinedMessage += `<b>Active Databases (${result.dbCount}):</b>\n`;
+                result.dbList.forEach(db => {
+                    const dbName = db.name.replace(/-/g, '_');
+                    const ownerUserId = ownerMap.get(dbName);
+                    const ownerString = ownerUserId ? `(Owner: <code>${ownerUserId}</code>)` : '(Owner: Unknown)';
+                    combinedMessage += `  - <code>${escapeHTML(db.name)}</code> ${ownerString}\n`;
+                });
+            } else {
+                 combinedMessage += `  (No user databases active)\n`;
+            }
+            combinedMessage += `\n`;
+        } else {
+            combinedMessage += `┏━━━━━⌠ <b>Account ${result.id}</b> ❌ ⌡\n`;
+            combinedMessage += `┃ Status: API Failure\n`;
+            combinedMessage += `┃ Error: ${escapeHTML(result.error).substring(0, 100)}...\n`;
+            combinedMessage += `┗━━━━━━━━━━━━━━━━━━━━━❍\n\n`;
+        }
+    }
+
+    // --- 4. Send Final Message ---
+    await bot.editMessageText(combinedMessage.trim(), {
+        chat_id: adminId,
+        message_id: workingMsg.message_id,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+    }).catch(err => {
+        console.error("Failed to edit /dbstats message:", err.message);
+        bot.sendMessage(adminId, "Error: Could not format all stats. Check logs.");
+    });
+});
 
 
 
