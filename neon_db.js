@@ -442,7 +442,67 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-super-frog-ad3j1wg3-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_ZM2KtmwibV7r'
+},
+
+  {
+    id: 41,
+    active_db_limit: 3,
+    api_key: 'napi_l17xpp5qjvqouk280232gmbasz9n8y7nol1lvjv1dpf6jjyzy4sgvzhwj388v9bg',
+    project_id: 'divine-sea-04462082',
+    branch_id: 'br-divine-darkness-ad081eke',
+    db_host: 'ep-restless-cell-aduq57ax-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_Xz15SbirheKF'
+},
+
+  {
+    id: 42,
+    active_db_limit: 3,
+    api_key: 'napi_tsw6nf5czvalsdjy2fb893thr76yendn13k4no6y6km5lwlz9nl3p3a6b45vivnv',
+    project_id: 'super-sound-39080520',
+    branch_id: 'br-solitary-cloud-a4yqzm4l',
+    db_host: 'ep-solitary-surf-a4l8fall-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_8tSF3AoJDuye'
+},
+
+  {
+    id: 43,
+    active_db_limit: 3,
+    api_key: 'napi_tnfwz74e6c00tko1u7xps69am4jbnu656sa17f9c7ws89ubvaxvchgmadmdz7ssv',
+    project_id: 'noisy-cloud-06684855',
+    branch_id: 'br-soft-violet-a4cc82uf',
+    db_host: 'ep-soft-violet-a4cc82uf-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_Q6ZfN9YiBWKA'
+},
+
+  {
+    id: 44,
+    active_db_limit: 3,
+    api_key: 'napi_5p475nl6y9quoqr2ixhvqjmk584r7juap7cy4zz03130fgedrsojil3ee5uvezrs',
+    project_id: 'dawn-voice-38123444',
+    branch_id: 'br-spring-smoke-ady9cuy9',
+    db_host: 'ep-blue-math-adzgkay6-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_Tg0mLOUlKu8o'
+},
+
+  {
+    id: 45,
+    active_db_limit: 3,
+    api_key: 'napi_sa1toecwxdnxdm8ghz2l8pu79f4jq2z22d0zro0ergad5wtv8pm8e7env49j1dd2',
+    project_id: 'royal-mouse-53872255',
+    branch_id: 'br-sweet-moon-ah7rb7yu',
+    db_host: 'ep-flat-hill-ahbvi3wu-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_8oQucFEbBK0n'
 }
+
+
+
+
+
 
 
 ];
