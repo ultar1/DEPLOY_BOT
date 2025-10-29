@@ -37,6 +37,7 @@ let escapeMarkdown;
  * @param {object} params.backupPool - The backup PostgreSQL pool.
  * @param {object} params.bot - The TelegramBot instance.
  * @param {string} params.HEROKU_API_KEY - Heroku API key.
+ * @param {Array} params.NEON_ACCOUNTS - Array containing all Neon account configurations.
  * @param {string} params.GITHUB_LEVANTER_REPO_URL - GitHub URL for Levanter.
  * @param {string} params.GITHUB_RAGANORK_REPO_URL - GitHub URL for Raganork.
  * @param {string} params.ADMIN_ID - Admin Telegram ID.
