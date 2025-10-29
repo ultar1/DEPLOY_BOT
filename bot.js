@@ -4986,11 +4986,6 @@ bot.onText(/^\/deployem$/, async (msg) => {
 });
 
 
-// NOTE: This assumes NEON_ACCOUNTS array is loaded, and helper functions (getNeonAccount, etc.) are available in scope.
-
-bot.onText(/^\/dbstats$/, async (msg) => {
-// NOTE: This assumes NEON_ACCOUNTS array is loaded, and helper functions (axios, pool, escapeHTML) are available.
-
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
