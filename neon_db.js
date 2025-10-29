@@ -123,8 +123,51 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-plain-glade-ahcjysrh-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_yF1DUEK7JhnM'
-}
+},
 
+  {
+    id: 12,
+    active_db_limit: 3,
+    api_key: 'napi_a7b0trleis22454y1uinq17xr08sffpfpydtargea290uc2psboukod4b433eqcv',
+    project_id: 'cold-shadow-28726812',
+    branch_id: 'br-calm-violet-ahi56uxm',
+    db_host: 'ep-mute-cell-ahmjsep7-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_wvaKPiBIUm74'
+},
+
+  {
+    id: 13,
+    active_db_limit: 3,
+    api_key: 'napi_t8t4563oidol976278jwjk8j2udlxb23s4joxqkd3i8ziuxtsacalffto66nsfps',
+    project_id: 'sweet-brook-49203655',
+    branch_id: 'br-quiet-frost-a4crqfl2',
+    db_host: 'ep-sweet-bonus-a4tyn3bw-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_mhws7xoWJT5u'
+},
+
+  {
+    id: 14,
+    active_db_limit: 3,
+    api_key: 'napi_869q12o29v89rmkg16mamatyso5divjv3gloc0e9ga3imdh7t0rwcb6mzwhdiv7m',
+    project_id: 'blue-dew-12781736',
+    branch_id: 'br-winter-bread-ahnn1tuh',
+    db_host: 'ep-noisy-mud-ahqjetlk-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_RVG5Wmnzi0oc'
+},
+
+  {
+    id: 15,
+    active_db_limit: 3,
+    api_key: 'napi_mhfyx8681xfe937qundg3olf44mc65sqz92glzbhd76y1vqzyshws1fv7x0sjcnt',
+    project_id: 'rapid-math-84280381',
+    branch_id: 'br-curly-mountain-adcwfnlt',
+    db_host: 'ep-patient-cell-advknj7f-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_mxZNMSHa6r2K'
+}
 
 
 ];
