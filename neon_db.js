@@ -36,6 +36,18 @@ const NEON_ACCOUNTS = [
         db_user: 'neondb_owner', // <<< NEW USER
         db_password: 'npg_4naqoi3yKLXZ' // <<< NEW PASSWORD
     },
+
+      // Account 4 (NEW Account - Restless Rain)
+    {
+        id: 4,
+        active_db_limit: 3,
+        api_key: 'napi_g9en1dvfzqmptq1sukf8lrc5675qb5kxrvm1ds7i1dmwta7i23b9qdv301j8szmk', // <<< NEW API KEY
+        project_id: 'restless-rain-47875493', // <<< NEW PROJECT ID
+        branch_id: 'br-frosty-shape-ah56d26z', // <<< NEW BRANCH ID
+        db_host: 'ep-purple-meadow-ahuzulz2-pooler.c-3.us-east-1.aws.neon.tech', // <<< NEW HOST
+        db_user: 'neondb_owner', // <<< NEW USER
+        db_password: 'npg_g1uPt0CxAEso' // <<< NEW PASSWORD
+    },
 ];
 
 module.exports = { NEON_ACCOUNTS };
