@@ -1587,15 +1587,17 @@ async function updateRenderVar(varName, varValue) {
 let isRecoveryInProgress = false; // Global flag to prevent multiple recoveries at once
 
 
-// NOTE: This assumes NEON_ACCOUNTS array, axios, and escapeMarkdown are available in the scope.
+/// NOTE: This assumes NEON_ACCOUNTS array, axios, and escapeMarkdown are available.
 
 /**
  * Searches through all NEON_ACCOUNTS, finds the database by name, deletes it using the Neon API, and stops on success.
+ * This is the replacement for the old deleteNeonDatabase(dbName, accountId) call.
  * @param {string} dbName The name of the database to delete (e.g., 'horlar12_9251').
  * @returns {Promise<{success: boolean, accountId: string | null, error?: string, databaseGone?: boolean}>}
  */
 async function findAndDeleteNeonDatabase(dbName) {
     // Neon API requires dashes instead of underscores in the database name
+    // Assuming the input dbName is the internal format (e.g., 'atttesttt')
     const dbNameForAPI = dbName.replace(/_/g, '-'); 
     
     // Iterate through ALL configured Neon accounts
@@ -1612,8 +1614,8 @@ async function findAndDeleteNeonDatabase(dbName) {
             const response = await axios.delete(deleteUrl, { headers });
             
             if (response.status === 200 || response.status === 204) {
-                // Database was found and successfully deleted! Stop searching.
-                return { success: true, accountId: accountId };
+                // Database was found and successfully deleted! STOP SEARCHING and return the correct accountId.
+                return { success: true, accountId: accountId, databaseGone: false };
             }
             
         } catch (error) {
@@ -1621,17 +1623,14 @@ async function findAndDeleteNeonDatabase(dbName) {
             const errorMessage = error.response?.data?.message || error.message;
 
             if (status === 404) {
-                // Database not found in this specific account. This is not an error, so we continue to the next account.
-                console.log(`DB ${dbName} not found in Account ${accountId}. Continuing search...`);
+                // Database not found in this specific account. Continue to the next one.
                 continue; 
             }
             
-            // If it's a critical error (e.g., 403 Forbidden/Bad Key), report it and stop the process.
-            console.error(`Error deleting DB ${dbName} from Account ${accountId}:`, errorMessage);
-            
+            // If it's a critical error (like a 403 Forbidden/Bad Key), report it and stop the process.
             return { 
                 success: false, 
-                accountId: accountId, 
+                accountId: accountId, // This returns the account that failed the API call
                 error: `API Error in Account ${accountId}: ${errorMessage.substring(0, 150)}` 
             };
         }
@@ -1644,6 +1643,9 @@ async function findAndDeleteNeonDatabase(dbName) {
         error: `Database '${dbName}' was not found in any of the ${NEON_ACCOUNTS.length} configured Neon accounts.` 
     };
 }
+
+
+// In bot.js, inside bot.on('callback_query', async q => { ... })
 
 
 
@@ -9137,25 +9139,26 @@ if (action === 'levanter_wa_fallback') {
 
 if (action === 'neon_del_confirm') {
     const cid = q.message.chat.id.toString();
-    const dbName = payload; 
-    
+    const dbName = payload; // This is the sanitized DB name (e.g., 'atttesttt')
+
     const workingMsg = await bot.editMessageText(`Deleting external database \`${dbName}\` from Neon...`, {
         chat_id: cid,
         message_id: q.message.message_id,
         parse_mode: 'Markdown'
     });
 
-    // --- 1. EXECUTE EXTERNAL DELETION ---
-    // The function below handles checking all accounts until success or all accounts are checked.
+    // --- 1. EXECUTE EXTERNAL DELETION (Searches all accounts) ---
+    // This call now handles iterating through ALL NEON_ACCOUNTS and returns the specific account ID.
     const result = await findAndDeleteNeonDatabase(dbName); 
 
     // --- 2. REPORT RESULT ---
     if (result.success) {
-        // Neon deletion was successful.
-        const accountId = result.accountId || 'Unknown Account';
-        
+        // The result.accountId will now be the CORRECT ID (e.g., '3', '4', '6')
+        const accountId = result.accountId || 'Unknown';
+        const deleteStatus = result.databaseGone ? 'already deleted' : 'permanently deleted';
+
         await bot.editMessageText(
-            `**Database Deleted!**\n\nThe external database \`${dbName}\` has been permanently deleted from <b>Neon Account ${accountId}</b>.`,
+            `**Database Deleted!**\n\nThe external database \`${dbName}\` was **${deleteStatus}** from <b>Neon Account ${accountId}</b>.`,
             {
                 chat_id: cid,
                 message_id: workingMsg.message_id,
@@ -9177,6 +9180,7 @@ if (action === 'neon_del_confirm') {
     }
     return;
 }
+
 
 
 if (action === 'neon_del_cancel') {
