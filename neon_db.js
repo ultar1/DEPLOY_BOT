@@ -90,9 +90,18 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-twilight-surf-a4pzgfqa-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_T4zqHKx7yVQD'
+},
+
+  {
+    id: 9,
+    active_db_limit: 3,
+    api_key: 'napi_pq1lry4dw7kd255m8klwhb64b2dompnogs6a2qk0icnqp6hce2le4oig3d2ky4s6',
+    project_id: 'curly-credit-13217129',
+    branch_id: 'br-dawn-river-adanqx7b',
+    db_host: 'ep-gentle-truth-adqwo8yx-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_GJki9ZpxNj8U'
 }
-
-
 
 ];
 
