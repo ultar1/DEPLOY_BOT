@@ -929,14 +929,14 @@ async function unbanUser(userId) {
  * Saves or updates deployment details in the main database.
  * Preserves original deploy_date and expiration_date on conflict/update.
  * @param {string} userId
- * @param {string} appName The app name used as the key (often originalAppName for restores).
+ * @param {string} appName The app name used as the key.
  * @param {string} sessionId
  * @param {object} configVars
  * @param {string} botType
  * @param {boolean} [isFreeTrial=false]
- * @param {Date|null} [expirationDateToUse=null] Explicit expiration date (e.g., from restore).
+ * @param {Date|null} [expirationDateToUse=null] Explicit expiration date.
  * @param {string|null} [email=null] User's email.
- * @param {string} neonAccountId The Neon Account ID ('1' or '2') where the DB resides.
+ * @param {string} neonAccountId The Neon Account ID (e.g., '1', '2', '34').
  */
 async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null, email = null, neonAccountId) {
     if (!pool) {
@@ -944,18 +944,18 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         return;
     }
     try {
-        const accountId = (neonAccountId === '1' || neonAccountId === '2') ? neonAccountId : '1';
-        if (!neonAccountId || (neonAccountId !== '1' && neonAccountId !== '2')) {
-            console.warn(`[DB-Main] Missing or invalid neonAccountId for ${appName} (received: ${neonAccountId}), defaulting to '1'.`);
+        // --- FIX: Use the provided ID, defaulting to '1' only if the argument is truly undefined/null ---
+        const accountId = neonAccountId ? String(neonAccountId) : '1';
+        if (!neonAccountId) {
+            console.warn(`[DB-Main] neonAccountId was not provided for ${appName}, defaulting to '1'.`);
         }
+        // --- END FIX ---
 
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
 
-        // **** CORRECTED LINE ****
-        // Use provided expiration date OR calculate new one (1 day free, 45 days paid)
-        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 35) * 24 * 60 * 60 * 1000);
-        // **** END CORRECTION ****
+        // Corrected calculation line (fixed earlier)
+        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 30) * 24 * 60 * 60 * 1000);
 
         const query = `
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial, email, neon_account_id)
@@ -972,6 +972,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                expiration_date = user_deployments.expiration_date;
         `;
 
+        // Execute query, passing the clean accountId
         await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial, email, accountId]);
 
         console.log(`[DB-Main] Saved/Updated deployment for app ${appName} (Neon Acc: ${accountId}). Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate.toISOString()}.`);
@@ -984,6 +985,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         }
     }
 }
+
 
 
 
