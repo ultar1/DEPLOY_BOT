@@ -101,7 +101,19 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-gentle-truth-adqwo8yx-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_GJki9ZpxNj8U'
+},
+
+  {
+    id: 10,
+    active_db_limit: 3,
+    api_key: 'napi_77269nythdttiu2u7lkj7b52vf93txlb0ezp5yqqeqn1y7sxsj93sxw4bgfevn3u',
+    project_id: 'steep-sun-83347485',
+    branch_id: 'br-hidden-breeze-ahkvn95s',
+    db_host: 'ep-dawn-salad-ahnbc76j-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_PSNXc6np1FZe'
 }
+
 
 ];
 
