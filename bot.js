@@ -1441,58 +1441,62 @@ async function attemptCreateOnAccount(dbName, accountId) {
  * @returns {Promise<{success: boolean, error?: string, accounts_checked: number}>}
  */
 async function deleteNeonDatabase(dbName, expectedAccountId) {
-    // --- Step 1: Input Validation ---
+    // --- Step 1: Input Validation and ID Parsing ---
     if (!dbName) {
         return { success: false, error: "Missing dbName provided.", accounts_checked: 0 };
     }
 
+    // Ensure the ID we look up in the array is an INTEGER, as NEON_ACCOUNTS.id is defined as an integer.
+    // If parsing fails (e.g., input is null or undefined), default to 1.
+    const expectedIdInt = parseInt(expectedAccountId, 10) || 1;
+    
     let accountsChecked = 0;
-    const neonDbName = dbName.replace(/-/g, '_'); // Database names in SQL/Neon are usually created with underscores (my_app_123) if hyphens were in the app name.
+    const neonDbName = dbName.replace(/-/g, '_'); // Sanitize: Convert Heroku hyphens back to SQL underscores
 
     // --- Step 2: Primary Deletion Attempt (Expected Account) ---
-    const primaryAccount = NEON_ACCOUNTS.find(acc => String(acc.id) === String(expectedAccountId));
+    // Look up the account configuration using the INTEGER ID
+    const primaryAccount = NEON_ACCOUNTS.find(acc => acc.id === expectedIdInt);
 
     if (primaryAccount) {
         accountsChecked++;
-        console.log(`[Neon Delete] Tier 1: Attempting deletion on Account ${expectedAccountId} (Expected).`);
+        console.log(`[Neon Delete] Tier 1: Attempting deletion on Account ${expectedIdInt} (Expected).`);
         
         try {
-            // Check credentials before making the call
+            // Check credentials
             if (!primaryAccount.api_key || !primaryAccount.project_id || !primaryAccount.branch_id) {
                  throw new Error("Missing API/Project/Branch credentials in array config.");
             }
             
-            // CRITICAL: The URL must use the database's actual name (usually underscored).
             const apiUrl = `https://console.neon.tech/api/v2/projects/${primaryAccount.project_id}/branches/${primaryAccount.branch_id}/databases/${neonDbName}`;
             const headers = { 'Authorization': `Bearer ${primaryAccount.api_key}`, 'Accept': 'application/json' };
 
             await axios.delete(apiUrl, { headers });
             
             // Success! Stop here.
-            console.log(`[Neon Delete] SUCCESS on Account ${expectedAccountId}.`);
+            console.log(`[Neon Delete] SUCCESS on Account ${expectedIdInt}.`);
             return { success: true, accounts_checked: accountsChecked };
             
         } catch (error) {
             // Log failure, but continue to secondary check
             if (error.response?.status === 404) {
-                 console.log(`[Neon Delete] Account ${expectedAccountId} reported 404 (DB already deleted). Treating as success.`);
+                 console.log(`[Neon Delete] Account ${expectedIdInt} reported 404 (DB already deleted). Treating as success.`);
                  return { success: true, accounts_checked: accountsChecked };
             }
             const primaryErrorMsg = error.response?.data?.message || error.message;
-            console.warn(`[Neon Delete] Tier 1 FAIL (Account ${expectedAccountId}): ${primaryErrorMsg}. Initiating fallback.`);
+            console.warn(`[Neon Delete] Tier 1 FAIL (Account ${expectedIdInt}): ${primaryErrorMsg}. Initiating fallback.`);
         }
     } else {
-        console.warn(`[Neon Delete] Expected Account ${expectedAccountId} not found in NEON_ACCOUNTS array. Initiating fallback.`);
+        console.warn(`[Neon Delete] Expected Account ${expectedIdInt} not found in NEON_ACCOUNTS array. Initiating fallback.`);
     }
 
     // --- Step 3: Secondary Deletion Attempt (Fallback Search) ---
     // If Tier 1 failed, cycle through ALL configured accounts
     
     for (const fallbackAccount of NEON_ACCOUNTS) {
-        const fallbackAccountId = String(fallbackAccount.id);
+        const fallbackAccountId = fallbackAccount.id; // Get the integer ID
         
         // Skip the expected account if we already tried it
-        if (fallbackAccountId === expectedAccountId && accountsChecked > 0) continue;
+        if (fallbackAccountId === expectedIdInt && accountsChecked > 0) continue;
         
         accountsChecked++;
         console.log(`[Neon Delete] Fallback Search: Checking Account ${fallbackAccountId}...`);
@@ -1510,11 +1514,12 @@ async function deleteNeonDatabase(dbName, expectedAccountId) {
             
             // Success on fallback!
             console.log(`[Neon Delete] SUCCESS on Fallback Account ${fallbackAccountId}.`);
-            return { success: true, accounts_checked: accountsChecked };
+            // Return the account ID (integer) that succeeded in the accounts_checked property
+            return { success: true, accounts_checked: fallbackAccountId }; 
             
         } catch (error) {
              if (error.response?.status === 404) {
-                 // 404 is good, keep searching or proceed
+                 // 404 is good, continue searching
                  continue; 
              }
              // Log the error but continue searching
@@ -1528,7 +1533,6 @@ async function deleteNeonDatabase(dbName, expectedAccountId) {
     console.error(`[Neon Delete] FINAL FAILURE: ${finalErrorMsg}`);
     return { success: false, error: finalErrorMsg, accounts_checked: accountsChecked };
 }
-
 
 
 /**
