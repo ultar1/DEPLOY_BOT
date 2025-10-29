@@ -1381,6 +1381,32 @@ async function createNeonDatabase(newDbName) {
 }
 
 
+// In bot.js (or bot_services.js, if you prefer, but keep it accessible)
+
+/**
+ * Fetches all known bot names from the primary tracking tables.
+ * @param {object} pool - The main PostgreSQL pool.
+ * @returns {Promise<Set<string>>} A Set of canonical database names (underscored).
+ */
+async function getKnownAppNames(pool) {
+    // We check both tables for maximum coverage
+    const botNamesResult = await pool.query('SELECT DISTINCT bot_name FROM user_bots');
+    const deploymentNamesResult = await pool.query('SELECT DISTINCT app_name FROM user_deployments');
+
+    const knownApps = new Set();
+    
+    // Add all names, converting them to the canonical database name format (underscores)
+    botNamesResult.rows.forEach(row => knownApps.add(row.bot_name.replace(/-/g, '_')));
+    deploymentNamesResult.rows.forEach(row => knownApps.add(row.app_name.replace(/-/g, '_')));
+    
+    // Add the default system DB name as well, just in case
+    knownApps.add('neondb');
+
+    return knownApps;
+}
+
+
+
 
 async function attemptCreateOnAccount(dbName, accountId) {
     // --- Step 1: Retrieve Credentials from the array ---
@@ -4272,49 +4298,6 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 });
 
 
-
-bot.onText(/^\/deldb\s+([\w-]+)\s+(\d+)$/i, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-
-    // 1. Admin Check
-    if (adminId !== ADMIN_ID) {
-        return bot.sendMessage(adminId, "This command is restricted to the administrator.");
-    }
-
-    const dbName = match[1];     // e.g., 'atttesttt'
-    const accountId = match[2];  // e.g., '3' (the tier ID from your NEON_ACCOUNTS array)
-    
-    const workingMsg = await bot.sendMessage(adminId, `Attempting to forcibly delete external database \`${dbName}\` from <b>Neon Account ${accountId}</b>...`, {
-        parse_mode: 'HTML'
-    });
-
-    try {
-        // 2. Execute Deletion using the reliable multi-account fallback function
-        // NOTE: This call will try Account ID $X first, and if it fails (e.g., bad key), it will cycle through ALL 6+ accounts defined in NEON_ACCOUNTS until it succeeds or fails globally.
-        const result = await deleteNeonDatabase(dbName, accountId); 
-
-        // 3. Report Result (Success or Detailed Failure)
-        if (result.success) {
-            const finalAccountUsed = result.accounts_checked ? `Account ${result.accounts_checked}` : accountId;
-            
-            // Success message
-            await bot.editMessageText(
-                `**Success! Database Forcibly Deleted.**\n\nExternal database \`${dbName}\` has been removed (Cleaned up via <b>Neon Account ${finalAccountUsed}</b>).`,
-                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
-            );
-        } else {
-            // Failure message
-            await bot.editMessageText(
-                `**Deletion Failed!**\n\nCould not delete \`${dbName}\` after checking ${result.accounts_checked} tiers.\n\n*Reason:* ${escapeMarkdown(result.error)}`,
-                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-            );
-        }
-    } catch (error) {
-        console.error(`[Forced Delete] Fatal error during deletion for ${dbName}:`, error.message);
-        await bot.editMessageText(`**FATAL ERROR:** Cannot execute command. Check logs.`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
-    }
-});
-
 // This new /id command is smarter and provides guidance.
 bot.onText(/^\/id$/, async (msg) => {
     const cid = msg.chat.id.toString();
@@ -6056,34 +6039,132 @@ bot.onText(/^\/createbotdb (.+)$/, async (msg, match) => {
 });
 
 
-// ADMIN COMMAND: /delneondb <database_name>
-bot.onText(/^\/delbotdb (.+)$/, async (msg, match) => {
+// In bot.js, replace your existing /deldb command handler(s) with this single block:
+
+bot.onText(/^\/deldb(?:\s+([\w-]+)\s+(\d+))?$/i, async (msg, match) => {
     const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
 
-    const dbName = match[1];
+    // 1. Admin Check
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "This command is restricted to the administrator.");
+    }
+    
+    const singleDbName = match?.[1];     // e.g., 'atttesttt'
+    const singleAccountId = match?.[2];  // e.g., '3'
 
-    // Send a confirmation message with a strong warning
-    await bot.sendMessage(adminId, 
-        `**EXTREME DANGER** \n\n` +
-        `Are you absolutely sure you want to permanently delete the database named \`${dbName}\` from your Neon project?\n\n` +
-        `This action is **irreversible** and all data will be lost.`, 
-        {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        // The callback data includes the dbName to be deleted
-                        { text: `Yes, I am sure. Delete ${dbName}`, callback_data: `neon_del_confirm:${dbName}` }
-                    ],
-                    [
-                        { text: "No, do not delete", callback_data: `neon_del_cancel` }
-                    ]
-                ]
+    // --- CASE A: Admin specified DB name and ID (Forcible Delete) ---
+    if (singleDbName && singleAccountId) {
+        const workingMsg = await bot.sendMessage(adminId, `Attempting to forcibly delete external database \`${singleDbName}\` from <b>Neon Account ${singleAccountId}</b>...`, {
+            parse_mode: 'HTML'
+        });
+
+        try {
+            // Execute Deletion using the reliable multi-account fallback function
+            const result = await deleteNeonDatabase(singleDbName, singleAccountId); 
+
+            if (result.success) {
+                const finalAccountUsed = result.accounts_checked ? `Account ${result.accounts_checked}` : singleAccountId;
+                await bot.editMessageText(
+                    `**Success! Database Forcibly Deleted.**\n\nExternal database \`${escapeMarkdown(singleDbName)}\` has been removed (Cleaned up via <b>Neon Account ${finalAccountUsed}</b>).`,
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
+                );
+            } else {
+                await bot.editMessageText(
+                    `**Deletion Failed!**\n\nCould not delete \`${escapeMarkdown(singleDbName)}\` after checking ${result.accounts_checked} tiers.\n\n*Reason:* ${escapeMarkdown(result.error)}`,
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                );
+            }
+        } catch (error) {
+            console.error(`[Forced Delete] Fatal error during deletion for ${singleDbName}:`, error.message);
+            await bot.editMessageText(`**FATAL ERROR:** Cannot execute command. Check logs.`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+        }
+        return;
+    }
+
+    // --- CASE B: No arguments provided (Intelligent Orphan Cleanup) ---
+
+    const workingMsg = await bot.sendMessage(adminId, `**Starting Intelligent Orphan DB Cleanup...**\n\n1. Fetching managed app list...`, { parse_mode: 'Markdown' });
+
+    let dbCounter = 0;
+    let deletionPromises = [];
+    let knownApps;
+    
+    try {
+        // Step 1: Get all apps we manage from local DB
+        knownApps = await getKnownAppNames(pool);
+        await bot.editMessageText(workingMsg.text + ` Found ${knownApps.size - 1} known apps.\n2. Scanning all 6 Neon accounts for orphans...`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+
+        // Step 2: Loop through all Neon accounts and find orphans
+        for (const accountConfig of NEON_ACCOUNTS) {
+            const accountId = String(accountConfig.id);
+            const dbsUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}/databases`;
+            const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
+
+            try {
+                const dbsResponse = await axios.get(dbsUrl, { headers });
+                const dbList = dbsResponse.data.databases;
+                
+                dbList.forEach(db => {
+                    const dbName = db.name;
+                    // Database names from Neon API are typically underscore-separated
+                    if (!knownApps.has(dbName) && dbName !== 'neondb') {
+                        // Found an orphan!
+                        dbCounter++;
+                        deletionPromises.push({
+                            promise: deleteNeonDatabase(dbName, accountId), // Use the specific account ID for this DB
+                            dbName: dbName,
+                            accountId: accountId
+                        });
+                        console.log(`[Orphan Cleanup] Found orphaned DB: ${dbName} on Account ${accountId}.`);
+                    }
+                });
+            } catch (error) {
+                // Log API failure for a single account but continue the scan
+                await bot.sendMessage(adminId, `Warning: Failed to scan Account ${accountId}. Error: ${escapeMarkdown(error.message.substring(0, 50))}`, { parse_mode: 'Markdown' });
             }
         }
-    );
+        
+        await bot.editMessageText(workingMsg.text + ` Found ${knownApps.size - 1} known apps.\n2. Scan complete. Found **${dbCounter}** orphaned DBs.\n3. Starting deletion...`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+
+        if (dbCounter === 0) {
+             return bot.editMessageText(`**Intelligent Orphan DB Cleanup Complete.**\n\nNo orphaned databases were found across any Neon account. All databases are accounted for!`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+        }
+
+        // Step 3: Execute Deletion
+        let successCount = 0;
+        let failLog = [];
+        
+        for (const { promise, dbName, accountId } of deletionPromises) {
+            const result = await promise;
+            if (result.success) {
+                successCount++;
+            } else {
+                failLog.push(`${dbName} (Acc ${accountId}): ${result.error || 'Unknown Error'}`);
+            }
+            //Update the message for every successful/failed deletion (or batch it if needed)
+            await bot.editMessageText(`3. Deleting... Success: ${successCount} / Failed: ${dbCounter - successCount} (Current: ${dbName})`, { chat_id: adminId, message_id: workingMsg.message_id }).catch(()=>{});
+        }
+
+        // Step 4: Final Report
+        let finalReport = `**Intelligent Orphan DB Cleanup Complete!**\n\n`;
+        finalReport += `*Total Databases Scanned:* ${knownApps.size - 1 + dbCounter}\n`;
+        finalReport += `*Successfully Deleted:* ${successCount}\n`;
+        finalReport += `*Failed to Delete:* ${dbCounter - successCount}\n\n`;
+
+        if (failLog.length > 0) {
+            finalReport += `**Deletion Failures:**\n${failLog.join('\n')}`;
+        } else {
+             finalReport += `All ${successCount} orphaned databases were successfully deleted.`;
+        }
+        
+        await bot.editMessageText(finalReport, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+
+    } catch (e) {
+        console.error(`[Orphan Cleanup] CRITICAL FAILURE:`, e);
+        await bot.editMessageText(`**CRITICAL ERROR** during Orphan DB Cleanup: ${escapeMarkdown(e.message)}`, { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' });
+    }
 });
+
 
 
 bot.onText(/^\/restoreall$/, async (msg) => {
