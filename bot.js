@@ -1224,6 +1224,17 @@ cron.schedule('0 0 * * 0', () => {
 console.log('Weekly prune job for logged-out bots is scheduled.');
 
 // --- END SCHEDULED JOBS ---
+// In bot.js, inside the main startup block, alongside other scheduled tasks:
+
+// Schedule 3: Run Orphan DB Cleanup every 12 hours (43,200,000 ms)
+const ORPHAN_CLEANUP_INTERVAL_MS = 12 * 60 * 60 * 1000; 
+
+setInterval(async () => {
+    console.log('[Scheduler] Cron job triggered: Running Orphan DB Cleanup task');
+    await runOrphanDbCleanup(ADMIN_ID); // Pass ADMIN_ID so the report is sent to Telegram
+}, ORPHAN_CLEANUP_INTERVAL_MS);
+
+console.log(`[Cleanup] Scheduled Orphan DB Cleanup every 12 hours.`);
 
 
     // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
@@ -1242,7 +1253,7 @@ cron.schedule('0 0 * * *', async () => {
     // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
         console.log('[Scheduler] Cron job triggered: Running copydb task');
-        await bot.sendMessage(ADMIN_ID, "🤖 Starting scheduled daily main database copy...");
+        await bot.sendMessage(ADMIN_ID, "Starting scheduled daily main database copy...");
         await runCopyDbTask(); // Call the new direct function
     }, {
         scheduled: true,
@@ -1455,6 +1466,96 @@ async function attemptCreateOnAccount(dbName, accountId) {
     }
 }
 
+// In bot.js, alongside other scheduled/utility functions (e.g., near runCopyDbTask)
+
+/**
+ * Runs the core logic to scan all Neon accounts for databases that exist 
+ * but are not referenced in the local database (orphans) and deletes them.
+ */
+async function runOrphanDbCleanup(adminId) {
+    console.log('[Scheduler] Starting Orphan DB Cleanup...');
+
+    let dbCounter = 0;
+    let deletionPromises = [];
+    let knownApps;
+    
+    // Use the admin's ID for logging critical results
+    const LOG_TARGET = adminId || ADMIN_ID; 
+
+    try {
+        // Step 1: Get all apps we manage from local DB
+        knownApps = await getKnownAppNames(pool);
+        console.log(`[Orphan Cleanup] Found ${knownApps.size - 1} known apps. Scanning Neon accounts...`);
+
+        // Step 2: Loop through all Neon accounts and find orphans
+        for (const accountConfig of NEON_ACCOUNTS) {
+            const accountId = String(accountConfig.id);
+            const dbsUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}/databases`;
+            const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
+
+            try {
+                const dbsResponse = await axios.get(dbsUrl, { headers });
+                const dbList = dbsResponse.data.databases;
+                
+                dbList.forEach(db => {
+                    const dbName = db.name.replace(/-/g, '_'); // Sanitize name for comparison
+                    
+                    if (!knownApps.has(dbName) && dbName !== 'neondb') {
+                        // Found an orphan!
+                        dbCounter++;
+                        deletionPromises.push({
+                            promise: deleteNeonDatabase(dbName, accountId), // Use the specific account ID
+                            dbName: dbName,
+                            accountId: accountId
+                        });
+                        // Do not log every finding, only critical errors or final results
+                    }
+                });
+            } catch (error) {
+                // Log API failure for a single account
+                console.error(`[Orphan Cleanup] Failed to scan Account ${accountId}. Error: ${error.message.substring(0, 50)}`);
+            }
+        }
+        
+        console.log(`[Orphan Cleanup] Scan complete. Found ${dbCounter} orphaned DBs. Starting deletion...`);
+
+        if (dbCounter === 0) {
+             console.log('[Orphan Cleanup] No orphans found. Job finished.');
+             return;
+        }
+
+        // Step 3: Execute Deletion
+        let successCount = 0;
+        let failLog = [];
+        
+        for (const { promise, dbName, accountId } of deletionPromises) {
+            const result = await promise;
+            if (result.success) {
+                successCount++;
+            } else {
+                failLog.push(`${dbName} (Acc ${accountId}): ${result.error || 'Unknown Error'}`);
+            }
+        }
+
+        // Step 4: Final Report (send to admin via Telegram)
+        let finalReport = `**Intelligent Orphan DB Cleanup Report**\n\n`;
+        finalReport += `*Total Orphans Found:* ${dbCounter}\n`;
+        finalReport += `*Successfully Deleted:* ${successCount}\n`;
+        finalReport += `*Failed to Delete:* ${dbCounter - successCount}\n\n`;
+
+        if (failLog.length > 0) {
+            finalReport += `**Deletion Failures:**\n\`\`\`\n${failLog.join('\n')}\n\`\`\``;
+        } else {
+             finalReport += `All ${successCount} orphaned databases were successfully deleted.`;
+        }
+        
+        await bot.sendMessage(LOG_TARGET, finalReport, { parse_mode: 'Markdown' });
+
+    } catch (e) {
+        console.error(`[Orphan Cleanup] CRITICAL FAILURE:`, e);
+        await bot.sendMessage(LOG_TARGET, `**CRITICAL ERROR** during Orphan DB Cleanup: ${escapeMarkdown(e.message)}`, { parse_mode: 'Markdown' });
+    }
+}
 
 
 
@@ -3207,7 +3308,8 @@ registerGroupHandlers(bot, dbServices);
 
 
   startScheduledTasks();
-
+  runOrphanDbCleanup();
+  
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
