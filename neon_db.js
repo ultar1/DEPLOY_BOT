@@ -58,7 +58,19 @@ const NEON_ACCOUNTS = [
         db_host: 'ep-purple-bush-ah5gbt3a-pooler.c-3.us-east-1.aws.neon.tech',
         db_user: 'neondb_owner',
         db_password: 'npg_lQRjd07oiKuY'
+    },
+
+      {
+        id: 6,
+        active_db_limit: 3,
+        api_key: 'napi_1humrpzeiauc8l12o7qiu1k4xcmiw0wu84ky952vtq0iric2j0bfmy9t68yu1xdl',
+        project_id: 'square-bird-32736723',
+        branch_id: 'br-broad-cherry-a4io6h2w',
+        db_host: 'ep-odd-shadow-a4kr1rvx-pooler.us-east-1.aws.neon.tech',
+        db_user: 'neondb_owner',
+        db_password: 'npg_gkvWfjlC7Rm6'
     }
+
 
 ];
 
