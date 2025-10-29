@@ -25,16 +25,17 @@ const NEON_ACCOUNTS = [
         db_password: 'npg_KCp7QdTo8sUY'
     },
   
+        
     {
         id: 3,
         active_db_limit: 3,
-        api_key: 'YOUR_NEON_API_KEY_34',
-        project_id: 'project_id_34',
-        branch_id: 'branch_id_34',
-        db_host: 'ep-example-host-34.aws.neon.tech',
-        db_user: 'neondb_owner_34',
-        db_password: 'your_password_34'
-    }
+        api_key: 'napi_491ct4cxo84fgwcsa0q5c5r4fjl1jyb0httx9hf9mfe4b9ugn98vbyzuwny5d4uw', // <<< NEW API KEY
+        project_id: 'withered-cake-16066457', // <<< NEW PROJECT ID
+        branch_id: 'br-solitary-haze-a4lksvtc', // <<< NEW BRANCH ID
+        db_host: 'ep-snowy-king-a4sa1bcu-pooler.us-east-1.aws.neon.tech', // <<< NEW HOST
+        db_user: 'neondb_owner', // <<< NEW USER
+        db_password: 'npg_4naqoi3yKLXZ' // <<< NEW PASSWORD
+    },
 ];
 
 module.exports = { NEON_ACCOUNTS };
