@@ -3302,6 +3302,7 @@ async function notifyAdminUserOnline(msg) {
     backupPool: backupPool,
     bot: bot,
     herokuApi: herokuApi,
+    NEON_ACCOUNTS: NEON_ACCOUNTS,
     HEROKU_API_KEY: HEROKU_API_KEY,
     GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
