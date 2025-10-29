@@ -9073,100 +9073,6 @@ if (action === 'levanter_wa_fallback') {
     return;
 }
 
-// In bot.js, inside bot.on('callback_query', async q => { ... })
-
-if (action === 'neon_del_confirm') {
-    const cid = q.message.chat.id.toString();
-    const dbName = payload; // The database name selected by the admin (e.g., 'atttesttt')
-    let neonAccountIdToQuery = '1'; // Default: Start query with Account 1
-
-    // 1. Sanitize the database name to guess the Heroku app name for ownership lookup
-    let potentialAppName = dbName.replace(/_/g, '-');
-    if (potentialAppName.startsWith('backup-')) {
-         potentialAppName = potentialAppName.substring(7); // Remove 'backup-' prefix if present
-    }
-
-    const workingMsg = await bot.editMessageText(`Deleting external database \`${dbName}\`...`, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown'
-    });
-
-    // --- STEP 2: QUERY DB FOR LAST KNOWN NEON ACCOUNT ID ---
-    // We try to find the last stored location to attempt Tier 1 deletion first.
-    try {
-        const deploymentInfo = await pool.query(
-            'SELECT neon_account_id FROM user_deployments WHERE app_name = $1 LIMIT 1',
-            [potentialAppName]
-        );
-        
-        if (deploymentInfo.rows.length > 0 && deploymentInfo.rows[0].neon_account_id) {
-            // Found a stored account ID (e.g., '2', '3', '34')
-            neonAccountIdToQuery = deploymentInfo.rows[0].neon_account_id;
-            console.log(`[/delbotdb Confirm] Found Neon Account ID ${neonAccountIdToQuery} for DB ${dbName}.`);
-        } else {
-            console.warn(`[/delbotdb Confirm] Account ID not found in DB for app matching ${dbName}. Starting multi-tier search.`);
-            // Keep default '1' to start the search sequence
-        }
-    } catch (dbError) {
-        console.error(`[/delbotdb Confirm] Error fetching Neon Account ID: ${dbError.message}. Starting multi-tier search.`);
-        // Default remains '1' on DB error
-    }
-    // --- END QUERY ---
-
-    // --- STEP 3: EXECUTE MULTI-ACCOUNT DELETION ---
-    // We use the robust deleteNeonDatabase function which handles primary failure and fallback.
-    const result = await deleteNeonDatabase(dbName, neonAccountIdToQuery); // Pass the first ID to check
-
-    // --- STEP 4: REPORT RESULT ---
-    if (result.success) {
-        // Neon deletion was successful OR the database was already gone (404 handled as success)
-
-        // **IMPORTANT:** Admin action confirms the deletion of the external resource.
-        // We now attempt to remove the deployment record locally as well.
-        try {
-            // We use permanentlyDeleteBotRecord(null, appName) to delete records globally by appName
-            // Note: permanentlyDeleteBotRecord should handle cases where userId is null
-            await dbServices.permanentlyDeleteBotRecord(null, potentialAppName); 
-            console.log(`[/delbotdb Confirm] Successfully removed local deployment records for ${potentialAppName}.`);
-        } catch (localCleanupError) {
-             console.error(`[/delbotdb Confirm] Warning: Failed to clean up local deployment records for ${potentialAppName}.`, localCleanupError.message);
-        }
-        
-        const finalAccountUsed = result.accounts_checked ? `Account ${result.accounts_checked}` : 'Account 1 (Primary)';
-
-        await bot.editMessageText(
-            `**Database Deleted!**\n\nThe external database \`${dbName}\` has been permanently removed (Cleaned up via <b>${finalAccountUsed}</b>).`,
-            {
-                chat_id: cid,
-                message_id: workingMsg.message_id,
-                parse_mode: 'HTML'
-            }
-        );
-    } else {
-        // Report failure (the final error from the deletion routine)
-        await bot.editMessageText(
-            `**Deletion Failed!**\n\nCould not find/delete \`${dbName}\` after checking ${result.accounts_checked} tiers.\n\n*Reason:* ${escapeMarkdown(result.error)}`,
-            {
-                chat_id: cid,
-                message_id: workingMsg.message_id,
-                parse_mode: 'Markdown'
-            }
-        );
-    }
-    return; // Stop processing
-}
-
-
-
-
-if (action === 'neon_del_cancel') {
-    await bot.editMessageText("Database deletion was cancelled.", {
-        chat_id: cid,
-        message_id: q.message.message_id
-    });
-    return;
-}
 
 
 // Add this inside bot.on('callback_query', ...)
@@ -10845,41 +10751,60 @@ if (action === 'info') {
 
 
   
+
+// In bot.js, inside bot.on('callback_query', async q => { ... })
+
 if (action === 'confirmdelete') {
+    const cid = q.message.chat.id.toString();
     const appToDelete = payload;
     const originalAction = extra; // 'userdelete' or 'delete'
     const messageId = q.message.message_id;
-    let neonAccountIdToDelete = null;
+    let neonAccountIdToDelete = '1'; // Default if all lookups fail
 
     const st = userStates[cid];
-    // Basic state check remains useful here for context
+    // Basic state check
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appToDelete) {
         await bot.sendMessage(cid, "This deletion session has expired. Please select the app again.");
         delete userStates[cid];
         return;
     }
 
-    // --- ADDED: Query for Neon Account ID before deleting ---
+    // --- START FIX: Tiered Lookup for Neon Account ID ---
     try {
-        // Use 'cid' (the user initiating the delete) for the query
-        const deploymentInfo = await pool.query(
+        // 1. TIER 1: Try to fetch the deployment record using the CURRENT USER's ID (cid).
+        let deploymentInfo = await pool.query(
             'SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2',
             [cid, appToDelete]
         );
+
+        if (deploymentInfo.rows.length === 0) {
+            // TIER 1 FAILED: Record not found under the user's ID. Try TIER 2: Global Search.
+            console.warn(`[ConfirmDelete] Record missing under user ID ${cid}. Initiating global search.`);
+
+            // TIER 2: Search the entire table using ONLY the app name (most reliable data)
+            deploymentInfo = await pool.query(
+                'SELECT neon_account_id FROM user_deployments WHERE app_name = $1 LIMIT 1',
+                [appToDelete]
+            );
+        }
+        
+        // 3. Final Assignment: Use the found account ID (from TIER 1 or TIER 2)
         if (deploymentInfo.rows.length > 0 && deploymentInfo.rows[0].neon_account_id) {
             neonAccountIdToDelete = deploymentInfo.rows[0].neon_account_id;
-            console.log(`[ConfirmDelete] Found Neon Account ID ${neonAccountIdToDelete} for ${appToDelete}.`);
+            console.log(`[ConfirmDelete] Using Neon Account ID ${neonAccountIdToDelete} for deletion.`);
         } else {
-            console.warn(`[ConfirmDelete] Neon account ID not found in DB for ${appToDelete}. Assuming Account '1'.`);
-            neonAccountIdToDelete = '1'; // Default if not found
+            // If TIER 2 fails, the record is gone. Keep default '1'.
+            console.warn(`[ConfirmDelete] Account ID not found after global search. Sticking to default '1'.`);
         }
-    } catch (dbError) {
-        console.error(`[ConfirmDelete] Error fetching Neon Account ID for ${appToDelete}, assuming Account '1':`, dbError.message);
-        neonAccountIdToDelete = '1'; // Default on error
-    }
-    // --- END ADDED BLOCK ---
 
-    await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" ...`, { // Added Account ID to message
+    } catch (dbError) {
+        console.error(`[ConfirmDelete] CRITICAL DB Error during lookup:`, dbError.message);
+        // Default remains '1' on DB error
+    }
+    // --- END FIX ---
+
+    // Update the message with the correct determined Account ID
+    await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku and Neon Account ${neonAccountIdToDelete}...`, { 
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'Markdown'
@@ -10892,28 +10817,21 @@ if (action === 'confirmdelete') {
         });
 
         // 2. Delete the associated Neon database
-        // --- UPDATED CALL to deleteNeonDatabase ---
-        if (neonAccountIdToDelete) {
-            console.log(`[ConfirmDelete] Deleting Neon DB ${appToDelete} from Account ${neonAccountIdToDelete}.`);
-            const deleteResult = await deleteNeonDatabase(appToDelete, neonAccountIdToDelete); // Pass the ID
-            if (!deleteResult.success) {
-                console.error(`[ConfirmDelete] Failed to delete Neon database ${appToDelete} (Account ${neonAccountIdToDelete}):`, deleteResult.error);
-                 // Notify admin ONLY if the user is not the admin
-                 if (cid !== ADMIN_ID && ADMIN_ID) {
-                      bot.sendMessage(ADMIN_ID, `User ${cid} deleted ${appToDelete}, but failed to delete Neon DB (Account ${neonAccountIdToDelete}). Manual cleanup may be needed. Error: ${deleteResult.error}`).catch(()=>{});
-                 }
-                 // Inform the current user about the Neon failure but that local cleanup will proceed
-                 await bot.sendMessage(cid, `Note: Failed. Records will still be cleaned up here.`).catch(()=>{});
-            } else {
-                 console.log(`[ConfirmDelete] Successfully deleted or confirmed deletion of Neon DB for ${appToDelete} from Account ${neonAccountIdToDelete}.`);
-            }
+        const deleteResult = await deleteNeonDatabase(appToDelete, neonAccountIdToDelete); // Pass the determined ID
+        
+        if (!deleteResult.success) {
+            console.error(`[ConfirmDelete] Failed to delete Neon database ${appToDelete} (Account ${neonAccountIdToDelete}):`, deleteResult.error);
+             // Notify admin ONLY if the user is not the admin
+             if (cid !== ADMIN_ID && ADMIN_ID) {
+                  bot.sendMessage(ADMIN_ID, `User ${cid} deleted ${appToDelete}, but failed to delete Neon DB (Account ${neonAccountIdToDelete}). Manual cleanup may be needed. Error: ${deleteResult.error}`).catch(()=>{});
+             }
+             // Inform the current user about the Neon failure but that local cleanup will proceed
+             await bot.sendMessage(cid, `Warning: Failed to automatically delete the external Neon database. Records will still be cleaned up locally.`).catch(()=>{});
         } else {
-             console.warn(`[ConfirmDelete] Skipped Neon deletion for ${appToDelete}, account ID unknown.`);
+             console.log(`[ConfirmDelete] Successfully deleted or confirmed deletion of Neon DB for ${appToDelete} from Account ${neonAccountIdToDelete}.`);
         }
-        // --- END UPDATED CALL ---
 
-        // 3. Clean up local database
-        // Use 'cid' as the userId here, as this action is initiated by the current user
+        // 3. Clean up local database (This cleans the record, removing it from future /dbstats reports)
         await dbServices.permanentlyDeleteBotRecord(cid, appToDelete); // This now handles both pools
 
         // --- Updated success message ---
@@ -10926,7 +10844,19 @@ if (action === 'confirmdelete') {
         // Follow-up logic (showing remaining bots or deploy prompt)
         if (originalAction === 'userdelete') { // User initiated
             const remainingUserBots = await dbServices.getUserBots(cid);
-            // ... (rest of your existing logic to show remaining bots or deploy prompt) ...
+            if (remainingUserBots.length > 0) {
+                 const rows = chunkArray(remainingUserBots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+                 await bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+            } else {
+                 await bot.sendMessage(cid, "You no longer have any deployed bots. Would you like to deploy a new one?", {
+                     reply_markup: {
+                         inline_keyboard: [
+                             [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                             [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                         ]
+                     }
+                 });
+            }
         } else if (cid === ADMIN_ID) { // Admin initiated via /apps
             await dbServices.sendAppList(cid, messageId); // Refresh admin list
         }
@@ -10936,7 +10866,7 @@ if (action === 'confirmdelete') {
         if (e.response && e.response.status === 404) {
             console.log(`[ConfirmDelete-404] Heroku app ${appToDelete} not found. Proceeding with Neon/DB cleanup.`);
 
-            // Attempt Neon Deletion even on 404
+            // Attempt Neon Deletion even on 404 (using the fetched ID)
             if (neonAccountIdToDelete) {
                  console.log(`[ConfirmDelete-404] Deleting Neon DB ${appToDelete} from Account ${neonAccountIdToDelete}.`);
                  const deleteResult = await deleteNeonDatabase(appToDelete, neonAccountIdToDelete);
@@ -10961,7 +10891,19 @@ if (action === 'confirmdelete') {
              // Follow-up logic after 404 cleanup
              if (originalAction === 'userdelete') {
                   const remainingUserBots = await dbServices.getUserBots(cid);
-                  // ... (rest of your existing logic to show remaining bots or deploy prompt) ...
+                  if (remainingUserBots.length > 0) {
+                     const rows = chunkArray(remainingUserBots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+                     await bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+                  } else {
+                     await bot.sendMessage(cid, "You no longer have any deployed bots. Would you like to deploy a new one?", {
+                          reply_markup: {
+                               inline_keyboard: [
+                                   [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                                   [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                               ]
+                          }
+                     });
+                  }
              } else if (cid === ADMIN_ID) {
                   await dbServices.sendAppList(cid, messageId);
              }
