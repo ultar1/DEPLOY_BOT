@@ -60,6 +60,7 @@ function init(params) {
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
     moduleParams = params;
+    NEON_ACCOUNTS = params.NEON_ACCOUNTS;
     TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
     defaultEnvVars = params.defaultEnvVars;
     appDeploymentPromises = params.appDeploymentPromises;
