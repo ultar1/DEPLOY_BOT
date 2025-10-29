@@ -112,7 +112,19 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-dawn-salad-ahnbc76j-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_PSNXc6np1FZe'
+},
+
+  {
+    id: 11,
+    active_db_limit: 3,
+    api_key: 'napi_yjdxqubxdf521c9o9te5nogvf9z8cvbw3ixx862n4cqqsu0cc2isga2358fi8lfa',
+    project_id: 'super-term-68611994',
+    branch_id: 'br-hidden-band-ah9ns6xq',
+    db_host: 'ep-plain-glade-ahcjysrh-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_yF1DUEK7JhnM'
 }
+
 
 
 ];
