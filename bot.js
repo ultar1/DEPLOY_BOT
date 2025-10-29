@@ -5124,9 +5124,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         }
     }
 
-    ---
 
-    ## 💰 GLOBAL RESOURCE SUMMARY
 
     // --- 4. Final Global Summary ---
     const totalMaxStorage = NEON_ACCOUNTS.length * MAX_STORAGE_MB_PER_ACCOUNT;
