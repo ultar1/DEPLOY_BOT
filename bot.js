@@ -5056,6 +5056,8 @@ bot.onText(/^\/deployem$/, async (msg) => {
 
 
 
+// In bot.js, replace your entire bot.onText(/^\/dbstats$/, async (msg) => { ... }) function with this:
+
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -5065,8 +5067,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     // --- Helper function to fetch stats for one account ---
     async function getNeonAccountStats(accountConfig) {
         const accountId = accountConfig.id;
-        // Use the limit provided in the configuration array (which should be the USER limit, e.g., 2)
-        const USER_DB_LIMIT = accountConfig.active_db_limit || 2; 
+        // CRITICAL FIX: The effective USER limit is 2, derived from the business rule.
+        const USER_DB_LIMIT = 2; 
         
         const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}`;
         const dbsUrl = `${apiUrl}/databases`;
@@ -5083,25 +5085,24 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             const dbList = dbsResponse.data.databases;
             const branchData = branchResponse.data.branch;
 
-            // Ensure we handle potentially missing logical_size
             const logicalSizeMB = branchData.logical_size ? (branchData.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
             
             // Filter out the default 'neondb'
             const userDBs = dbList.filter(db => db.name !== 'neondb');
-            const userDBCount = userDBs.length; // Count of USER databases
+            const userDBCount = userDBs.length; 
             
-            // The limit calculation MUST be based on the USER DBs only.
-            const slotsLeft = USER_DB_LIMIT - userDBCount; // CRITICAL FIX: Base on user count only
+            // CRITICAL FIX: Calculate slots left based on the fixed USER_DB_LIMIT of 2
+            const slotsLeft = USER_DB_LIMIT - userDBCount; 
 
             return {
                 success: true,
                 id: accountId,
-                totalDBCount: dbList.length, // Total DBs including neondb (for debug/info)
-                userDBCount: userDBCount,     // Count of actual user DBs
-                slotsLeft: slotsLeft,         // Slots remaining for users
-                dbLimit: USER_DB_LIMIT,       // User DB limit
+                totalDBCount: dbList.length, 
+                userDBCount: userDBCount,     
+                slotsLeft: slotsLeft,         
+                dbLimit: USER_DB_LIMIT,       
                 storageUsed: logicalSizeMB,
-                dbList: userDBs,              // Only user DBs
+                dbList: userDBs,              
                 error: null
             };
         } catch (error) {
@@ -5115,7 +5116,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     }
     
     // --- 1. Fetch Local Bot Ownership Data ---
-    // Fetch all user_bots records and create a map of sanitized DB name to owner ID.
     const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
     const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
@@ -5128,14 +5128,14 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     let totalUserDBs = 0; 
     let totalSlotsLeft = 0; 
     const MAX_STORAGE_MB_PER_ACCOUNT = 512; 
-    // This constant is now correctly calculated as N * 2 slots
+    // CRITICAL FIX: Total Capacity is strictly N * 2
     const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * 2; 
     let accountsWithCapacity = 0;
     
     let dbCounter = 1;
-    let consolidatedDBListMessage = ``; // Start empty
+    let consolidatedDBListMessage = ``; 
 
-    // --- 3. Accumulate Totals and Build Database List (RESTRICTED FORMAT) ---
+    // --- 3. Accumulate Totals and Build Database List ---
     for (const result of allResults) {
         const accountId = result.id ? String(result.id) : 'N/A';
         
@@ -5143,7 +5143,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             
             // Accumulate Global Totals
             totalUserDBs += result.userDBCount; 
-            // CRITICAL FIX: Only add slotsLeft if it's positive (to prevent negative numbers from accounts that went over capacity)
+            // CRITICAL FIX: Accumulate actual slots left (0 or more)
             totalSlotsLeft += Math.max(0, result.slotsLeft); 
             totalStorageUsedMB += parseFloat(result.storageUsed || 0); 
 
@@ -5155,13 +5155,10 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             // Build Consolidated List
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
-                    // Sanitize DB name to match map key
                     const dbNameSanitized = db.name.replace(/-/g, '_'); 
                     const ownerUserId = ownerMap.get(dbNameSanitized);
                     const ownerDisplay = ownerUserId || 'Unknown';
                     
-                    // Condense everything to one line for space saving
-                    // Format: #N (Acc X) DB Name | Owner ID
                     consolidatedDBListMessage += 
                         `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerDisplay}</code>\n`;
                 });
@@ -5184,12 +5181,12 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     combinedMessage += `\n========================================\n`;
     combinedMessage += `<b>GLOBAL RESOURCE SUMMARY</b>\n`;
     
-    // CRITICAL FIX: Use the calculated total slots (N * 2)
+    // CRITICAL FIX: Display correct calculated numbers
     combinedMessage += `Total Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b> (Total DBs Capacity)\n`;
     combinedMessage += `Total Active User DBs: <b>${totalUserDBs}</b>\n`;
     combinedMessage += `Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
     combinedMessage += `Total Storage Used: <b>${totalStorageUsedMB.toFixed(2)} MB</b>\n`;
-    const totalMaxStorage = NEON_ACCOUNTS.length * MAX_STORAGE_MB_PER_ACCOUNT; // Recalculate max storage using the constant
+    const totalMaxStorage = NEON_ACCOUNTS.length * MAX_STORAGE_MB_PER_ACCOUNT; 
     const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
     combinedMessage += `Total Storage Left: <b>${storageRemaining.toFixed(2)} MB</b>\n`;
     combinedMessage += `========================================\n`;
@@ -5206,6 +5203,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         bot.sendMessage(adminId, "Error: Could not format all stats. Check logs.");
     });
 });
+
 
 
 
