@@ -124,7 +124,7 @@
      "DISABLE_START_MESSAGE": {
       "description": "Disable start message",
       "required": false,
-      "value": "false"
+      "value": "true"
     },
     "STATUS_VIEW_EMOJI": {
       "description": "Emoji for auto status updates",
