@@ -4988,11 +4988,13 @@ bot.onText(/^\/deployem$/, async (msg) => {
 
 // NOTE: This assumes NEON_ACCOUNTS array is loaded, and helper functions (getNeonStatsForAccount) are available.
 
+// NOTE: This assumes NEON_ACCOUNTS array is loaded, and helper functions (getNeonStatsForAccount) are available.
+
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching live capacity report...");
+    const workingMsg = await bot.sendMessage(adminId, "📊 Fetching live capacity report...");
 
     // --- 1. Fetch Local Bot Ownership Data ---
     const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
@@ -5000,7 +5002,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
     // --- 2. Iterate and Fetch Stats for ALL Accounts ---
-    // **** FIX: Pass the simple ID string (e.g., '1', '2') to the helper ****
+    // **** FIX: Correctly map the array object to its string ID ****
     const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonStatsForAccount(String(accountConfig.id))); 
     const allResults = await Promise.all(resultsPromises);
     
@@ -5021,12 +5023,10 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
     for (const result of allResults) {
         
-        // --- FIX: Safely retrieve the ID for reporting ---
-        // result.id should be the string ID (e.g., '1') if the helper is coded correctly.
-        // We ensure it's a string, falling back to 'N/A'.
+        // Ensure the ID is a string, falling back if necessary (should be '1', '2', etc.)
         const reportId = result.id ? String(result.id) : 'N/A';
 
-        if (result.success) {
+        if (result.success && result.dbList) { // Check both success AND data list existence
             const userDBs = result.dbList.filter(db => db.name !== 'neondb'); // Filter out default DB
             
             const dbCount = userDBs.length;
@@ -5035,7 +5035,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             // Accumulate global totals
             totalUserDBs += dbCount;
             totalSlotsLeft += slotsLeft;
-            totalStorageUsedMB += parseFloat(result.storageUsed); // Assume storageUsed is accurate from helper
+            // Accumulate storage used (ensuring safe conversion)
+            totalStorageUsedMB += parseFloat(result.storageUsed || 0); 
 
             if (dbCount < MAX_DB_COUNT) {
                  accountsWithCapacity++;
@@ -5043,32 +5044,35 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
             // Status indicators (Plain Text)
             const statusIndicator = dbCount < MAX_DB_COUNT ? '[OK]' : '[FULL]';
+            const statusText = dbCount < MAX_DB_COUNT ? 'AVAILABLE' : 'FULL';
             
             combinedMessage += `┃ ├─ <b>ACC ${reportId}</b> ${statusIndicator}\n`;
             combinedMessage += `┃ ╰─ Slots: <b>${slotsLeft}</b> remaining (${dbCount}/${MAX_DB_COUNT} used)\n`;
         } else {
             // Handle API failure
-            combinedMessage += `┃ ├─ <b>ACC ${reportId}</b> [FAIL]\n`;
-            combinedMessage += `┃ ╰─ Error: ${escapeHTML(result.error).substring(0, 100)}...\n`;
+            combinedMessage += `┃ ├─ <b>ACC ${reportId}</b> [FAIL] ❌\n`;
+            combinedMessage += `┃ ╰─ Error: ${escapeHTML(result.error || 'Unknown Error').substring(0, 100)}...\n`;
         }
     }
     combinedMessage += `<b>┗━━━━━━━━━━━━━━━━━━━━━</b>\n\n`;
 
 
     // --- B. List of All Active Databases ---
-    combinedMessage += `<b>ALL ACTIVE DATABASES (${totalUserDBs}):</b>\n`;
-  
+    combinedMessage += `<b>✅ ALL ACTIVE DATABASES (${totalUserDBs}):</b>\n`;
+    
     let dbCounter = 1;
+    // Iterate through results again for the consolidated list
     for (const result of allResults) {
-        if (result.success) {
+        if (result.success && result.dbList) {
             const userDBs = result.dbList.filter(db => db.name !== 'neondb');
+            const accountId = result.id ? String(result.id) : 'N/A';
 
             userDBs.forEach(db => {
                 const dbName = db.name.replace(/-/g, '_');
                 const ownerUserId = ownerMap.get(dbName);
                 
                 combinedMessage += `\n`;
-                combinedMessage += `▪️ #${dbCounter++} (Acc <b>${result.id}</b>)\n`;
+                combinedMessage += `▪️ #${dbCounter++} (Acc <b>${accountId}</b>)\n`;
                 combinedMessage += `  - DB Name: <code>${escapeHTML(db.name)}</code>\n`;
                 combinedMessage += `  - Owner ID: <code>${ownerUserId || 'Unknown'}</code>\n`;
             });
@@ -5080,7 +5084,7 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
     
     combinedMessage += `\n========================================\n`;
-    combinedMessage += `<b>GLOBAL RESOURCE SUMMARY</b>\n`;
+    combinedMessage += `<b>💰 GLOBAL RESOURCE SUMMARY</b>\n`;
     combinedMessage += `▪️ Total Slots Available: <b>${totalSlotsLeft}</b>\n`;
     combinedMessage += `▪️ Total Active User DBs: <b>${totalUserDBs}</b>\n`;
     combinedMessage += `▪️ Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
@@ -5100,7 +5104,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         bot.sendMessage(adminId, "Error: Could not format all stats. Check logs.");
     });
 });
-
 
 
 // --- NEW COMMAND: /sync ---
