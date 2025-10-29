@@ -1432,11 +1432,11 @@ async function attemptCreateOnAccount(dbName, accountId) {
 
 
 
- 
-/**
+ /**
  * Deletes a specific database from the expected Neon account. If deletion fails,
- * it cycles through ALL other accounts as a fallback to ensure removal.
- * * @param {string} dbName The name of the database to delete (e.g., 'horlar12_9251').
+ * it cycles through ALL other configured accounts as a fallback to ensure removal.
+ * * NOTE: This relies on the global NEON_ACCOUNTS array being accessible.
+ * * @param {string} dbName The name of the database to delete (e.g., 'atesttt').
  * @param {string} expectedAccountId The primary, expected account ID (e.g., '1' through '6').
  * @returns {Promise<{success: boolean, error?: string, accounts_checked: number}>}
  */
@@ -1447,8 +1447,7 @@ async function deleteNeonDatabase(dbName, expectedAccountId) {
     }
 
     let accountsChecked = 0;
-    const allAccountIds = NEON_ACCOUNTS.map(acc => String(acc.id));
-    const neonDbName = dbName.replace(/-/g, '_');
+    const neonDbName = dbName.replace(/-/g, '_'); // Database names in SQL/Neon are usually created with underscores (my_app_123) if hyphens were in the app name.
 
     // --- Step 2: Primary Deletion Attempt (Expected Account) ---
     const primaryAccount = NEON_ACCOUNTS.find(acc => String(acc.id) === String(expectedAccountId));
@@ -1463,6 +1462,7 @@ async function deleteNeonDatabase(dbName, expectedAccountId) {
                  throw new Error("Missing API/Project/Branch credentials in array config.");
             }
             
+            // CRITICAL: The URL must use the database's actual name (usually underscored).
             const apiUrl = `https://console.neon.tech/api/v2/projects/${primaryAccount.project_id}/branches/${primaryAccount.branch_id}/databases/${neonDbName}`;
             const headers = { 'Authorization': `Bearer ${primaryAccount.api_key}`, 'Accept': 'application/json' };
 
@@ -1486,11 +1486,9 @@ async function deleteNeonDatabase(dbName, expectedAccountId) {
     }
 
     // --- Step 3: Secondary Deletion Attempt (Fallback Search) ---
+    // If Tier 1 failed, cycle through ALL configured accounts
     
-    // Create a list of accounts to search (all defined accounts)
-    const fallbackAccounts = NEON_ACCOUNTS;
-
-    for (const fallbackAccount of fallbackAccounts) {
+    for (const fallbackAccount of NEON_ACCOUNTS) {
         const fallbackAccountId = String(fallbackAccount.id);
         
         // Skip the expected account if we already tried it
