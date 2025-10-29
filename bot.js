@@ -641,89 +641,7 @@ const availableTools = {
     getBotLogs
 };
 
-/**
- * Calls the Gemini API to get a text response.
- * Implements exponential backoff for retries.
- * * NOTE: This requires Node.js v18+ for the global 'fetch' function.
- * If you are on an older version, you must install node-fetch:
- * npm install node-fetch@2
- * ...and add this line at the top of your file:
- * const fetch = require('node-fetch');
- */
-async function callMyAi(prompt) {
-    const apiKey = ""; // Leave as-is, will be handled by the environment
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
-    const payload = {
-        contents: [{
-            parts: [{ text: prompt }]
-        }]
-    };
-
-    let response;
-    let retries = 3;
-    let delay = 1000; // 1 second
-
-    while (retries > 0) {
-        try {
-            response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                
-                if (result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts[0].text) {
-                    // Success! Return the text.
-                    return result.candidates[0].content.parts[0].text;
-                } else {
-                    // Successful API call, but no valid content returned
-                    throw new Error("Invalid response structure from AI.");
-                }
-            } else if (response.status === 429 || response.status >= 500) {
-                // Throttling or server error, wait and retry
-                console.warn(`AI API call failed with status ${response.status}. Retrying in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-                retries--;
-                delay *= 2; // Exponential backoff
-            } else {
-                // Other client-side error (e.g., 400 Bad Request), don't retry
-                const errorResult = await response.json();
-                console.error("AI API call failed:", errorResult);
-                throw new Error(`AI API Error: ${errorResult.error ? errorResult.error.message : response.statusText}`);
-            }
-
-        } catch (error) {
-            if (retries > 0) {
-                // Network error, wait and retry
-                console.warn(`AI API call network error: ${error.message}. Retrying in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-                retries--;
-                delay *= 2;
-            } else {
-                // All retries failed
-                console.error("AI API call failed after all retries:", error);
-                throw new Error("The AI is currently unavailable. Please try again later.");
-            }
-        }
-    }
-    
-    // Fallback error if loop finishes without returning
-    throw new Error("The AI failed to respond after several attempts.");
-}
-
-/**
- * Logs a user's message timestamp.
- * This is an UPSERT operation.
- * @param {string|number} userId - The Telegram user ID.
- * @param {string|number} chatId - The Telegram chat ID.
- *a @param {string} userName - The user's first name.
- * @param {number} timestamp - The UNIX timestamp (in seconds) of the message.
- */
 async function logUserActivity(userId, chatId, userName, timestamp) {
   const userIdStr = String(userId);
   const chatIdStr = String(chatId);
@@ -1669,10 +1587,10 @@ async function updateRenderVar(varName, varValue) {
 let isRecoveryInProgress = false; // Global flag to prevent multiple recoveries at once
 
 
-// NOTE: This assumes NEON_ACCOUNTS array, axios, and escapeMarkdown are available.
+// NOTE: This assumes NEON_ACCOUNTS array, axios, and escapeMarkdown are available in the scope.
 
 /**
- * Searches through all NEON_ACCOUNTS, finds the database, deletes it, and stops.
+ * Searches through all NEON_ACCOUNTS, finds the database by name, deletes it using the Neon API, and stops on success.
  * @param {string} dbName The name of the database to delete (e.g., 'horlar12_9251').
  * @returns {Promise<{success: boolean, accountId: string | null, error?: string, databaseGone?: boolean}>}
  */
@@ -1680,20 +1598,21 @@ async function findAndDeleteNeonDatabase(dbName) {
     // Neon API requires dashes instead of underscores in the database name
     const dbNameForAPI = dbName.replace(/_/g, '-'); 
     
+    // Iterate through ALL configured Neon accounts
     for (const accountConfig of NEON_ACCOUNTS) {
         const accountId = String(accountConfig.id);
         const { project_id, branch_id, api_key } = accountConfig;
         
+        // Construct the DELETE API URL
         const deleteUrl = `https://console.neon.tech/api/v2/projects/${project_id}/branches/${branch_id}/databases/${dbNameForAPI}`;
         const headers = { 'Authorization': `Bearer ${api_key}` };
 
         try {
-            // Attempt to delete the database
+            // Attempt to delete the database from the current account
             const response = await axios.delete(deleteUrl, { headers });
             
-            // Neon's API typically returns 200/204 on successful deletion
             if (response.status === 200 || response.status === 204) {
-                // Database was found and successfully deleted
+                // Database was found and successfully deleted! Stop searching.
                 return { success: true, accountId: accountId };
             }
             
@@ -1702,12 +1621,12 @@ async function findAndDeleteNeonDatabase(dbName) {
             const errorMessage = error.response?.data?.message || error.message;
 
             if (status === 404) {
-                // Database not found in this specific account, continue to the next one
+                // Database not found in this specific account. This is not an error, so we continue to the next account.
                 console.log(`DB ${dbName} not found in Account ${accountId}. Continuing search...`);
                 continue; 
             }
             
-            // If it's a critical error (like a bad API key or server issue), report it immediately
+            // If it's a critical error (e.g., 403 Forbidden/Bad Key), report it and stop the process.
             console.error(`Error deleting DB ${dbName} from Account ${accountId}:`, errorMessage);
             
             return { 
@@ -1725,7 +1644,6 @@ async function findAndDeleteNeonDatabase(dbName) {
         error: `Database '${dbName}' was not found in any of the ${NEON_ACCOUNTS.length} configured Neon accounts.` 
     };
 }
-
 
 
 
@@ -9227,8 +9145,6 @@ if (action === 'levanter_wa_fallback') {
     return;
 }
 
-/// In bot.js, inside bot.on('callback_query', async q => { ... })
-
 if (action === 'neon_del_confirm') {
     const cid = q.message.chat.id.toString();
     const dbName = payload; 
@@ -9239,8 +9155,8 @@ if (action === 'neon_del_confirm') {
         parse_mode: 'Markdown'
     });
 
-    // --- 1. EXECUTE EXTERNAL DELETION (Iterating all NEON_ACCOUNTS) ---
-    // This function will search all accounts for the DB, delete it if found, and return the result.
+    // --- 1. EXECUTE EXTERNAL DELETION ---
+    // The function below handles checking all accounts until success or all accounts are checked.
     const result = await findAndDeleteNeonDatabase(dbName); 
 
     // --- 2. REPORT RESULT ---
