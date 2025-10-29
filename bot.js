@@ -3116,7 +3116,7 @@ async function notifyAdminUserOnline(msg) {
         escapeMarkdown: escapeMarkdown,
     });
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
-registerGroupHandlers(bot, dbServices, callMyAi); 
+registerGroupHandlers(bot, dbServices); 
 
 
     await loadMaintenanceStatus(); // Load initial maintenance status
