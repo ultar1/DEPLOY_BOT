@@ -1587,19 +1587,20 @@ async function updateRenderVar(varName, varValue) {
 let isRecoveryInProgress = false; // Global flag to prevent multiple recoveries at once
 
 
-/// NOTE: This assumes NEON_ACCOUNTS array, axios, and escapeMarkdown are available.
+// NOTE: This assumes NEON_ACCOUNTS array, axios, and escapeMarkdown are available.
 
 /**
  * Searches through all NEON_ACCOUNTS, finds the database by name, deletes it using the Neon API, and stops on success.
- * This is the replacement for the old deleteNeonDatabase(dbName, accountId) call.
- * @param {string} dbName The name of the database to delete (e.g., 'horlar12_9251').
+ * This version includes detailed console logging for debugging.
+ * @param {string} dbName The name of the database to delete (e.g., 'atttesttt').
  * @returns {Promise<{success: boolean, accountId: string | null, error?: string, databaseGone?: boolean}>}
  */
 async function findAndDeleteNeonDatabase(dbName) {
-    // Neon API requires dashes instead of underscores in the database name
-    // Assuming the input dbName is the internal format (e.g., 'atttesttt')
+    // 1. Sanitize the database name: convert bot-side underscore (_) back to API-side dash (-)
     const dbNameForAPI = dbName.replace(/_/g, '-'); 
     
+    console.log(`[Delete Debug] Starting search for DB: ${dbName} (API Name: ${dbNameForAPI})`);
+
     // Iterate through ALL configured Neon accounts
     for (const accountConfig of NEON_ACCOUNTS) {
         const accountId = String(accountConfig.id);
@@ -1609,12 +1610,15 @@ async function findAndDeleteNeonDatabase(dbName) {
         const deleteUrl = `https://console.neon.tech/api/v2/projects/${project_id}/branches/${branch_id}/databases/${dbNameForAPI}`;
         const headers = { 'Authorization': `Bearer ${api_key}` };
 
+        console.log(`[Delete Debug] Checking Account ${accountId}. URL: ${deleteUrl}`);
+
         try {
             // Attempt to delete the database from the current account
             const response = await axios.delete(deleteUrl, { headers });
             
             if (response.status === 200 || response.status === 204) {
-                // Database was found and successfully deleted! STOP SEARCHING and return the correct accountId.
+                // SUCCESS!
+                console.log(`[Delete Debug] SUCCESS! Deleted DB from Account ${accountId}. Status: ${response.status}`);
                 return { success: true, accountId: accountId, databaseGone: false };
             }
             
@@ -1623,30 +1627,33 @@ async function findAndDeleteNeonDatabase(dbName) {
             const errorMessage = error.response?.data?.message || error.message;
 
             if (status === 404) {
-                // Database not found in this specific account. Continue to the next one.
+                // Database not found on this account. Continue to the next one.
+                console.log(`[Delete Debug] Account ${accountId} returned 404 (Not Found). Continuing search.`);
                 continue; 
             }
             
-            // If it's a critical error (like a 403 Forbidden/Bad Key), report it and stop the process.
+            if (status === 403) {
+                 // 403 Forbidden is often a bad API key or missing permissions
+                console.error(`[Delete Debug] Account ${accountId} returned 403 (Forbidden). API Key likely invalid or missing delete permission.`);
+            }
+
+            // Report the critical error and stop
             return { 
                 success: false, 
-                accountId: accountId, // This returns the account that failed the API call
-                error: `API Error in Account ${accountId}: ${errorMessage.substring(0, 150)}` 
+                accountId: accountId, 
+                error: `API Error in Account ${accountId} (Status ${status || 'N/A'}): ${errorMessage.substring(0, 150)}` 
             };
         }
     }
 
     // If the loop finishes without finding or deleting the database:
+    console.log(`[Delete Debug] Search complete. DB '${dbName}' not found in any account.`);
     return { 
         success: false, 
         accountId: null, 
         error: `Database '${dbName}' was not found in any of the ${NEON_ACCOUNTS.length} configured Neon accounts.` 
     };
 }
-
-
-// In bot.js, inside bot.on('callback_query', async q => { ... })
-
 
 
 
