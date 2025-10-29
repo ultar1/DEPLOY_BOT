@@ -69,7 +69,17 @@ const NEON_ACCOUNTS = [
         db_host: 'ep-odd-shadow-a4kr1rvx-pooler.us-east-1.aws.neon.tech',
         db_user: 'neondb_owner',
         db_password: 'npg_gkvWfjlC7Rm6'
-    }
+    },
+{
+    id: 7,
+    active_db_limit: 3,
+    api_key: 'napi_auin6afjtou5sxffq1x9w02b0pcdf7uet5w5uuksyqpfat9e3940zb96qlk895az',
+    project_id: 'young-truth-69765005',
+    branch_id: 'br-nameless-shape-a44m82fa',
+    db_host: 'ep-nameless-shape-a44m82fa-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_FGpmJsSc43le'
+}
 
 
 ];
