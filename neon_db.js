@@ -79,7 +79,19 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-nameless-shape-a44m82fa-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_FGpmJsSc43le'
+},
+
+  {
+    id: 8,
+    active_db_limit: 3,
+    api_key: 'napi_ebzn1kz4j159r44ks95ftgsymfn8nmcyww0zdaq21tef6xu7b9v4x5ekka07qcuv',
+    project_id: 'blue-surf-00535598',
+    branch_id: 'br-ancient-wind-a4lc7fga',
+    db_host: 'ep-twilight-surf-a4pzgfqa-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_T4zqHKx7yVQD'
 }
+
 
 
 ];
