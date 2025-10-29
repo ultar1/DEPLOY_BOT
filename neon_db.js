@@ -48,6 +48,18 @@ const NEON_ACCOUNTS = [
         db_user: 'neondb_owner', // <<< NEW USER
         db_password: 'npg_g1uPt0CxAEso' // <<< NEW PASSWORD
     },
+
+      {
+        id: 5,
+        active_db_limit: 3,
+        api_key: 'napi_lnandorxht349ekcsbz16dxis7zouj52t33qqm70t0p3bm2x59hww8nl7xk6hbsi',
+        project_id: 'morning-wildflower-99331301',
+        branch_id: 'br-steep-base-ah9s3jrb',
+        db_host: 'ep-purple-bush-ah5gbt3a-pooler.c-3.us-east-1.aws.neon.tech',
+        db_user: 'neondb_owner',
+        db_password: 'npg_lQRjd07oiKuY'
+    }
+
 ];
 
 module.exports = { NEON_ACCOUNTS };
