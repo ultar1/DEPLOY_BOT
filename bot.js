@@ -4713,109 +4713,7 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 });
 
 
-// bot.js (Add this with other command handlers)
 
-bot.onText(/^\/dl (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    const mediaLink = match[1].trim(); 
-    let tempFilePath = null; // Declare here so we can access it in the catch block
-
-    await dbServices.updateUserActivity(cid, `/dl ${mediaLink.substring(0, 30)}...`);
-
-    if (!mediaLink.match(/http/i)) {
-        return bot.sendMessage(cid, "❌ Please provide a valid URL starting with 'http' or 'https'.");
-    }
-
-    const processingMsg = await bot.sendMessage(cid, 'Extracting HD media link, please wait... ⏳ (Max 30s)');
-
-    try {
-        // 1. Get media information via yt-dlp
-        const mediaData = await extractMediaInfo(mediaLink);
-
-        if (mediaData.type === 'error') {
-            await bot.editMessageText(`❌ Download Failed: ${mediaData.message}`, { chat_id: cid, message_id: processingMsg.message_id });
-            return;
-        }
-
-        const finalCaption = escapeMarkdown(mediaData.caption).substring(0, 900) + `...\n\n*Downloaded in HD via UltarBot*`;
-        
-        // 2. Determine file extension and local path
-        const ext = mediaData.type === 'video' ? '.mp4' : '.jpg';
-        tempFilePath = tempfile(ext); 
-        
-        await bot.editMessageText(`Downloading media locally... 💾`, { chat_id: cid, message_id: processingMsg.message_id });
-
-        // 3. Download the file from the extracted URL to the local temporary path
-        const response = await fetch(mediaData.url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch media from source: ${response.statusText}`);
-        }
-        await new Promise((resolve, reject) => {
-            const dest = fs.createWriteStream(tempFilePath);
-            response.body.pipe(dest);
-            response.body.on('error', (err) => {
-                 console.error("Pipe error during download:", err);
-                 reject(err);
-            });
-            dest.on('finish', resolve);
-        });
-
-        await bot.editMessageText(`Uploading to Telegram... ⬆️`, { chat_id: cid, message_id: processingMsg.message_id });
-
-        // 4. Upload the local file to Telegram
-        if (mediaData.type === 'video') {
-            await bot.sendVideo(cid, tempFilePath, { 
-                caption: finalCaption,
-                parse_mode: 'Markdown'
-            });
-        } else {
-             // Use sendDocument as a safe fallback for images, galleries, and videos not fitting the strict 'sendVideo' size limits
-             await bot.sendDocument(cid, tempFilePath, {
-                 caption: finalCaption,
-                 parse_mode: 'Markdown'
-             });
-        }
-        
-        // 5. Cleanup the temporary file and messages
-        fs.unlinkSync(tempFilePath); 
-        await bot.deleteMessage(cid, processingMsg.message_id).catch(() => {});
-
-    } catch (e) {
-        console.error("Error during download, upload, or cleanup:", e);
-        // Attempt to clean up temp file if it exists and wasn't cleaned
-        if (tempFilePath && fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-        }
-        await bot.editMessageText(`Critical Error during download/upload: ${e.message.substring(0, 80)}`, { chat_id: cid, message_id: processingMsg.message_id });
-    }
-});
-
-bot.onText(/^\/buytemp$/, async msg => {
-    const cid = msg.chat.id.toString();
-    const availableNumbers = await pool.query(
-        "SELECT masked_number, number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 5"
-    );
-
-    if (availableNumbers.rows.length === 0) {
-        return bot.sendMessage(cid, "Sorry, no temporary numbers are available at the moment.");
-    }
-
-    const buttons = availableNumbers.rows.map(row => [{
-        text: `Buy ${row.masked_number} for N200`,
-        callback_data: `buy_temp_num:${row.number}`
-    }]);
-
-    // --- The message text has been updated here ---
-    const messageText = "Choose a number to purchase.\n\n" +
-                        "**Note:** These are **+48 Poland** numbers and are for **one-time use** to receive a single OTP code.";
-
-    await bot.sendMessage(cid, messageText, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: buttons }
-    });
-});
-
-// In bot.js
 
 // Command for ADMIN to delete ALL logged-out bots' EXTERNAL resources (Heroku app, Neon DB)
 bot.onText(/^\/dellogout$/, async (msg) => {
@@ -4978,33 +4876,6 @@ bot.onText(/^\/dellogout$/, async (msg) => {
     }
 });
 
-
-
-
-bot.onText(/^\/aa (\d+)\s+(\d+)$/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const phoneNumber = match[1];
-    const hours = parseInt(match[2], 10);
-
-    // Check if the hours value is a valid number
-    if (isNaN(hours) || hours <= 0) {
-        bot.sendMessage(chatId, 'Invalid time provided. Please use a positive number for hours.');
-        return;
-    }
-
-    // Convert hours to milliseconds for setTimeout
-    const delayInMilliseconds = hours * 60 * 60 * 1000;
-
-    // Send an immediate confirmation message to the user
-    bot.sendMessage(chatId, `Reminder set for ${phoneNumber} in ${hours} hour(s). I will remind you when the time is up!`);
-
-    // Schedule the reminder message
-    setTimeout(() => {
-        bot.sendMessage(chatId, `REMINDER: It has been ${hours} hour(s) since you requested a reminder for ${phoneNumber}.`);
-    }, delayInMilliseconds);
-
-    console.log(`Reminder set: Phone number ${phoneNumber}, in ${hours} hour(s) for chat ${chatId}`);
-});
 
 
 // ADMIN COMMAND: /deploy_email_service (with no arguments)
@@ -5413,37 +5284,6 @@ bot.onText(/^\/removenum (.+)$/, async (msg, match) => {
     }
 });
 
-// bot.js (Add this with other admin commands)
-
-bot.onText(/^\/deldb$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) {
-        return;
-    }
-    
-    await bot.sendMessage(cid, "Fetching table list, please wait...");
-    
-    const tables = await getAllTableNames();
-
-    if (tables.length === 0) {
-        return bot.sendMessage(cid, "No user-defined tables found to delete.");
-    }
-
-    const tableButtons = tables.map(name => ([{
-        text: name,
-        callback_data: `deldb_select:${name}`
-    }]));
-
-    await bot.sendMessage(cid, "*Select a table to delete permanently:*\n\n**WARNING:** This action is irreversible and deletes ALL data in the selected table.", {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: tableButtons
-        }
-    });
-});
-
-
-// --- REPLACE this entire function in bot.js ---
 
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
