@@ -3350,6 +3350,9 @@ registerGroupHandlers(bot, dbServices);
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
+  setInterval(checkNeonCapacity, CAPACITY_CHECK_INTERVAL_MS);
+    console.log(`[Capacity Check] Proactive Neon capacity monitor scheduled every 6 hours.`);
+
 
 // Check the environment to decide whether to use webhooks or polling
 // At the top of your file, make sure you have crypto required
@@ -12404,6 +12407,87 @@ async function pruneInactiveUsers() {
         console.error('[Prune] DB Error while checking for inactive users:', dbError);
     }
 }
+
+// In bot.js (e.g., around line 5800, in the global scope)
+
+// --- Proactive Capacity Monitor ---
+const SLOT_WARNING_THRESHOLD = 10; // Warn if available slots are 9 or fewer
+const CAPACITY_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+let isCapacityWarningSent = false; // Flag to prevent spamming
+
+/**
+ * Automatically checks Neon DB capacity and warns the admin if slots are low.
+ */
+async function checkNeonCapacity() {
+    console.log(' running scheduled check for Neon DB capacity...');
+    const USER_DB_LIMIT = 2; // Your established limit of 2 user slots per account
+    let totalSlotsLeft = 0;
+    let failedAccounts = 0;
+
+    // This is a minimal, fast version of the /dbstats logic
+    for (const accountConfig of NEON_ACCOUNTS) {
+        const { api_key, project_id, branch_id } = accountConfig;
+        
+        // Skip if essential keys are missing (prevents crashes)
+        if (!api_key || !project_id || !branch_id) {
+            console.error(`[Capacity Check] Skipping Account ${accountConfig.id}: Missing credentials.`);
+            failedAccounts++;
+            continue;
+        }
+
+        const dbsUrl = `https://console.neon.tech/api/v2/projects/${project_id}/branches/${branch_id}/databases`;
+        const headers = { 'Authorization': `Bearer ${api_key}`, 'Accept': 'application/json' };
+
+        try {
+            const dbsResponse = await axios.get(dbsUrl, { headers });
+            const dbList = dbsResponse.data.databases;
+            const userDBs = dbList.filter(db => db.name !== 'neondb');
+            const userDBCount = userDBs.length;
+            
+            // Add this account's remaining slots to the total
+            totalSlotsLeft += Math.max(0, USER_DB_LIMIT - userDBCount);
+
+        } catch (error) {
+            // If an account check fails, log it and assume it's full (0 slots left)
+            console.error(`[Capacity Check] Failed to check Account ${accountConfig.id}: ${error.message.substring(0, 50)}`);
+            failedAccounts++;
+        }
+    }
+
+    console.log(`[Capacity Check] Check complete. Total slots left: ${totalSlotsLeft}. Failed accounts: ${failedAccounts}.`);
+
+    // Now, check against the threshold
+    if (totalSlotsLeft < SLOT_WARNING_THRESHOLD) {
+        // If slots are low AND we haven't sent the warning yet
+        if (!isCapacityWarningSent) {
+            const message = `
+            *LOW CAPACITY WARNING!*
+            
+            Only *${totalSlotsLeft}* free database slots remain across the system.
+            
+            Please add more Neon accounts immediately to prevent deployment failures for new users.
+            
+            (${NEON_ACCOUNTS.length} total accounts, ${failedAccounts} failed to respond)
+            `;
+            
+            try {
+                await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+                isCapacityWarningSent = true; // Set the flag so we don't spam
+            } catch (e) {
+                console.error(`[Capacity Check] Failed to send alert to ADMIN_ID: ${e.message}`);
+            }
+        } else {
+            console.log(`[Capacity Check] Slots are low (${totalSlotsLeft}), but warning was already sent.`);
+        }
+    } else if (totalSlotsLeft > (SLOT_WARNING_THRESHOLD * 2)) { 
+        // If capacity is restored (e.g., > 20), reset the warning flag
+        if (isCapacityWarningSent) {
+            console.log('[Capacity Check] Capacity restored. Resetting warning flag.');
+            isCapacityWarningSent = false;
+        }
+    }
+}
+
 
 // bot.js (Insert this at the bottom of bot.js, outside any main function)
 
