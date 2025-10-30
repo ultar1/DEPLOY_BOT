@@ -447,6 +447,19 @@ async function getDynoStatus(appName) {
     }
 }
 
+async function getExpiringBots() {
+    try {
+        const result = await pool.query(
+            `SELECT user_id, app_name FROM user_deployments 
+             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
+        );
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB] Failed to get expiring bots:`, error.message);
+        return [];
+    }
+}
+
 
 async function getExpiringBackups() {
     try {
