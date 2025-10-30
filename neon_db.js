@@ -466,16 +466,18 @@ const NEON_ACCOUNTS = [
     db_password: 'npg_8tSF3AoJDuye'
 },
 
+
+
   {
     id: 43,
     active_db_limit: 3,
-    api_key: 'napi_tnfwz74e6c00tko1u7xps69am4jbnu656sa17f9c7ws89ubvaxvchgmadmdz7ssv',
-    project_id: 'noisy-cloud-06684855',
-    branch_id: 'br-soft-violet-a4cc82uf',
-    db_host: 'ep-soft-violet-a4cc82uf-pooler.us-east-1.aws.neon.tech',
+    api_key: 'napi_ngn75ilcgfy7xv6inqao6xh96u90x4g3pdtp9k7nvuwyt6ecg5cp5mdva37b3rz4',
+    project_id: 'patient-morning-54982053',
+    branch_id: 'br-holy-night-ah52edk6', // Derived from the Connection String host
+    db_host: 'ep-holy-night-ah52edk6-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_Q6ZfN9YiBWKA'
-},
+    db_password: 'npg
+  },
 
   {
     id: 44,
