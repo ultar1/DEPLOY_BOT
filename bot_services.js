@@ -237,112 +237,6 @@ async function pruneLoggedOutBot() {
 }
 
 
-
-/**
- * Directly copies a Heroku Postgres database into a new schema in the main Render database.
- * @param {string} appName The name of the Heroku app.
- * @returns {Promise<{success: boolean, message: string}>}
- */
-async function backupHerokuDbToRenderSchema(appName) {
-    // ❗️ FIX: Destructure tools from the correctly initialized moduleParams.
-    const { mainPool, herokuApi, HEROKU_API_KEY } = moduleParams;
-    
-    const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name
-
-    try {
-        // Get the Heroku bot's DATABASE_URL from its config vars
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        const herokuDbUrl = configRes.data.DATABASE_URL;
-
-        if (!herokuDbUrl) {
-            throw new Error("DATABASE_URL not found in the bot's Heroku config vars.");
-        }
-
-        const client = await mainPool.connect();
-        try {
-            await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
-            await client.query(`CREATE SCHEMA ${schemaName};`);
-        } finally {
-            client.release();
-        }
-
-        console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
-        // Use pg_dump to pipe from Heroku and psql to restore into the new schema
-        const command = `pg_dump "${herokuDbUrl}" --clean | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
-        
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
-
-        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            throw new Error(stderr);
-        }
-        
-        console.log(`[DB Backup] Successfully backed up ${appName} to schema ${schemaName}.`);
-        return { success: true, message: 'Database backup successful.' };
-
-    } catch (error) {
-        console.error(`[DB Backup] FAILED to back up ${appName}:`, error.message);
-        return { success: false, message: error.message };
-    }
-}
-
-
-// In bot_services.js
-
-/**
- * Restores a Heroku Postgres database by copying data from a schema in the Render database.
- * @param {string} appName The name of the Heroku app to restore.
- * @returns {Promise<{success: boolean, message: string}>}
- */
-async function restoreHerokuDbFromRenderSchema(appName) {
-    const { herokuApi, HEROKU_API_KEY } = moduleParams;
-    const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name to match the backup schema
-
-    try {
-        // Get the NEW Heroku bot's DATABASE_URL from its config vars
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        const newHerokuDbUrl = configRes.data.DATABASE_URL;
-
-        if (!newHerokuDbUrl) {
-            throw new Error("Could not find DATABASE_URL for the newly created Heroku app.");
-        }
-
-        // Use pg_dump to pipe the schema from Render directly into the new Heroku DB
-        console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${appName}...`);
-        
-        // This command dumps ONLY the specified schema from your Render DB and pipes it into the new Heroku DB.
-        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} | psql "${newHerokuDbUrl}"`;
-
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
-
-        // Ignore common, non-fatal warnings but throw on real errors.
-        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            // This specific warning is expected and can be ignored.
-            if (!stderr.includes(`schema "public" does not exist`)) {
-                 throw new Error(stderr);
-            }
-        }
-        
-        console.log(`[DB Restore] Successfully restored data for ${appName} from schema ${schemaName}.`);
-        return { success: true, message: 'Database restore successful.' };
-
-    } catch (error) {
-        console.error(`[DB Restore] FAILED to restore ${appName}:`, error.message);
-        return { success: false, message: error.message };
-    }
-}
-
-
-async function getAllBotDeployments() {
-    // This query depends on your table name.
-    // It should get the app_name and user_id from your main bot table
-    const query = 'SELECT bot_name, user_id FROM user_bots'; // Or 'deployments', etc.
-    const { rows } = await pool.query(query);
-    return rows;
-}
-
-
 /**
  * Fetches all bots marked as 'logged_out' from the database.
  * @returns {Promise<Array<{user_id: string, app_name: string}>>}
@@ -553,29 +447,35 @@ async function getDynoStatus(appName) {
     }
 }
 
-// --- NEW FUNCTIONS FOR EXPIRATION REMINDERS ---
 
-async function getExpiringBots() {
+async function getExpiringBackups() {
     try {
+        // This query now fetches bots that are expiring AND
+        // have not received the 7-day warning (level 0) OR
+        // have received the 7-day warning but not the 3-day (level 7).
         const result = await pool.query(
-            `SELECT user_id, app_name FROM user_deployments 
-             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
+            `SELECT user_id, app_name, expiration_date, warning_level 
+             FROM user_deployments 
+             WHERE expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+               AND paused_at IS NULL
+               AND warning_level IN (0, 7);` // <-- CHANGED THIS LINE
         );
         return result.rows;
     } catch (error) {
-        console.error(`[DB] Failed to get expiring bots:`, error.message);
+        console.error(`[DB] Failed to get expiring backups:`, error.message);
         return [];
     }
 }
 
-async function setExpirationWarningSent(userId, appName) {
+// REPLACE setBackupWarningSent with this new function
+async function setBackupWarningLevel(userId, appName, level) {
     try {
         await pool.query(
-            'UPDATE user_deployments SET warning_sent_at = NOW() WHERE user_id = $1 AND app_name = $2;',
-            [userId, appName]
+            'UPDATE user_deployments SET warning_level = $1 WHERE user_id = $2 AND app_name = $3;',
+            [level, userId, appName]
         );
     } catch (error) {
-        console.error(`[DB] Failed to set expiration warning sent for ${appName}:`, error.message);
+        console.error(`[DB] Failed to set backup warning level for ${appName}:`, error.message);
     }
 }
 
@@ -2462,7 +2362,7 @@ module.exports = {
     syncDatabaseWithHeroku,
     reconcileDatabaseWithHeroku,
     getExpiringBackups,
-    setBackupWarningSent,
+    setBackupWarningLevel,
     getExpiredBackups,
     backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
