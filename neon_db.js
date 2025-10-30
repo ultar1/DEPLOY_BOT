@@ -476,7 +476,7 @@ const NEON_ACCOUNTS = [
     branch_id: 'br-holy-night-ah52edk6', // Derived from the Connection String host
     db_host: 'ep-holy-night-ah52edk6-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg
+    db_password: 'npg_liOxwguroZ48'
   },
 
   {
