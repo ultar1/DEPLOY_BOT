@@ -1782,7 +1782,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
 
         // --- Step 1: Create the Heroku app ---
-        const appSetup = { name: appName, region: 'us', stack: 'heroku-22' };
+        const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
         clearInterval(primaryAnimateIntervalId);
 
