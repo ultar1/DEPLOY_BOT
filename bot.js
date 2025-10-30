@@ -24,7 +24,7 @@ const express = require('express');
 
 // In bot.js (near the top)
 
-const { sendPaymentConfirmation, sendVerificationEmail, sendLoggedOutReminder } = require('./email_service');
+const { sendPaymentConfirmation, sendVerificationEmail, sendExpirationReminder, sendLoggedOutReminder } = require('./email_service');
 
 
 const crypto = require('crypto');
