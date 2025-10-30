@@ -6781,27 +6781,37 @@ if (st && st.step === 'AWAITING_OTP') {
             await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
             const successMsg = await bot.sendMessage(cid, 'Verified successfully!');
             
-            // ✅ FIX: Instead of sending another message, go directly to payment options.
+            // --- UPDATED LOGIC TO HANDLE DIFFERENT ACTIONS ---
             if (st.data && st.data.action === 'renew') {
+                // User was trying to renew a bot
                 const appName = st.data.appName;
                 delete userStates[cid];
                 
                 // Show the renewal pricing tiers immediately.
-                await showPaymentOptions(cid, successMsg.message_id, 1500, 30, appName); // Defaulting to show standard plan, user can choose others.
+                await showPaymentOptions(cid, successMsg.message_id, 1500, 30, appName); // Defaulting to show standard plan
             
+            } else if (st.data && st.data.action === 'view_bots') {
+                // User was trying to view "My Bots"
+                delete userStates[cid];
+                const fakeMsg = { ...msg, text: 'My Bots' }; 
+                bot.emit('message', fakeMsg); // Re-run the 'My Bots' command for them
+
             } else {
-                // Default behavior for new users
+                // Default behavior for new users (Deploy/Free Trial)
                 delete userStates[cid];
                 const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
                 const fakeMsg = { ...msg, text: deployCommand }; 
                 bot.emit('message', fakeMsg);
             }
+            // --- END OF UPDATED LOGIC ---
 
         } else {
             // Incorrect code logic
             st.data.otpAttempts = (st.data.otpAttempts || 0) + 1;
             if (st.data.otpAttempts >= 2) {
                 delete userStates[cid];
+                // Clear state after too many failed attempts
+                await bot.sendMessage(cid, 'Too many invalid attempts. Verification cancelled. Please start over.');
             } else {
                 await bot.sendMessage(cid, 'Invalid code. Please try again.');
             }
@@ -6813,6 +6823,7 @@ if (st && st.step === 'AWAITING_OTP') {
     }
     return;
 }
+
 
 // In bot.js, inside bot.on('message', ...)
 
@@ -7286,8 +7297,25 @@ if (text === 'Deploy' || text === 'Free Trial') {
 
         // In bot.js
 
+// In bot.js (inside the main bot.on('message', ...) handler)
+
 if (text === 'My Bots') {
     const cid = msg.chat.id.toString();
+
+    // --- 💡 NEW VERIFICATION CHECK ---
+    const isVerified = await isUserVerified(cid);
+
+    if (!isVerified) {
+        // User is NOT verified. Start the registration flow.
+        // We add an 'action' to the state so the bot knows what to do after verification.
+        userStates[cid] = { step: 'AWAITING_EMAIL', data: { action: 'view_bots' } }; 
+        
+        await bot.sendMessage(cid, 'To manage your bots, you must first verify your email address. This is a one-time security step.\n\nPlease enter your email address:');
+        return; // Stop and wait for their email
+    }
+    // --- END OF NEW CHECK ---
+
+    // If verified, proceed with the original "My Bots" logic
     const checkingMsg = await bot.sendMessage(cid, 'Syncing your bot list with the server, please wait...');
 
     try {
@@ -7331,7 +7359,6 @@ if (text === 'My Bots') {
 
         const results = await Promise.all(verificationPromises);
         
-        // ✅ FIX: Create two separate lists: one for bots that exist and one for those that don't.
         const botsToDisplay = [];
         const botsToCleanup = [];
 
@@ -7339,7 +7366,6 @@ if (text === 'My Bots') {
             if (result.exists_on_heroku) {
                 botsToDisplay.push(result);
             } else {
-                // If it doesn't exist on Heroku, it needs to be cleaned up.
                 if (!result.deleted_from_heroku_at) {
                     botsToCleanup.push(result.bot_name);
                 }
