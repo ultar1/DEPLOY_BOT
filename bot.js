@@ -219,6 +219,12 @@ async function createAllTablesInPool(dbPool, dbName) {
         `);
       await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id INTEGER DEFAULT '1';`);
 
+      // In bot.js, inside createAllTablesInPool, after the user_deployments table definition:
+
+await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS warning_level INTEGER DEFAULT 0;`);
+await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_sent_at;`);
+
+
         await client.query(`
           CREATE TABLE IF NOT EXISTS free_trial_monitoring (
             user_id TEXT PRIMARY KEY,
@@ -12169,75 +12175,115 @@ async function checkMonitoredUsers() {
 // Run the check every 30 minutes
 setInterval(checkMonitoredUsers, 30 * 60 * 1000);
 
-// --- ADD this entire block to bot.js ---
 
-// === Paid Bot Backup Expiration Management ===
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 async function checkAndManageExpirations() {
     console.log('[Expiration] Running daily check for expiring and expired bots...');
+    const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 
     // 1. Handle Warnings for Soon-to-Expire Bots
-    const expiringBots = await dbServices.getExpiringBackups();
+    const expiringBots = await dbServices.getExpiringBackups(); // This now gets bots at level 0 or 7
+    
     for (const botInfo of expiringBots) {
-        try {
-            const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
-            
-            // --- UPDATED MESSAGE AND ADDED BUTTON ---
-            const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
-            
-            await bot.sendMessage(botInfo.user_id, warningMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            { text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
-                        ]
-                    ]
-                }
-            });
-            // --- END OF CHANGE ---
+        const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
+        
+        let warningToSend = null; // 7, 3, or null
+        let newWarningLevel = 0;
 
-            await dbServices.setBackupWarningSent(botInfo.user_id, botInfo.app_name);
-            console.log(`[Expiration] Sent expiration warning for ${botInfo.app_name} to user ${botInfo.user_id}.`);
-        } catch (error) {
-            console.error(`[Expiration] Failed to send warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
+        // --- NEW Multi-Stage Warning Logic ---
+        if (botInfo.warning_level === 0 && daysLeft <= 7) {
+            // Bot is at level 0 and is 7 days (or less) from expiring. Send 7-day warning.
+            warningToSend = 7;
+            newWarningLevel = 7;
+        } else if (botInfo.warning_level === 7 && daysLeft <= 3) {
+            // Bot is at level 7 and is 3 days (or less) from expiring. Send 3-day warning.
+            warningToSend = 3;
+            newWarningLevel = 3;
+        }
+        // --- End of New Logic ---
+
+        // If a warning needs to be sent
+        if (warningToSend) {
+            console.log(`[Expiration] Sending ${warningToSend}-day warning for ${botInfo.app_name}.`);
+            
+            try {
+                // --- A) Send Telegram Message ---
+                const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
+                
+                await bot.sendMessage(botInfo.user_id, warningMessage, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
+                            ]
+                        ]
+                    }
+                });
+
+                // --- B) Send Email ---
+                try {
+                    const ownerInfoResult = await pool.query(
+                        `SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE`,
+                        [botInfo.user_id]
+                    );
+                    if (ownerInfoResult.rows.length > 0 && ownerInfoResult.rows[0].email) {
+                        const email = ownerInfoResult.rows[0].email;
+                        console.log(`[Expiration] Sending ${warningToSend}-day expiration email for ${botInfo.app_name} to ${email}.`);
+                        await sendExpirationReminder(email, botInfo.app_name, botUsername, daysLeft);
+                    }
+                } catch (emailError) {
+                    console.error(`[Expiration] Failed to send email for ${botInfo.app_name}:`, emailError.message);
+                }
+
+                // --- C) Update Database Warning Level ---
+                await dbServices.setBackupWarningLevel(botInfo.user_id, botInfo.app_name, newWarningLevel);
+                console.log(`[Expiration] Warning for ${botInfo.app_name} sent. Level set to ${newWarningLevel}.`);
+            
+            } catch (error) {
+                // This catches errors in the main loop (e.g., Telegram message failed)
+                console.error(`[Expiration] Failed to send ${warningToSend}-day warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
+            }
         }
     }
 
     // 2. Handle Deletion of Expired Bots
+    // (This part of your function remains unchanged)
     const expiredBots = await dbServices.getExpiredBackups();
     for (const botInfo of expiredBots) {
         try {
             console.log(`[Expiration] Bot ${botInfo.app_name} for user ${botInfo.user_id} has expired. Deleting now.`);
             
-            // --- Send notice to user ---
+            // Send notice to user
             await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' })
                 .catch(err => console.error(`[Expiration] Failed to send deletion notice to user ${botInfo.user_id}:`, err.message));
             
-            // --- START: DELETION LOGIC ---
-
-            // 1. Delete from Heroku
+            // Delete from Heroku
             console.log(`[Expiration] Deleting Heroku app: ${botInfo.app_name}`);
             await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
             
-            // 2. ✅ NEW: Delete its Neon database
+            // Delete its Neon database
             console.log(`[Expiration] Deleting associated Neon database: ${botInfo.app_name}`);
-            const deleteResult = await deleteNeonDatabase(botInfo.app_name); 
+            let accountIdToDelete = '1';
+            try {
+                 const deployInfo = await pool.query('SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2', [botInfo.user_id, botInfo.app_name]);
+                 if (deployInfo.rows.length > 0 && deployInfo.rows[0].neon_account_id) {
+                     accountIdToDelete = deployInfo.rows[0].neon_account_id;
+                 }
+            } catch(e) { /* default to 1 */ }
+            
+            const deleteResult = await deleteNeonDatabase(botInfo.app_name, accountIdToDelete); 
             if (!deleteResult.success) {
-                // Log the error, but continue deleting from our local DB
                 console.error(`[Expiration] Failed to delete Neon database ${botInfo.app_name}: ${deleteResult.error}`);
             }
 
-            // --- END: DELETION LOGIC ---
-            
-            // 3. Delete from all local database tables
-            await dbServices.deleteUserBot(botInfo.user_id, botInfo.app_name);
-            await dbServices.deleteUserDeploymentFromBackup(botInfo.user_id, botInfo.app_name);
+            // Delete from all local database tables
+            await dbServices.permanentlyDeleteBotRecord(botInfo.user_id, botInfo.app_name);
 
-            // --- Send alert to admin ---
+            // Send alert to admin
             await bot.sendMessage(ADMIN_ID, `Bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\` expired and was auto-deleted from Heroku and Neon.`, { parse_mode: 'Markdown' })
                 .catch(err => console.error(`[Expiration] Failed to send admin alert for ${botInfo.app_name}:`, err.message));
 
@@ -12247,7 +12293,6 @@ async function checkAndManageExpirations() {
         }
     }
 }
-
 
 
 // Run the check once every day
