@@ -1,8 +1,9 @@
 const axios = require('axios');
 
 // Get the URL and secret key from your bot's environment variables
+// ❗️ NOTE: Ensure your main bot's .env has EMAIL_SERVICE_URL and EMAIL_SERVICE_API_KEY
 const EMAIL_SERVICE_URL = process.env.EMAIL_SERVICE_URL;
-const EMAIL_SERVICE_API_KEY = process.env.EMAIL_SERVICE_API_KEY;
+const EMAIL_SERVICE_API_KEY = process.env.SECRET_API_KEY; // Use SECRET_API_KEY to match your server
 
 /**
  * A helper function to communicate with the external email service.
@@ -53,8 +54,6 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername, daysUntilDel
   });
 }
 
-// In email_service.js of your main bot...
-
 async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, botType, sessionId) {
   return sendEmailViaService('payment_confirmation', {
     toEmail,
@@ -66,9 +65,21 @@ async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, 
   });
 }
 
+// --- 💡 NEW FUNCTION ADDED HERE 💡 ---
+async function sendExpirationReminder(toEmail, appName, botUsername, daysLeft) {
+  return sendEmailViaService('expiration_reminder', {
+    toEmail,
+    appName,
+    botUsername,
+    daysLeft
+  });
+}
+// --- END OF NEW FUNCTION ---
+
 
 module.exports = {
   sendPaymentConfirmation,
   sendVerificationEmail,
   sendLoggedOutReminder,
+  sendExpirationReminder, // <-- ADDED THE NEW EXPORT
 };
