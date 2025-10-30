@@ -5054,6 +5054,80 @@ bot.onText(/^\/deployem$/, async (msg) => {
     }
 });
 
+// In bot.js (in the command handlers section, e.g., near line 5150)
+
+bot.onText(/^\/exp$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, "Fetching list of bots expiring within 7 days...");
+
+    try {
+        // Query for bots expiring in the next 7 days that are NOT paused
+        const query = `
+            SELECT user_id, app_name, expiration_date 
+            FROM user_deployments 
+            WHERE 
+                expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+                AND paused_at IS NULL
+            ORDER BY 
+                expiration_date ASC;
+        `;
+        
+        const result = await pool.query(query);
+        const expiringBots = result.rows;
+
+        if (expiringBots.length === 0) {
+            return bot.editMessageText("No active bots are expiring in the next 7 days.", {
+                chat_id: adminId,
+                message_id: workingMsg.message_id
+            });
+        }
+
+        let responseMessage = `*Bots Expiring Soon (Next 7 Days):*\n\n`;
+        const now = new Date();
+
+        for (const bot of expiringBots) {
+            const expDate = new Date(bot.expiration_date);
+            const timeLeftMs = expDate.getTime() - now.getTime();
+            
+            // Calculate days, hours, and minutes
+            const daysLeft = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+            const hoursLeft = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutesLeft = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+
+            let timeRemaining;
+            
+            if (daysLeft > 0) {
+                timeRemaining = `*${daysLeft}d ${hoursLeft}h left*`;
+            } else if (hoursLeft > 0) {
+                timeRemaining = `*${hoursLeft}h ${minutesLeft}m left*`;
+            } else {
+                // If less than an hour, show only minutes
+                timeRemaining = `*${minutesLeft}m left* (Expiring very soon!)`;
+            }
+
+            responseMessage += `▪️ \`${escapeMarkdown(bot.app_name)}\`\n`;
+            responseMessage += `  (Owner: \`${bot.user_id}\`)\n`;
+            responseMessage += `  (Expires: ${timeRemaining})\n\n`;
+        }
+
+        await bot.editMessageText(responseMessage, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+
+    } catch (error) {
+        console.error("Error fetching /exp list:", error);
+        await bot.editMessageText(`An error occurred: ${error.message}`, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id
+        });
+    }
+});
 
 
 // In bot.js, replace your entire bot.onText(/^\/dbstats$/, async (msg) => { ... }) function with this:
