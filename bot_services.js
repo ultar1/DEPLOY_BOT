@@ -1191,9 +1191,14 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// bot_services.js
+async function getAllBotDeployments() {
+    // This query depends on your table name.
+    // It should get the app_name and user_id from your main bot table
+    const query = 'SELECT bot_name, user_id FROM user_bots'; // Or 'deployments', etc.
+    const { rows } = await pool.query(query);
+    return rows;
+}
 
-// ... other code ...
 
 // --- FIXED FUNCTION: NOW RETURNS A LIST OF APPS IN EACH CATEGORY ---
 async function backupAllPaidBots() {
