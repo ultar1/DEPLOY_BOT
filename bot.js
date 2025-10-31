@@ -38,7 +38,6 @@ const { URLSearchParams } = require('url');
 const sharp = require('sharp');
 // ✅ Correct TITLE (what users see)
 const STICKER_PACK_TITLE = 'Ultar';
-WHATSAPP_GROUP_LINK= 'https://chat.whatsapp.com/CA7qbubpdCaERcZLudhr7U'
 
 // ✅ Correct NAME (technical ID for Telegram)
 // Make sure ADMIN_ID and BOT_USERNAME are defined above this!
@@ -63,7 +62,6 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
 
 let botUsername = 'ultarbotdeploybot'; // Add this new global variable
-let lastWhatsappJoinPing = null;
 
 // 2) Load fallback env vars from app.json / custom config files
 let levanterDefaultEnvVars = {};
@@ -3842,17 +3840,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
         res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
     }
 });
-
-  // --- NEW ENDPOINT TO RECEIVE WHATSAPP PING ---
-    app.post('/whatsapp-join-ping', apiKeyAuth, (req, res) => {
-        // We just need to record the timestamp of the *last* successful ping
-        lastWhatsappJoinPing = Date.now();
-        
-        console.log(`[Ping] Received a valid /whatsapp-join-ping from the WA bot plugin.`);
-        res.status(200).json({ success: true, message: 'Ping received.' });
-    });
-    
-    // --- END OF NEW ENDPOINT ---
+  
   // bot.js (Around Line 1628)
 
 app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
@@ -7190,15 +7178,12 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
 
-// In bot.js (inside bot.on('message', ...) handler)
-// REPLACE your old 'Deploy' / 'Free Trial' block with this:
-
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         // --- THIS IS THE FREE TRIAL FLOW ---
-        // 1. Check if they are on cooldown
+        // It correctly skips the email verification.
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
             const formattedDate = check.cooldown.toLocaleString('en-US', {
@@ -7215,21 +7200,36 @@ if (text === 'Deploy' || text === 'Free Trial') {
             });
         }
 
-        // --- 💡 NEW LOGIC START 💡 ---
-        // 2. Force user to join WhatsApp group FIRST.
-        // This relies on the 'joined_whatsapp' callback handler we built.
-        // (Make sure WHATSAPP_GROUP_LINK is defined at the top of bot.js)
-        await bot.sendMessage(cid, "To get a Free Trial, you must first join our official WhatsApp group. This is the first step.", {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '1. Join WhatsApp Group', url: WHATSAPP_GROUP_LINK }],
-                    [{ text: '2. I Have Joined, Continue »', callback_data: 'joined_whatsapp' }]
-                ]
+        try { 
+            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
+            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+
+            if (isMember) {
+                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
+                await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                        ]
+                    }
+                });
+            } else {
+                await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                        ]
+                    }
+                });
             }
-        });
-        // --- 💡 NEW LOGIC END 💡 ---
-        return; // Stop here and wait for the callback
+        } catch (error) { 
+            console.error("Error in free trial initial check:", error.message);
+            await bot.sendMessage(cid, "An error occurred. Please try again later.");
+        }
+        return;
 
     } else {
         // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
@@ -7237,7 +7237,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
     
         if (!isVerified) {
             // **Step 1: User is NOT verified, so we start the registration process.**
-            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false, action: 'deploy' } }; // Added action for clarity
+            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
             await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
             return; // Stop and wait for their email
         }
@@ -7256,8 +7256,6 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
-
-
 
 
 
@@ -7997,74 +7995,6 @@ if (action === 'editvar_select') {
       });
       return;
   }
-
-
-  // In bot.js (inside bot.on('callback_query', ...), around line 4500)
-// REPLACE the 'joined_whatsapp' block with this:
-
-if (action === 'joined_whatsapp') {
-    const userId = q.from.id;
-    const messageId = q.message.message_id;
-    const VERIFICATION_WINDOW_MS = 60 * 1000; // 1 Minute
-
-    // --- NEW TIME-BASED CHECK ---
-    // Check if a ping has arrived AND if it arrived recently
-    if (lastWhatsappJoinPing && (Date.now() - lastWhatsappJoinPing < VERIFICATION_WINDOW_MS)) {
-        
-        // --- 💡 SUCCESS! 💡 ---
-        // A join was detected. Reset the ping (so it can't be reused)
-        lastWhatsappJoinPing = null; 
-        
-        await bot.answerCallbackQuery(q.id, { text: "WhatsApp group join detected!" });
-
-        // Now, proceed to the *next* step (Telegram Channel check)
-        try { 
-            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
-            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-            if (isMember) {
-                // If they are a member, show bot type selection
-                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
-                await bot.editMessageText('Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
-                    chat_id: cid,
-                    message_id: messageId,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
-                        ]
-                    }
-                });
-            } else {
-                // If not a member, show the "Join Channel" button
-                await bot.editMessageText("Great! Now for the final step, you must join our Telegram channel. This helps us keep you updated!", {
-                    chat_id: cid,
-                    message_id: messageId,
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
-                        ]
-                    }
-                });
-            }
-        } catch (error) { 
-            console.error("Error in free trial (joined_whatsapp) check:", error.message);
-            await bot.sendMessage(cid, "An error occurred. Please try again later.");
-        }
-        
-    } else {
-        // --- 💡 FAILURE 💡 ---
-        // No ping was received, or it's too old.
-        await bot.answerCallbackQuery(q.id, { 
-            text: "Verification failed. Please make sure you have joined the WhatsApp group first, then click the 'I Have Joined' button again.", 
-            show_alert: true 
-        });
-    }
-    return;
-}
-
 
   // Inside bot.on('callback_query', ...)
 
