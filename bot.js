@@ -3848,7 +3848,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
         // We just need to record the timestamp of the *last* successful ping
         lastWhatsappJoinPing = Date.now();
         
-        console.log([Ping] Received a valid /whatsapp-join-ping from the WA bot plugin.);
+        console.log(`[Ping] Received a valid /whatsapp-join-ping from the WA bot plugin.`);
         res.status(200).json({ success: true, message: 'Ping received.' });
     });
     
