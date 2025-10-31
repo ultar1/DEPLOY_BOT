@@ -11968,7 +11968,7 @@ bot.on('channel_post', async msg => {
     }
 
     // ✅ FIX: This new block handles the consolidated R14 alert message.
-    const consolidatedR14Header = '🚨 R14 Memory Errors Detected 🚨';
+    const consolidatedR14Header = 'R14 Memory Errors Detected';
     if (text.startsWith(consolidatedR14Header)) {
         console.log('[Auto-Restart] Consolidated R14 alert detected. Parsing bot names...');
         
