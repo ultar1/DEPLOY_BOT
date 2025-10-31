@@ -2326,9 +2326,9 @@ async function sendPricingTiers(chatId, messageId) {
     planButtons.push({ text: 'Standard: ₦1500 / 30 Days', callback_data: 'select_plan:1500:30' });
 
     // New Longer Plans
-    planButtons.push({ text: 'Quarterly: ₦3,000 / 3 months', callback_data: 'select_plan:3500:92' });
+    planButtons.push({ text: 'Quarterly: ₦3,000 / 3 months', callback_data: 'select_plan:3000:92' });
     planButtons.push({ text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: 'select_plan:6000:185' });
-    planButtons.push({ text: 'Annual: ₦6,000 / 1 year', callback_data: 'select_plan:10000:365' });
+    planButtons.push({ text: 'Annual: ₦8,000 / 1 year', callback_data: 'select_plan:8000:365' });
 
     // --- Arrange buttons into rows of 2 ---
     const pricingKeyboardRows = chunkArray(planButtons, 2); // Group into pairs
