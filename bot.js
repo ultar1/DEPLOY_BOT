@@ -2327,7 +2327,7 @@ async function sendPricingTiers(chatId, messageId) {
 
     // New Longer Plans
     planButtons.push({ text: 'Quarterly: ₦3,000 / 3 months', callback_data: 'select_plan:3000:92' });
-    planButtons.push({ text: 'Semi-Annual: ₦6,000 / 6 months', callback_data: 'select_plan:6000:185' });
+    planButtons.push({ text: 'Semi-Annual: ₦5,000 / 6 months', callback_data: 'select_plan:5000:185' });
     planButtons.push({ text: 'Annual: ₦8,000 / 1 year', callback_data: 'select_plan:8000:365' });
 
     // --- Arrange buttons into rows of 2 ---
@@ -4066,7 +4066,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
         
     
 let days;
-if (amount >= 6000) days = 365;    // Annual: ₦10,000
+if (amount >= 8000) days = 365;    // Annual: ₦10,000
 else if (amount >= 5000) days = 185; // Semi-Annual: ₦6,000
 else if (amount >= 3000) days = 92;  // Quarterly: ₦3,500
 else if (amount >= 1500) days = 30;  // Standard: ₦1,500
@@ -9838,9 +9838,9 @@ if (action === 'renew_bot') {
     const planButtons = [
         { text: 'Basic: ₦500 / 10 Days', callback_data: `select_renewal:500:10:${appName}` },
         { text: 'Standard: ₦1500 / 30 Days', callback_data: `select_renewal:1500:30:${appName}` },
-        { text: 'Quarterly: ₦3,000 / 3 months', callback_data: `select_renewal:3500:92:${appName}` },
-        { text: 'Semi-Annual: ₦5,000 / 6 months', callback_data: `select_renewal:6000:185:${appName}` },
-        { text: 'Annual: ₦8,000 / 1 year', callback_data: `select_renewal:10000:365:${appName}` },
+        { text: 'Quarterly: ₦3,000 / 3 months', callback_data: `select_renewal:3000:92:${appName}` },
+        { text: 'Semi-Annual: ₦5,000 / 6 months', callback_data: `select_renewal:5000:185:${appName}` },
+        { text: 'Annual: ₦8,000 / 1 year', callback_data: `select_renewal:8000:365:${appName}` },
     ];
     // --- End list ---
 
