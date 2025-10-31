@@ -24,6 +24,7 @@ let defaultEnvVars; // This will now hold an object like { levanter: {}, raganor
 let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
+let runOrphanDbCleanup;
 let animateMessage;
 let moduleParams = {};
 let sendAnimatedMessage;
@@ -60,6 +61,7 @@ function init(params) {
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
+    runOrphanDbCleanup = params.runOrphanDbCleanup; 
     moduleParams = params;
     NEON_ACCOUNTS = params.NEON_ACCOUNTS;
     TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
@@ -115,23 +117,28 @@ const execPromise = util.promisify(exec);
  * Does NOT delete local database records, only targets external resources.
  * * @returns {Promise<{pruned: number, failedHeroku: number, failedNeon: number}>} - A summary.
  */
+/**
+ * Automatically prunes (deletes) all resources (Heroku, Neon, and Local DB)
+ * for bots marked as 'logged_out'.
+ * After completion, it triggers the orphan DB cleanup.
+ * @returns {Promise<{pruned: number, failedHeroku: number, failedNeon: number}>} - A summary.
+ */
 async function pruneLoggedOutBot() {
-    console.log('[Prune] Starting scheduled job to prune logged-out resources...');
+    console.log('[Prune] Starting scheduled job to prune ALL logged-out resources (External + Local)...');
 
     // 1. Get dependencies from moduleParams
-    const { deleteNeonDatabase, mainPool, monitorSendTelegramAlert, ADMIN_ID, herokuApi, HEROKU_API_KEY } = moduleParams; 
-
-    // Validate essential dependencies (checks omitted for brevity, assuming initialization is correct)
+    // 💡 ADDED 'runOrphanDbCleanup' to the dependencies
+    const { deleteNeonDatabase, mainPool, monitorSendTelegramAlert, ADMIN_ID, herokuApi, HEROKU_API_KEY, runOrphanDbCleanup } = moduleParams; 
 
     // 2. Get all bots marked as 'logged_out' from the *main* database
     const loggedOutBots = await getLoggedOutBots(); // Uses main 'pool' internally
 
     if (loggedOutBots.length === 0) {
-        console.log('[Prune] No logged-out bots found in main DB to prune external resources for.');
+        console.log('[Prune] No logged-out bots found to prune.');
         return { pruned: 0, failedHeroku: 0, failedNeon: 0 };
     }
 
-    console.log(`[Prune] Found ${loggedOutBots.length} logged-out bots. Starting external resource deletion...`);
+    console.log(`[Prune] Found ${loggedOutBots.length} logged-out bots. Starting external & local resource deletion...`);
 
     let prunedCount = 0;
     let failedHerokuCount = 0;
@@ -146,20 +153,18 @@ async function pruneLoggedOutBot() {
 
         // --- FETCH NEON ACCOUNT ID ---
         try {
-            // Query the MAIN pool for the specific account ID
             const deploymentInfo = await mainPool.query( 
                 'SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2',
                 [user_id, app_name]
             );
             if (deploymentInfo.rows.length > 0 && deploymentInfo.rows[0].neon_account_id) {
-                // Ensure the returned ID is used
                 neonAccountIdToDelete = deploymentInfo.rows[0].neon_account_id;
                 console.log(`[Prune] Found Neon Account ID ${neonAccountIdToDelete} for ${app_name}.`);
             } else {
-                console.warn(`[Prune] Neon account ID not found in user_deployments for ${app_name}. Assuming Account '1' for deletion attempt.`);
+                console.warn(`[Prune] Neon account ID not found for ${app_name}. Assuming Account '1'.`);
             }
         } catch (dbError) {
-            console.error(`[Prune] Error fetching Neon Account ID for ${app_name}, assuming Account '1':`, dbError.message);
+            console.error(`[Prune] Error fetching Neon Account ID for ${app_name}:`, dbError.message);
         }
         // --- END Fetch ---
 
@@ -172,7 +177,6 @@ async function pruneLoggedOutBot() {
                     'Accept': 'application/vnd.heroku+json; version=3'
                 }
             });
-            console.log(`[Prune] Successfully deleted Heroku app: ${app_name}`);
             herokuDeleted = true;
         } catch (error) {
             if (error.response && error.response.status === 404) {
@@ -185,52 +189,69 @@ async function pruneLoggedOutBot() {
         }
 
         // --- Part B: Delete Neon Database (Using Account ID) ---
-        const dbName = app_name.replace(/-/g, '_'); // Recreate the DB name
-        if (herokuDeleted) { // Only attempt Neon deletion if Heroku app is confirmed deleted/gone
+        const dbName = app_name.replace(/-/g, '_');
+        if (herokuDeleted) { 
             try {
-                console.log(`[Prune] Deleting Neon database: ${dbName} from Account ${neonAccountIdToDelete} (for app: ${app_name})`);
-                const neonResult = await deleteNeonDatabase(dbName, neonAccountIdToDelete); // Pass fetched ID
+                console.log(`[Prune] Deleting Neon database: ${dbName} from Account ${neonAccountIdToDelete}`);
+                const neonResult = await deleteNeonDatabase(dbName, neonAccountIdToDelete); 
 
                 if (neonResult.success) {
                     console.log(`[Prune] Successfully deleted Neon DB: ${dbName} from Account ${neonAccountIdToDelete}`);
                     neonDeleted = true;
                 } else {
-                     // Throw to be caught by the local catch block below for error handling
                      throw new Error(neonResult.error || 'Unknown Neon deletion error');
                 }
             } catch (error) {
-                // This catch handles Neon API errors or failed fallback search
                 console.error(`[Prune] Failed to delete Neon DB ${dbName} from Account ${neonAccountIdToDelete}:`, error.message);
                 failedNeonCount++;
             }
         } else {
-             // If Heroku deletion failed (not a 404), we count Neon as failed too since the resource remains
              failedNeonCount++;
-             console.warn(`[Prune] Skipping Neon deletion for ${app_name} because Heroku deletion failed (not 404).`);
+             console.warn(`[Prune] Skipping Neon deletion for ${app_name} (Heroku delete failed).`);
         }
 
 
-        // --- Part C: Tally ---
+        // --- 💡 Part C: Tally & Local DB Cleanup (NEW LOGIC) 💡 ---
         if (herokuDeleted && neonDeleted) {
             prunedCount++;
-            console.log(`[Prune] Successfully pruned external resources for ${app_name}. Local DB record remains.`);
+            console.log(`[Prune] External resources for ${app_name} pruned. Deleting local records...`);
+            
+            try {
+                // This function is defined in bot_services.js and deletes from all local tables
+                await permanentlyDeleteBotRecord(user_id, app_name); 
+                console.log(`[Prune] Successfully deleted local DB records for ${app_name}.`);
+            } catch (dbError) {
+                console.error(`[Prune] CRITICAL: Failed to delete local DB records for ${app_name}:`, dbError.message);
+                // Alert admin that external resources are gone but local DB entry failed to delete
+                if (monitorSendTelegramAlert && ADMIN_ID) {
+                    monitorSendTelegramAlert(`CRITICAL PRUNE ERROR: External resources for ${app_name} were deleted, but local DB cleanup FAILED. Manual check required.`, ADMIN_ID);
+                }
+            }
         } else {
-             console.warn(`[Prune] Failed to prune all external resources for ${app_name}. Heroku success: ${herokuDeleted}, Neon success: ${neonDeleted}. Local DB record remains.`);
+             console.warn(`[Prune] Failed to prune all external resources for ${app_name}. Local DB record will be kept for next cycle.`);
         }
     } // End loop
 
     // --- 4. Report to Admin ---
-    console.log(`[Prune] Job finished. Fully pruned external resources for: ${prunedCount} bots. Heroku fails: ${failedHerokuCount}, Neon fails: ${failedNeonCount}.`);
+    console.log(`[Prune] Job finished. Fully pruned (External+Local): ${prunedCount} bots. Heroku fails: ${failedHerokuCount}, Neon fails: ${failedNeonCount}.`);
 
     if (monitorSendTelegramAlert && ADMIN_ID && (prunedCount > 0 || failedHerokuCount > 0 || failedNeonCount > 0)) {
          monitorSendTelegramAlert(
             `*Weekly Resource Prune Report*\n\n` +
-            `External resources pruned (Heroku+Neon): ${prunedCount}\n` +
+            `Fully pruned (Heroku+Neon+Local DB): ${prunedCount}\n` +
             `Failed Heroku deletions: ${failedHerokuCount}\n` +
             `Failed Neon DB deletions: ${failedNeonCount}\n\n` +
-            `Note: User database records were *not* deleted.`,
+            `Note: Local database records *were also deleted* for successfully pruned bots.`, // <-- UPDATED TEXT
             ADMIN_ID
          );
+    }
+
+    // --- 💡 5. Run Orphan Cleanup (NEW STEP) 💡 ---
+    if (runOrphanDbCleanup) {
+        console.log('[Prune] Prune job complete. Now triggering /deldb (Orphan Cleanup) function...');
+        await runOrphanDbCleanup(ADMIN_ID);
+    } else {
+        console.error('[Prune] Cannot run orphan cleanup: runOrphanDbCleanup function was not passed to moduleParams.');
     }
 
     return { pruned: prunedCount, failedHeroku: failedHerokuCount, failedNeon: failedNeonCount };
