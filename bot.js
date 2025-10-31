@@ -7190,6 +7190,9 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
 
+// In bot.js (inside bot.on('message', ...) handler)
+// REPLACE your old 'Deploy' / 'Free Trial' block with this:
+
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
@@ -7215,6 +7218,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         // --- 💡 NEW LOGIC START 💡 ---
         // 2. Force user to join WhatsApp group FIRST.
         // This relies on the 'joined_whatsapp' callback handler we built.
+        // (Make sure WHATSAPP_GROUP_LINK is defined at the top of bot.js)
         await bot.sendMessage(cid, "To get a Free Trial, you must first join our official WhatsApp group. This is the first step.", {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -7233,7 +7237,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
     
         if (!isVerified) {
             // **Step 1: User is NOT verified, so we start the registration process.**
-            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
+            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false, action: 'deploy' } }; // Added action for clarity
             await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
             return; // Stop and wait for their email
         }
@@ -7252,6 +7256,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
 
