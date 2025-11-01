@@ -59,6 +59,7 @@ function init(params) {
     bot = params.bot;
     HEROKU_API_KEY = params.HEROKU_API_KEY;
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
+    GITHUB_HERMIT_REPO_URL = params.GITHUB_HERMIT_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
     runOrphanDbCleanup = params.runOrphanDbCleanup; 
@@ -1828,8 +1829,21 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         clearInterval(primaryAnimateIntervalId);
 
         // --- Step 5: Trigger Build from GitHub ---
-        await bot.editMessageText(`Starting build process...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
-        const repoUrl = (botType === 'raganork') ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+                // --- Step 5: Trigger Build from GitHub ---
+        await bot.editMessageText(`Starting to build your Bot...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+        
+        // --- 💡 UPDATED REPO URL LOGIC 💡 ---
+        let repoUrl;
+        if (botType === 'raganork') {
+            repoUrl = GITHUB_RAGANORK_REPO_URL;
+        } else if (botType === 'hermit') {
+            // (This relies on GITHUB_HERMIT_REPO_URL being passed into init)
+            repoUrl = GITHUB_HERMIT_REPO_URL; 
+        } else {
+            // Default to Levanter
+            repoUrl = GITHUB_LEVANTER_REPO_URL;
+        }
+    
         
         const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
@@ -2225,10 +2239,25 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         );
 
         // --- Step 5: Trigger Build from GitHub ---
-        const repoUrl = (botType === 'raganork') ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+                // --- Step 5: Trigger Build from GitHub ---
+        await bot.editMessageText(`Starting build process...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+        
+        // --- 💡 UPDATED REPO URL LOGIC 💡 ---
+        let repoUrl;
+        if (botType === 'raganork') {
+            repoUrl = GITHUB_RAGANORK_REPO_URL;
+        } else if (botType === 'hermit') {
+            // (This relies on GITHUB_HERMIT_REPO_URL being passed into init)
+            repoUrl = GITHUB_HERMIT_REPO_URL; 
+        } else {
+            // Default to Levanter
+            repoUrl = GITHUB_LEVANTER_REPO_URL;
+        }
+    
         const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
         }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+
 
         // --- Step 6: Wait for Build to Finish (Silently) ---
         const buildId = buildStartRes.data.id;
