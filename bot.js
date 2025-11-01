@@ -101,6 +101,27 @@ try {
   console.warn('[Config] Could not load fallback env vars from app.json1 for Raganork:', e.message);
 }
 
+// --- ADD THIS NEW BLOCK ---
+let hermitDefaultEnvVars = {};
+try {
+  const appJson2Path = path.join(__dirname, 'app.json2'); // <-- New file
+  if (fs.existsSync(appJson2Path)) {
+    const appJson2 = JSON.parse(fs.readFileSync(appJson2Path, 'utf8'));
+    hermitDefaultEnvVars = Object.fromEntries(
+      Object.entries(appJson2.env || {})
+        .filter(([key, val]) => val && val.value !== undefined)
+        .map(([key, val]) => [key, val.value])
+    );
+    console.log('[Config] Loaded default env vars from app.json2 for Hermit.');
+  } else {
+    console.warn('[Config] No app.json2 found for Hermit. Default env vars will be empty.');
+  }
+} catch (e) {
+  console.warn('[Config] Could not load fallback env vars from app.json2 for Hermit:', e.message);
+}
+// --- END OF NEW BLOCK ---
+
+
 // 3) Environment config
 const {
   TELEGRAM_BOT_TOKEN: TOKEN_ENV,
@@ -118,13 +139,16 @@ const TELEGRAM_CHANNEL_ID = '-1002892034574';
 
 const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
+const GITHUB_HERMIT_REPO_URL = 'https://github.com/ultar1/hermit-bot/tree/main'; 
 
 const SUPPORT_USERNAME = '@staries1';
 const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
 const LEVANTER_SESSION_PREFIX = 'levanter_';
 const RAGANORK_SESSION_PREFIX = 'RGNK';
+const HERMIT_SESSION_PREFIX = 'HQ_'; 
 const LEVANTER_SESSION_SITE_URL = `https://levanter-delta.vercel.app/`;
 const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
+const HERMIT_SESSION_SITE_URL = 'https://hermit-md.vercel.app'; 
 
 // A strict allow-list of Render environment variables that the admin can edit remotely.
 const EDITABLE_RENDER_VARS = [
@@ -3318,7 +3342,8 @@ async function notifyAdminUserOnline(msg) {
     // --- CRITICAL CHANGE START ---
     defaultEnvVars: { // <-- Pass an object containing both
         levanter: levanterDefaultEnvVars,
-        raganork: raganorkDefaultEnvVars
+        raganork: raganorkDefaultEnvVars,
+        hermit: hermitDefaultEnvVars
     },
     // --- CRITICAL CHANGE END ---
     appDeploymentPromises: appDeploymentPromises,
@@ -7210,8 +7235,13 @@ if (text === 'Deploy' || text === 'Free Trial') {
                 await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                            [ // Row 1
+                                { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
+                                { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
+                            ],
+                            [ // Row 2
+                                { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
+                            ]
                         ]
                     }
                 });
@@ -7249,18 +7279,19 @@ if (text === 'Deploy' || text === 'Free Trial') {
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                    [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                    [ // Row 1
+                        { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
+                        { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
+                    ],
+                    [ // Row 2
+                        { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
+                    ]
                 ]
             }
         });
         return;
     }
 }
-
-
-
-
 
 
   if (text === 'Apps' && isAdmin) {
@@ -7279,20 +7310,26 @@ if (text === 'Deploy' || text === 'Free Trial') {
     });
   }
 
-  if (text === 'Get Session ID') {
+    if (text === 'Get Session ID') {
       delete userStates[cid]; // Clear user state
       userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
 
       await bot.sendMessage(cid, 'Which bot type do you need a session ID for?', {
           reply_markup: {
               inline_keyboard: [
-                  [{ text: 'Levanter', callback_data: `select_get_session_type:levanter` }],
-                  [{ text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }]
+                  [ // Row 1
+                    { text: 'Levanter', callback_data: `select_get_session_type:levanter` },
+                    { text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }
+                  ],
+                  [ // Row 2
+                    { text: 'Hermit', callback_data: `select_get_session_type:hermit` }
+                  ]
               ]
           }
       });
       return;
   }
+
 
         // In bot.js
 
@@ -7686,27 +7723,46 @@ if (st && st.step === 'AWAITING_KEY') {
 
 
 
- if (st && st.step === 'SESSION_ID') {
+if (st && st.step === 'SESSION_ID') {
     const sessionID = text.trim();
     const botType = st.data.botType;
 
     let isValidSession = false;
   
     if (botType === 'levanter') {
+        // (Assuming LEVANTER_SESSION_PREFIX is defined at the top of bot.js)
         if (sessionID.startsWith(LEVANTER_SESSION_PREFIX) && sessionID.length >= 10) {
             isValidSession = true;
         }
     } else if (botType === 'raganork') {
+        // (Assuming RAGANORK_SESSION_PREFIX is defined at the top of bot.js)
         if (sessionID.startsWith(RAGANORK_SESSION_PREFIX) && sessionID.length >= 10) {
             isValidSession = true;
         }
+    } else if (botType === 'hermit') {
+        // --- 💡 NEW LOGIC 💡 ---
+        // (Assuming HERMIT_SESSION_PREFIX is defined at the top of bot.js)
+        if (sessionID.startsWith(HERMIT_SESSION_PREFIX) && sessionID.length >= 10) {
+            isValidSession = true;
+        }
+        // --- 💡 END OF NEW LOGIC 💡 ---
     }
 
     if (!isValidSession) {
         // This is the updated logic to send an error with a button
         let botName = botType.charAt(0).toUpperCase() + botType.slice(1);
         let errorMessage = `Incorrect session ID. Your *${botName}* session ID is not valid. Please input the correct one`;
-        let sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+        
+        // --- 💡 UPDATED URL LOGIC 💡 ---
+        let sessionUrl;
+        if (botType === 'raganork') {
+            sessionUrl = RAGANORK_SESSION_SITE_URL;
+        } else if (botType === 'hermit') {
+            sessionUrl = HERMIT_SESSION_SITE_URL;
+        } else {
+            sessionUrl = LEVANTER_SESSION_SITE_URL;
+        }
+        // --- 💡 END OF UPDATE 💡 ---
         
         return bot.sendMessage(cid, errorMessage, {
             parse_mode: 'Markdown',
@@ -7721,7 +7777,6 @@ if (st && st.step === 'AWAITING_KEY') {
     st.step = 'AWAITING_APP_NAME';
     return bot.sendMessage(cid, 'Great. Now enter a unique name for your bot (e.g., mybot123):');
 }
-
 
 // Now, replace it with this single, comprehensive handler.
 if (st && st.step === 'AWAITING_APP_NAME') {
@@ -8110,20 +8165,25 @@ if (action === 'select_deploy_type') {
     // The flow now always goes to SESSION_ID first.
     st.step = 'SESSION_ID';
     
-    // --- START OF NEW IMAGE LOGIC ---
-    const isRaganork = botType === 'raganork';
+    // --- START OF UPDATED IMAGE LOGIC ---
+    let prefix;
+    let imageGuideUrl;
+    let sessionSiteUrl;
 
-    const prefix = isRaganork 
-        ? RAGANORK_SESSION_PREFIX // Assuming this constant is defined
-        : LEVANTER_SESSION_PREFIX; // Assuming this constant is defined
-        
-    const imageGuideUrl = isRaganork
-        ? 'https://files.catbox.moe/lqk3gj.jpeg' // Raganork Image URL
-        : 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
-        
-    const sessionSiteUrl = isRaganork
-        ? RAGANORK_SESSION_SITE_URL // Assuming this constant is defined
-        : LEVANTER_SESSION_SITE_URL; // Assuming this constant is defined
+    if (botType === 'raganork') {
+        prefix = RAGANORK_SESSION_PREFIX;
+        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; // Raganork Image URL
+        sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
+    } else if (botType === 'hermit') {
+        prefix = HERMIT_SESSION_PREFIX;
+        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Using Levanter image as a placeholder for Hermit
+        sessionSiteUrl = HERMIT_SESSION_SITE_URL;
+    } else { // Default to Levanter
+        prefix = LEVANTER_SESSION_PREFIX;
+        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
+        sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
+    }
+    // --- END OF UPDATED LOGIC ---
 
     const botName = botType.charAt(0).toUpperCase() + botType.slice(1);
     
@@ -8142,7 +8202,7 @@ if (action === 'select_deploy_type') {
         }
     });
 
-    // 2. 🚨 FIX: Delete the original message that contained the bot type buttons
+    // 2. Delete the original message that contained the bot type buttons
     await bot.deleteMessage(cid, messageIdToDelete)
         .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
 
@@ -8154,7 +8214,7 @@ if (action === 'select_deploy_type') {
 
 
 
-          if (action === 'buy_key') {
+   if (action === 'buy_key') {
         if (!st || !st.data.botType) {
             return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start the deployment process again.", show_alert: true });
         }
@@ -8301,22 +8361,40 @@ if (action === 'set_auto_status_choice') {
     const autoStatusChoice = payload;
     if (!st || st.step !== 'AWAITING_AUTO_STATUS_CHOICE') return;
 
-    // --- THIS IS THE FIX ---
+    // --- THIS IS THE FIX (NOW INCLUDES HERMIT) ---
     if (st.data.botType === 'levanter') {
       st.data.AUTO_STATUS_VIEW = autoStatusChoice === 'true' ? 'no-dl' : 'false';
     } else if (st.data.botType === 'raganork') {
       st.data.AUTO_STATUS_VIEW = autoStatusChoice; // Sets to 'true' or 'false'
+    } else if (st.data.botType === 'hermit') {
+      // Assuming Hermit works like Raganork
+      st.data.AUTO_STATUS_VIEW = autoStatusChoice; 
     }
     // --- END OF FIX ---
 
-    st.step = 'AWAITING_FINAL_CONFIRMATION'; // <-- NEW STATE ORDER
+    st.step = 'AWAITING_FINAL_CONFIRMATION';
 
-    const confirmationMessage = `*Review Deployment Details:*\n\n` +
-                                `*Bot Type:* \`${st.data.botType.toUpperCase()}\`\n` +
-                                `*Session ID:* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\n` +
-                                `*App Name:* \`${escapeMarkdown(st.data.APP_NAME)}\`\n` +
-                                `*Auto Status View:* \`${st.data.AUTO_STATUS_VIEW}\`\n\n` +
-                                `Tap 'Confirm' to continue.`;
+    // --- 🎨 DESIGN UPDATE START 🎨 ---
+    
+    // Get the variables
+    const botType = st.data.botType.toUpperCase();
+    const session = st.data.SESSION_ID.slice(0, 15) + '...';
+    const appName = st.data.APP_NAME;
+    const statusView = st.data.AUTO_STATUS_VIEW;
+
+    // Build the message inside a code block (```) for perfect formatting
+    let confirmationMessage = "```\n"; // Start code block
+    confirmationMessage += ` ═══ ${botType} ═══⊷\n`;
+    confirmationMessage += ` ┃❃╭──────────────\n`;
+    confirmationMessage += ` ┃❃│ Bot Type    : ${botType}\n`;
+    confirmationMessage += ` ┃❃│ App Name    : ${appName}\n`;
+    confirmationMessage += ` ┃❃│ Session     : ${session}\n`;
+    confirmationMessage += ` ┃❃│ Auto Status : ${statusView}\n`;
+    confirmationMessage += ` ┃❃╰───────────────\n\n`;
+    confirmationMessage += ` Looks good? Tap 'Confirm' to build your bot!`;
+    confirmationMessage += "\n```"; // End code block
+    
+    // --- 🎨 DESIGN UPDATE END 🎨 ---
     
     await bot.editMessageText(confirmationMessage, {
         chat_id: cid,
@@ -8327,7 +8405,7 @@ if (action === 'set_auto_status_choice') {
                 [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over` }]
             ]
         },
-        parse_mode: 'Markdown'
+        parse_mode: 'Markdown' // This parse_mode works with the ``` code block
     });
     return;
 }
@@ -8668,13 +8746,19 @@ if (action === 'get_session_start_flow') {
         message_id: q.message.message_id,
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Levanter', callback_data: `select_get_session_type:levanter` }],
-                [{ text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }]
+                [ // Row 1
+                    { text: 'Levanter', callback_data: `select_get_session_type:levanter` },
+                    { text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }
+                ],
+                [ // Row 2
+                    { text: 'Hermit', callback_data: `select_get_session_type:hermit` }
+                ]
             ]
         }
     });
     return;
 }
+
 
   // In bot.js, inside bot.on('callback_query', ...)
 
@@ -9150,7 +9234,24 @@ if (action === 'select_get_session_type') {
         });
         delete userStates[cid];
         return;
-    } else { // This is the new Levanter flow
+    } else if (botType === 'hermit') {
+        // --- 💡 NEW LOGIC 💡 ---
+        await bot.editMessageText(`You chose *Hermit*. Please use the button below to generate your session ID.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    // (Assuming HERMIT_SESSION_SITE_URL is defined at the top of bot.js)
+                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                ]
+            }
+        });
+        delete userStates[cid];
+        return;
+        // --- 💡 END OF NEW LOGIC 💡 ---
+    } else { // This is the Levanter flow
         const levanterUrl = 'https://levanter-delta.vercel.app/';
         await bot.editMessageText('You chose Levanter, please use the button below to get your session id.', {
             chat_id: cid,
