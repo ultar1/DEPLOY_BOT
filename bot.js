@@ -471,11 +471,6 @@ async function runCopyDbTask() {
 }
 
 
-// Replace the 5 placeholder functions with these:
-
-/**
- * Redeploys a specific bot by triggering a new build from GitHub.
- */
 async function redeployBot(userId, botId) {
     console.log(`[ACTION] User ${userId} requested redeployment for bot ${botId}.`);
     try {
@@ -484,8 +479,18 @@ async function redeployBot(userId, botId) {
         if (botInfo.rows.length === 0) {
             return { status: "error", message: `Could not find bot '${botId}' to redeploy.` };
         }
+        
+        // --- UPDATED LOGIC ---
         const botType = botInfo.rows[0].bot_type;
-        const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+        let repoUrl;
+        if (botType === 'raganork') {
+            repoUrl = GITHUB_RAGANORK_REPO_URL;
+        } else if (botType === 'hermit') {
+            repoUrl = GITHUB_HERMIT_REPO_URL;
+        } else {
+            repoUrl = GITHUB_LEVANTER_REPO_URL;
+        }
+        // --- END OF UPDATE ---
 
         // 2. Trigger the build on Heroku
         await herokuApi.post(`/apps/${botId}/builds`,
@@ -499,6 +504,7 @@ async function redeployBot(userId, botId) {
         return { status: "error", message: `Failed to start redeployment for *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
     }
 }
+
 
 /**
  * Gets information about a specific bot from the database.
@@ -827,7 +833,6 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 
-// REPLACE your old 'handleFallbackWithGemini' function with this one
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
@@ -842,9 +847,13 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
       ---
       ## KNOWLEDGE BASE ##
-      - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'.
+      - **Bot's Main Function:** The bot deploys THREE types of WhatsApp bots: 'Levanter', 'Raganork', and 'Hermit'.
        - 'CRITICAL': Do NOT mention any specific hosting platforms. Focus on the ease and power of our generic service.
-       - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmsks. when user say update or change my session or session id or session_id,  just know that user means SESSION_ID, Then carry out the function!. always check bot type 
+       - 'Bot session id type': 
+         - Levanter session id looks like this levanter_kansjsjssjsbsbsns
+         - Raganork own is like this RGNK~lsjsnskslwmsks
+         - Hermit own is like this HQ_A-Z0-9==
+       - when user say update or change my session or session id or session_id,  just know that user means SESSION_ID, Then carry out the function!. always check bot type 
       - **Key Features:**
         - 'Deploy': The main function to start creating a new bot.
         - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
@@ -854,7 +863,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         - 'Support': Users can contact the admin (${SUPPORT_USERNAME}) for help.
       - **Pricing & Payment:**
         - Deploying a bot requires a paid key or a free trial.
-        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days), Premium (₦2000/50 Days).
+        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days).
       - **Common Issues:**
         - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
         - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
@@ -1004,11 +1013,6 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 }
 
 
-// --- END OF GEMINI INTEGRATION ---
-
-
-// --- END OF REPLACEMENT ---
-// bot.js (Add this utility function in your file)
 
 const { exec } = require('child_process');
 const util = require('util');
@@ -3334,6 +3338,7 @@ async function notifyAdminUserOnline(msg) {
     NEON_ACCOUNTS: NEON_ACCOUNTS,
     HEROKU_API_KEY: HEROKU_API_KEY,
     GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
+    GITHUB_HERMIT_REPO_URL: GITHUB_HERMIT_REPO_URL,
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
     ADMIN_ID: ADMIN_ID,
     runOrphanDbCleanup: runOrphanDbCleanup,
@@ -5651,6 +5656,9 @@ bot.onText(/^\/bapp$/, (msg) => {
                 [
                     { text: 'Levanter', callback_data: 'bapp_select_type:levanter' },
                     { text: 'Raganork', callback_data: 'bapp_select_type:raganork' }
+                ],
+                [
+                    { text: 'Hermit', callback_data: 'bapp_select_type:hermit' } // <-- ADDED
                 ]
             ]
         }
@@ -5660,8 +5668,9 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
+
 // Replace your existing /sendall command handler with this one
-bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, match) => {
+bot.onText(/^\/sendall(?:\s+(levanter|raganork|hermit))?\s*([\s\S]*)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
@@ -6176,10 +6185,10 @@ bot.onText(/^\/restart$/, async (msg) => {
     // Check if the necessary API keys are configured in your environment.
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
-        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** `RENDER_API_KEY` and `RENDER_SERVICE_ID` must be set in your bot's environment to use this feature.");
+        return bot.sendMessage(adminId, "**Setup Incomplete:** `RENDER_API_KEY` and `RENDER_SERVICE_ID` must be set in your bot's environment to use this feature.");
     }
 
-    const workingMsg = await bot.sendMessage(adminId, "⚙️ Sending restart command to Render...");
+    const workingMsg = await bot.sendMessage(adminId, "Sending restart command to Render...");
 
     try {
         const headers = {
@@ -6220,7 +6229,7 @@ bot.onText(/^\/unban$/, async (msg) => {
 });
 
 // --- NEW COMMAND: /updateall <botType> ---
-bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
+bot.onText(/^\/updateall (levanter|raganork|hermit)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
@@ -8255,16 +8264,23 @@ if (action === 'verify_join') {
             delete userStates[cid];
             userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
 
+            // --- 💡 START OF UPDATE 💡 ---
             await bot.editMessageText('Great! Which bot type would you like to deploy for your free trial?', {
                 chat_id: cid,
                 message_id: messageId,
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                        [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                        [ // Row 1
+                            { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
+                            { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
+                        ],
+                        [ // Row 2
+                            { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
+                        ]
                     ]
                 }
             });
+            // --- 💡 END OF UPDATE 💡 ---
 
         } else {
             await bot.answerCallbackQuery(q.id); 
@@ -8280,7 +8296,7 @@ if (action === 'verify_join') {
                 }
             });
         }
-    } catch (error) {
+    } catch (error) { 
         console.error("Error verifying channel membership:", error.message);
         await bot.answerCallbackQuery(q.id, {
             text: "Could not verify membership. Please contact an admin.",
@@ -8290,6 +8306,7 @@ if (action === 'verify_join') {
     }
     return;
 }
+
 
       if (action === 'start_deploy_after_payment') {
         const botType = payload; // Get the botType we saved in the callback_data
@@ -8974,8 +8991,14 @@ if (action === 'confirm_restore_app') {
 
       // Determine the default env vars for the bot type being restored
       const botTypeToRestore = selectedDeployment.bot_type || 'levanter';
-      const defaultVarsForRestore = (botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : levanterDefaultEnvVars) || {};
-
+      let defaultVarsForRestore;
+      if (botTypeToRestore === 'raganork') {
+          defaultVarsForRestore = raganorkDefaultEnvVars;
+      } else if (botTypeToRestore === 'hermit') {
+          defaultVarsForRestore = hermitDefaultEnvVars;
+      } else {
+          defaultVarsForRestore = levanterDefaultEnvVars;
+      }
       const combinedVarsForRestore = {
           ...defaultVarsForRestore,    // Apply type-specific defaults first
           ...selectedDeployment.config_vars, // Overlay with the saved config vars (these take precedence)
@@ -9132,9 +9155,12 @@ if (action === 'back_to_bapp_list') {
         message_id: q.message.message_id,
         reply_markup: {
             inline_keyboard: [
-                [
+                [ // Row 1
                     { text: 'Levanter', callback_data: 'bapp_select_type:levanter' },
                     { text: 'Raganork', callback_data: 'bapp_select_type:raganork' }
+                ],
+                [ // Row 2
+                    { text: 'Hermit', callback_data: 'bapp_select_type:hermit' }
                 ]
             ]
         }
@@ -9143,41 +9169,64 @@ if (action === 'back_to_bapp_list') {
     return; 
 }
 
+
   
   
   if (action === 'Referrals') {
-    // FIX 1: Get user and message details from the 'query' object, not 'msg'.
-    // The 'query' object is what you get from a button press.
-    const userId = query.from.id;
-    const chatId = query.message.chat.id;
-    const messageId = query.message.message_id;
+    // 1. Get user and message details
+    const userId = q.from.id.toString();
+    const chatId = q.message.chat.id;
+    const messageId = q.message.message_id;
 
-    // This creates the referral link using the user's ID.
-    // I've added "ref_" to make your referral links distinct.
-    const referralLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+    // 2. Create the referral link
+    const referralLink = `https://t.me/${botUsername}?start=${userId}`; // Use userId, not ref_userId
 
     await dbServices.updateUserActivity(userId);
 
-    const referralMessage = `
-*Your Referral Dashboard*
+    // 3. Fetch the list of referred users from the database
+    const referredUsersResult = await pool.query(
+        'SELECT referred_user_id, bot_name FROM user_referrals WHERE inviter_user_id = $1',
+        [userId]
+    );
+    const referredUsers = referredUsersResult.rows;
 
-Your unique referral link is:
-\`${referralLink}\`
+    // --- 🎨 DESIGN UPDATE START 🎨 ---
+    
+    // Build the text-art message using Markdown
+    let referralMessage = `*═══ YOUR REFERRALS ═══⊷*\n`;
+    referralMessage += `┃❃╭──────────────\n`;
+    referralMessage += `┃❃│ Share your link to earn rewards!\n`;
+    referralMessage += `┃❃│ \n`;
+    referralMessage += `┃❃│ *Your Link:*\n`;
+    referralMessage += `┃❃│ \`${referralLink}\`\n`; // Use backticks for easy copy
+    referralMessage += `┃❃│ \n`;
+    referralMessage += `┃❃│ *Your Rewards:*\n`;
+    referralMessage += `┃❃│ • *20 days* for a direct referral.\n`;
+    referralMessage += `┃❃│ • *7 days* for a 2nd-level referral.\n`;
+    referralMessage += `┃❃╰───────────────\n\n`;
 
-Share this link with your friends. When they use your link, you get rewarded!
-
-*Your Rewards:*
-- You get *20 days* added to your bot's expiration for each new user you invite.
-- You get an extra *7 days* if one of your invited users invites someone new.
-
-_Your referred users will be displayed here once they join._
-    `;
+    // Dynamically build the list of referred users
+    if (referredUsers.length > 0) {
+        referralMessage += `*Users you've successfully referred:*\n`;
+        for (const ref of referredUsers) {
+            try {
+                const user = await bot.getChat(ref.referred_user_id);
+                const userName = user.first_name || `User ${ref.referred_user_id}`;
+                referralMessage += `▪️ *${escapeMarkdown(userName)}* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
+            } catch (e) {
+                referralMessage += `▪️ *A user* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
+            }
+        }
+    } else {
+        referralMessage += `_You haven't referred any users yet._`;
+    }
+    // --- 🎨 DESIGN UPDATE END 🎨 ---
 
     try {
-        // FIX 2: Acknowledge the button press to stop the loading animation.
-        await bot.answerCallbackQuery(query.id);
+        // Acknowledge the button press
+        await bot.answerCallbackQuery(q.id);
 
-        // FIX 3: Edit the original message instead of sending a new one.
+        // Edit the original message
         await bot.editMessageText(referralMessage, {
             chat_id: chatId,
             message_id: messageId,
@@ -9185,11 +9234,10 @@ _Your referred users will be displayed here once they join._
             reply_markup: {
                 inline_keyboard: [
                     [
-                        // This share button is well-written, no changes needed here.
-                        { text: 'Share Your Link', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Check out this bot!')}` }
+                        // This share button will still work
+                        { text: 'Share Your Link', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
                     ],
                     [
-                        // Add a "Back" button for better navigation
                         { text: '« Back to More Features', callback_data: 'more_features_menu' }
                     ]
                 ]
@@ -9197,11 +9245,10 @@ _Your referred users will be displayed here once they join._
         });
 
     } catch (error) {
-        // This catch block prevents the bot from crashing if it can't edit the message
-        // (e.g., if the message is too old).
         console.error("Error editing message for referrals:", error);
     }
 }
+
 
 // --- REPLACE this entire block ---
 
@@ -10206,7 +10253,16 @@ if (action === 'confirm_session_update') {
     const { sessionId } = st.data;
 
     // ❗️ FIX: Determine session type and query only for matching bots.
-    const sessionType = sessionId.startsWith(LEVANTER_SESSION_PREFIX) ? 'levanter' : 'raganork';
+    let sessionType;
+    if (sessionId.startsWith(LEVANTER_SESSION_PREFIX)) {
+        sessionType = 'levanter';
+    } else if (sessionId.startsWith(RAGANORK_SESSION_PREFIX)) {
+        sessionType = 'raganork';
+    } else if (sessionId.startsWith(HERMIT_SESSION_PREFIX)) {
+        sessionType = 'hermit';
+    } else {
+        sessionType = 'unknown'; // Fallback
+    }
     const botsResult = await pool.query(
         "SELECT bot_name FROM user_bots WHERE user_id = $1 AND bot_type = $2",
         [cid, sessionType]
@@ -10268,8 +10324,9 @@ if (action === 'apply_session_update') {
     const botType = botTypeResult.rows[0]?.bot_type;
     const isLevanter = botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX);
     const isRaganork = botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX);
+    const isHermit = botType === 'hermit' && sessionId.startsWith(HERMIT_SESSION_PREFIX);
 
-    if (!isLevanter && !isRaganork) {
+    if (!isLevanter && !isRaganork && !isHermit) { // <-- ADDED HERMIT
         delete userStates[cid];
         return bot.editMessageText(`**Validation Error:** The session ID is not valid for your *${botType}* bot named *${escapeMarkdown(botName)}*.`, {
             chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
@@ -10562,8 +10619,6 @@ if (action === 'cancel_payment_and_deploy') {
 
 // REPLACE the existing "if (action === 'selectapp' || action === 'selectbot')" block with this one
 
-// ❗️ REPLACE this entire block in bot.on('callback_query', ...)
-
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
@@ -10575,8 +10630,9 @@ if (action === 'selectapp' || action === 'selectbot') {
     });
     
     // Get bot status from all our DB tables
+    // 💡 ADDED ub.bot_type to the query
     const dbBotInfo = (await pool.query(
-        'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status FROM user_deployments ud ' +
+        'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
         'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
         'WHERE ud.user_id=$1 AND ud.app_name=$2', 
         [cid, appName]
@@ -10584,6 +10640,7 @@ if (action === 'selectapp' || action === 'selectbot') {
 
     const dynoStatus = await dbServices.getDynoStatus(appName);
     if (dynoStatus === 'deleted' || dynoStatus === 'error') {
+        // This is an error state, so we don't use text art
         return bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
             chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
         });
@@ -10592,24 +10649,44 @@ if (action === 'selectapp' || action === 'selectbot') {
     let finalStatusText;
     let expirationCountdown = formatPreciseCountdown(dbBotInfo?.expiration_date);
     const keyboard = [];
+    
+    // 💡 Get bot_type for the header
+    const botType = (dbBotInfo?.bot_type || 'Bot').toUpperCase();
+    let message; // This will hold our new text-art message
 
     if (dbBotInfo?.paused_at) {
-        // --- NEW: Bot is PAUSED ---
+        // --- Bot is PAUSED ---
         finalStatusText = 'Paused';
         expirationCountdown += ' (Paused)';
         
-        message = `Manage app "*${appName}*".\n\n` +
-                  `Status: *${finalStatusText}*\n` +
-                  `Expires in: *${expirationCountdown}*\n\n` +
-                  `This bot is turned off and its expiration timer is paused.`;
+        // --- 🎨 DESIGN UPDATE ---
+        message = "```\n";
+        message += ` ═══ ${botType} ═══⊷\n`;
+        message += ` ┃❃╭──────────────\n`;
+        message += ` ┃❃│ Bot Name : ${appName}\n`;
+        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
+        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
+        message += ` ┃❃╰───────────────\n\n`;
+        message += ` This bot is turned off and its timer is paused.`;
+        message += "\n```";
+        // --- 🎨 END DESIGN ---
+
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
         
     } else if (dynoStatus === 'on') {
         // --- Bot is ON ---
         finalStatusText = (dbBotInfo?.wpp_status === 'logged_out') ? 'Logged Out' : 'Connected';
-        message = `Manage app "*${appName}*".\n\n` +
-                  `Status: *${finalStatusText}*\n` +
-                  `Expires in: *${expirationCountdown}*`;
+        
+        // --- 🎨 DESIGN UPDATE ---
+        message = "```\n";
+        message += ` ═══ ${botType} ═══⊷\n`;
+        message += ` ┃❃╭──────────────\n`;
+        message += ` ┃❃│ Bot Name : ${appName}\n`;
+        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
+        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
+        message += ` ┃❃╰───────────────`;
+        message += "\n```";
+        // --- 🎨 END DESIGN ---
         
         const mainRow = [
             { text: 'Info', callback_data: `info:${appName}` },
@@ -10640,10 +10717,19 @@ if (action === 'selectapp' || action === 'selectbot') {
     } else { 
         // --- Bot is OFF (but not paused, e.g., crashed) ---
         finalStatusText = 'Off';
-        message = `Manage app "*${appName}*".\n\n` +
-                  `Status: *${finalStatusText}*\n` +
-                  `Expires in: *${expirationCountdown}*\n\n` +
-                  `This bot is currently turned off.`;
+        
+        // --- 🎨 DESIGN UPDATE ---
+        message = "```\n";
+        message += ` ═══ ${botType} ═══⊷\n`;
+        message += ` ┃❃╭──────────────\n`;
+        message += ` ┃❃│ Bot Name : ${appName}\n`;
+        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
+        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
+        message += ` ┃❃╰───────────────\n\n`;
+        message += ` This bot is currently turned off.`;
+        message += "\n```";
+        // --- 🎨 END DESIGN ---
+
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
     }
     
@@ -10652,12 +10738,13 @@ if (action === 'selectapp' || action === 'selectbot') {
     return bot.editMessageText(message, {
       chat_id: cid,
       message_id: messageId,
-      parse_mode: 'Markdown',
+      parse_mode: 'Markdown', // This is required for the code block
       reply_markup: {
         inline_keyboard: keyboard
       }
     });
 }
+
 
 
 
@@ -11181,26 +11268,38 @@ if (action === 'info') {
 }
 
     if (action === 'needs_session') {
-        const botType = payload;
-        const st = userStates[cid];
-        if (!st) return; // State check
+    const botType = payload;
+    const st = userStates[cid];
+    if (!st) return; // State check
 
-        let sessionPrompt = `Please use the button below to get your session ID for *${botType.toUpperCase()}*.`;
-        const sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+    let sessionPrompt = `Please use the button below to get your session ID for *${botType.toUpperCase()}*.`;
 
-        await bot.editMessageText(sessionPrompt, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Get Session ID', url: sessionUrl }],
-                    [{ text: "I have my Session ID now", callback_data: `has_session:${botType}` }]
-                ]
-            }
-        });
-        return;
+    // --- 💡 START OF FIX (Adding Hermit) 💡 ---
+    let sessionUrl;
+    if (botType === 'raganork') {
+        sessionUrl = RAGANORK_SESSION_SITE_URL;
+    } else if (botType === 'hermit') {
+        sessionUrl = HERMIT_SESSION_SITE_URL;
+    } else {
+        // Default to Levanter
+        sessionUrl = LEVANTER_SESSION_SITE_URL; 
     }
+    // --- 💡 END OF FIX 💡 ---
+
+    await bot.editMessageText(sessionPrompt, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Get Session ID', url: sessionUrl }],
+                [{ text: "I have my Session ID now", callback_data: `has_session:${botType}` }]
+            ]
+        }
+    });
+    return;
+}
+
 
 if (action === 'confirmdelete') {
     let appToDelete = payload;
@@ -11379,86 +11478,107 @@ if (action === 'confirmdelete') {
       });
   }
 
-         if (action === 'setvar') {
-        const appName = payload;
-        const messageId = q.message.message_id;
+  if (action === 'setvar') {
+    const appName = payload;
+    const messageId = q.message.message_id;
 
-        const st = userStates[cid];
-        if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
-            await bot.sendMessage(cid, "This menu has expired. Please select an app again.");
-            delete userStates[cid];
+    const st = userStates[cid];
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+        await bot.sendMessage(cid, "This menu has expired. Please select an app again.");
+        delete userStates[cid];
+        return;
+    }
+
+    let configVars = {};
+    try {
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+        configVars = configRes.data;
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
             return;
         }
-
-        let configVars = {};
-        try {
-            const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
-            configVars = configRes.data;
-        } catch (e) {
-            if (e.response && e.response.status === 404) {
-                await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
-                return;
-            }
-            return bot.editMessageText(`Error fetching config variables: ${e.response?.data?.message || e.message}`, { chat_id: cid, message_id: messageId });
-        }
-        
-        // --- START OF THE FIX: Updated helper function and message string ---
-        function formatVarValue(val, maxLength = 25) {
-            if (!val) return '`Not Set`';
-            if (val === 'p') return '`enabled (anti-delete)`';
-            if (val === 'no-dl') return '`enabled (no download)`';
-            
-            let displayVal = String(val);
-            if (displayVal.length > maxLength) {
-                displayVal = displayVal.substring(0, maxLength) + '...';
-            }
-            return `\`${escapeMarkdown(displayVal)}\``;
-        }
-
-        const ownerId = await dbServices.getUserIdByBotName(appName);
-        if (!ownerId) {
-            return bot.editMessageText(`Error: Could not find the owner for "${appName}".`, { chat_id: cid, message_id: messageId });
-        }
-
-        const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [ownerId, appName])).rows[0]?.bot_type || 'levanter';
-        const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
-        const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX';
-
-        let varInfo = `*Current Vars for ${appName} (${botTypeForSetVar.toUpperCase()}):*\n` +
-                     `\`SESSION_ID\`: ${formatVarValue(configVars.SESSION_ID, 15)}\n` +
-                     `\`${statusViewVar}\`: ${formatVarValue(configVars[statusViewVar])}\n` +
-                     `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
-                     `\`${prefixVar}\`: ${formatVarValue(configVars[prefixVar])}\n` +
-                     `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
-                     `\`SUDO\`: ${formatVarValue(configVars.SUDO, 20)}\n`;
-
-        const keyboard = [
-            [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
-            [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` }, { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
-            [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` }, { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }]
-        ];
-        
-        if (botTypeForSetVar === 'levanter') {
-            varInfo += `\`STATUS_VIEW_EMOJI\`: ${formatVarValue(configVars.STATUS_VIEW_EMOJI)}\n`;
-            keyboard.push([
-                { text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` },
-                { text: 'STATUS_VIEW_EMOJI', callback_data: `varselect:STATUS_VIEW_EMOJI:${appName}:${botTypeForSetVar}` }
-            ]);
-        } else {
-            keyboard.push([{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }]);
-        }
-
-        keyboard.push([{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }]);
-        keyboard.push([{ text: 'Back', callback_data: `selectapp:${appName}` }]);
-        // --- END OF THE FIX ---
-
-        varInfo += `\nSelect a variable to set:`;
-
-        return bot.editMessageText(varInfo, {
-          chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: keyboard }
-        });
+        return bot.editMessageText(`Error fetching config variables: ${e.response?.data?.message || e.message}`, { chat_id: cid, message_id: messageId });
     }
+    
+    // Helper function to format the value string
+    function formatVarValue(val, maxLength = 20) {
+        if (!val) return 'Not Set';
+        if (val === 'p') return 'enabled (anti-delete)';
+        if (val === 'no-dl') return 'enabled (no download)';
+        
+        let displayVal = String(val);
+        if (displayVal.length > maxLength) {
+            displayVal = displayVal.substring(0, maxLength) + '...';
+        }
+        return displayVal;
+    }
+
+    const ownerId = await dbServices.getUserIdByBotName(appName);
+    if (!ownerId) {
+        return bot.editMessageText(`Error: Could not find the owner for "${appName}".`, { chat_id: cid, message_id: messageId });
+    }
+
+    // --- 💡 START OF HERMIT LOGIC FIX 💡 ---
+    const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [ownerId, appName])).rows[0]?.bot_type || 'levanter';
+    
+    let statusViewVar;
+    let prefixVar;
+
+    if (botTypeForSetVar === 'raganork') {
+        statusViewVar = 'AUTO_READ_STATUS';
+        prefixVar = 'HANDLERS';
+    } else { 
+        // Levanter and Hermit both use these
+        statusViewVar = 'AUTO_STATUS_VIEW';
+        prefixVar = 'PREFIX';
+    }
+    // --- 💡 END OF HERMIT LOGIC FIX 💡 ---
+
+    // --- 🎨 DESIGN UPDATE START 🎨 ---
+    // Build the message inside a code block (```) for perfect formatting
+    let varInfo = "```\n"; // Start code block
+    varInfo += ` ═══ ${botTypeForSetVar.toUpperCase()} VARS ═══⊷\n`;
+    varInfo += ` ┃❃╭──────────────\n`;
+    varInfo += ` ┃❃│ App Name    : ${appName}\n`;
+    varInfo += ` ┃❃│ SESSION_ID  : ${formatVarValue(configVars.SESSION_ID, 15)}\n`;
+    varInfo += ` ┃❃│ ${statusViewVar.padEnd(14, ' ')}: ${formatVarValue(configVars[statusViewVar])}\n`;
+    varInfo += ` ┃❃│ ALWAYS_ONLINE : ${formatVarValue(configVars.ALWAYS_ONLINE)}\n`;
+    varInfo += ` ┃❃│ ${prefixVar.padEnd(14, ' ')}: ${formatVarValue(configVars[prefixVar])}\n`;
+    varInfo += ` ┃❃│ ANTI_DELETE : ${formatVarValue(configVars.ANTI_DELETE)}\n`;
+    varInfo += ` ┃❃│ SUDO        : ${formatVarValue(configVars.SUDO, 20)}\n`;
+
+    const keyboard = [
+        [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
+        [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` }, { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
+        [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` }, { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }]
+    ];
+    
+    // Add bot-specific variables and complete the text-art box
+    if (botTypeForSetVar === 'levanter' || botTypeForSetVar === 'hermit') {
+        varInfo += ` ┃❃│ STATUS_VIEW_EMOJI : ${formatVarValue(configVars.STATUS_VIEW_EMOJI)}\n`;
+        keyboard.push([
+            { text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` },
+            { text: 'STATUS_VIEW_EMOJI', callback_data: `varselect:STATUS_VIEW_EMOJI:${appName}:${botTypeForSetVar}` }
+        ]);
+    } else { // Raganork
+        keyboard.push([{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }]);
+    }
+    
+    varInfo += ` ┃❃╰───────────────\n\n`;
+    varInfo += ` Select a variable to set:`;
+    varInfo += "\n```"; // End code block
+    // --- 🎨 DESIGN UPDATE END 🎨 ---
+
+    keyboard.push([{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }]);
+    keyboard.push([{ text: 'Back', callback_data: `selectapp:${appName}` }]);
+
+    return bot.editMessageText(varInfo, {
+      chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard }
+    });
+}
+
 
 
 
@@ -11686,20 +11806,23 @@ if (action === 'setvarbool') {
 
   const currentBotType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter'; 
 
+  // This logic correctly handles Raganork's different var names
   const actualVarNameForHeroku = (currentBotType === 'raganork' && varKeyFromCallback === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' :
                                  (currentBotType === 'raganork' && varKeyFromCallback === 'PREFIX') ? 'HANDLERS' : varKeyFromCallback;
 
-  // --- THIS IS THE FIX ---
+  // --- 💡 START OF FIX (Adding Hermit) 💡 ---
   if (actualVarNameForHeroku === 'AUTO_STATUS_VIEW' || actualVarNameForHeroku === 'AUTO_READ_STATUS') {
-      if (currentBotType === 'levanter') {
+      if (currentBotType === 'levanter' || currentBotType === 'hermit') {
+          // Levanter and Hermit use 'no-dl' for 'on'
           newVal = flagVal ? 'no-dl' : 'false';
       } else if (currentBotType === 'raganork') {
+          // Raganork uses 'true'
           newVal = flagVal ? 'true' : 'false';
       }
   }
-  // --- END OF FIX ---
+  // --- 💡 END OF FIX 💡 ---
   else if (actualVarNameForHeroku === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
-  else newVal = flagVal ? 'true' : 'false';
+  else newVal = flagVal ? 'true' : 'false'; // Covers ALWAYS_ONLINE
 
   try {
     await bot.sendChatAction(cid, 'typing');
@@ -11721,7 +11844,7 @@ if (action === 'setvarbool') {
     await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, currentBotType); 
 
     const baseWaitingText = `Updated *${actualVarNameForHeroku}* for "*${appName}*". Waiting for bot status confirmation...`; 
-    await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+    await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { // <-- Swapped emoji position
         chat_id: cid,
         message_id: updateMsg.message_id,
         parse_mode: 'Markdown'
@@ -11789,9 +11912,8 @@ if (action === 'setvarbool') {
 }
 
 
-  // bot.js (Inside bot.on('callback_query', async q => { ... }))
 
-// bot.js (Inside bot.on('callback_query', async q => { ... }))
+  // bot.js (Inside bot.on('callback_query', async q => { ... }))
 
 if (action === 'change_session') {
     const appName = payload;
@@ -11807,22 +11929,26 @@ if (action === 'change_session') {
     delete userStates[cid];
     const botTypeForChangeSession = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
     
-    // --- START OF FIXED IMAGE/PHOTO LOGIC ---
-    const isRaganork = botTypeForChangeSession === 'raganork';
-    
-    // Select the correct image URL based on bot type
-    const imageGuideUrl = isRaganork
-        ? 'https://files.catbox.moe/lqk3gj.jpeg' // Raganork Image URL
-        : 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
-        
-    const sessionSiteUrl = isRaganork
-        ? RAGANORK_SESSION_SITE_URL // Assuming this constant is defined
-        : LEVANTER_SESSION_SITE_URL; // Assuming this constant is defined
-        
-    const prefix = isRaganork 
-        ? RAGANORK_SESSION_PREFIX // Assuming this constant is defined
-        : LEVANTER_SESSION_PREFIX; // Assuming this constant is defined
+    // --- START OF UPDATED IMAGE/PHOTO LOGIC ---
+    let imageGuideUrl;
+    let sessionSiteUrl;
+    let prefix;
 
+    if (botTypeForChangeSession === 'raganork') {
+        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; // Raganork Image URL
+        sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
+        prefix = RAGANORK_SESSION_PREFIX;
+    } else if (botTypeForChangeSession === 'hermit') {
+        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Using Levanter image as a placeholder for Hermit
+        sessionSiteUrl = HERMIT_SESSION_SITE_URL;
+        prefix = HERMIT_SESSION_PREFIX;
+    } else { // Default to Levanter
+        imageGuideUrl = 'https.files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
+        sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
+        prefix = LEVANTER_SESSION_PREFIX;
+    }
+    // --- END OF UPDATED IMAGE/PHOTO LOGIC ---
+        
     const sessionPrompt = `Please send the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
     
     userStates[cid] = {
@@ -11849,7 +11975,7 @@ if (action === 'change_session') {
         }
     });
     
-    // 2. 🚨 FIX: Delete the original message that contained the button
+    // 2. Delete the original message that contained the button
     await bot.deleteMessage(cid, messageIdToDelete)
         .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
     
@@ -11857,6 +11983,7 @@ if (action === 'change_session') {
     
     return;
 }
+
 
   
   if (action === 'admin_delete_trial_app') {
@@ -11901,7 +12028,7 @@ if (action === 'change_session') {
 
   // AROUND LINE 1400 (inside bot.on('callback_query', async q => { ... }))
 
-  if (action === 'redeploy_app') {
+    if (action === 'redeploy_app') {
     const appName = payload;
     const messageId = q.message.message_id;
 
@@ -11915,7 +12042,7 @@ if (action === 'change_session') {
 
     // 2. Check authorization: current user (cid) must be ADMIN OR the actual owner
     const isAdmin = cid === ADMIN_ID; // Your ADMIN_ID is already defined
-    const isOwner = actualOwnerId === cid;
+    const isOwner = actualOwnerId.toString() === cid; // Use .toString() for safety
 
     if (!isAdmin && !isOwner) { // Only admin or owner can redeploy
         await bot.editMessageText("You are not authorized to redeploy this app.", { chat_id: cid, message_id: messageId });
@@ -11935,10 +12062,20 @@ if (action === 'change_session') {
 
     let animateIntervalId = null;
     try {
+        // --- 💡 START OF UPDATE (Adding Hermit) 💡 ---
+        let repoUrl;
+        if (botTypeForRedeploy === 'raganork') {
+            repoUrl = GITHUB_RAGANORK_REPO_URL;
+        } else if (botTypeForRedeploy === 'hermit') {
+            repoUrl = GITHUB_HERMIT_REPO_URL;
+        } else {
+            repoUrl = GITHUB_LEVANTER_REPO_URL;
+        }
+        // --- 💡 END OF UPDATE 💡 ---
+
         const bres = await axios.post(
             `https://api.heroku.com/apps/${appName}/builds`,
-            // This line already correctly uses botTypeForRedeploy, so no change needed here.
-            { source_blob: { url: `${botTypeForRedeploy === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL}/tarball/main` } },
+            { source_blob: { url: `${repoUrl}/tarball/main` } }, // <-- Use the new repoUrl variable
             {
                 headers: {
                     Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -12029,6 +12166,7 @@ if (action === 'change_session') {
     }
     return;
   }
+
 
 
   if (action === 'back_to_app_list') {
