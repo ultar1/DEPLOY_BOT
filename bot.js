@@ -7467,7 +7467,6 @@ if (text === 'My Bots') {
 
 
 
-// Add this handler in section 10 (Message handler for buttons & state machine)
 if (text === 'Referrals') {
     const userId = msg.chat.id.toString();
     const referralLink = `https://t.me/${botUsername}?start=${userId}`;
@@ -7480,34 +7479,37 @@ if (text === 'Referrals') {
     );
     const referredUsers = referredUsersResult.rows;
 
-    let referralMessage = `
-*Your Referral Dashboard*
-
-Your unique referral link is:
-\`${referralLink}\`
-
-Share this link with your friends. When they deploy a bot using your link, you get rewarded!
-
-*Your Rewards:*
-- You get *20 days* added to your bot's expiration for each new user you invite.
-- You get an extra *7 days* if one of your invited users invites someone new.
-    `;
+    // --- 🎨 DESIGN UPDATE START 🎨 ---
+    
+    // Build the text-art message using Markdown
+    let referralMessage = `*═══ YOUR REFERRALS ═══⊷*\n`;
+    referralMessage += `┃❃╭──────────────\n`;
+    referralMessage += `┃❃│ Share your link to earn rewards!\n`;
+    referralMessage += `┃❃│ \n`;
+    referralMessage += `┃❃│ *Your Link:*\n`;
+    referralMessage += `┃❃│ \`${referralLink}\`\n`; // Use backticks for easy copy
+    referralMessage += `┃❃│ \n`;
+    referralMessage += `┃❃│ *Your Rewards:*\n`;
+    referralMessage += `┃❃│ • *20 days* for a direct referral.\n`;
+    referralMessage += `┃❃│ • *7 days* for a 2nd-level referral.\n`;
+    referralMessage += `┃❃╰───────────────\n\n`;
+    // --- 🎨 DESIGN UPDATE END 🎨 ---
 
     // ✅ FIX: Dynamically build the list of referred users
     if (referredUsers.length > 0) {
-        referralMessage += `\n*Users you've successfully referred:*\n`;
+        referralMessage += `*Users you've successfully referred:*\n`;
         for (const ref of referredUsers) {
             try {
                 const user = await bot.getChat(ref.referred_user_id);
                 const userName = user.first_name || `User ${ref.referred_user_id}`;
-                referralMessage += `- *${escapeMarkdown(userName)}* (Deployed: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
+                referralMessage += `▪️ *${escapeMarkdown(userName)}* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
             } catch (e) {
                 // Fallback in case user info can't be fetched
-                referralMessage += `- *A user* (Deployed: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
+                referralMessage += `▪️ *A user* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
             }
         }
     } else {
-        referralMessage += `\n_You haven't referred any users yet._`;
+        referralMessage += `_You haven't referred any users yet._`;
     }
 
     await bot.sendMessage(userId, referralMessage, { 
@@ -7521,6 +7523,7 @@ Share this link with your friends. When they deploy a bot using your link, you g
         }
     });
 }
+
 
 
 
@@ -7859,13 +7862,25 @@ if (st && st.step === 'AWAITING_APP_NAME') {
                 isValidSession = true;
             }
             errorMessage += ` Your session ID must start with \`${requiredPrefix}\` and be at least 10 characters long, or be empty to clear.`;
+        
         } else if (botType === 'raganork') {
             requiredPrefix = RAGANORK_SESSION_PREFIX;
             if (newVal.startsWith(requiredPrefix) && newVal.length >= 10) {
                 isValidSession = true;
             }
             errorMessage += ` Your Raganork session ID must start with \`${requiredPrefix}\` and be at least 10 characters long, or be empty to clear.`;
+        
+        // --- 💡 START OF FIX (Adding Hermit) 💡 ---
+        } else if (botType === 'hermit') {
+            requiredPrefix = HERMIT_SESSION_PREFIX;
+            if (newVal.startsWith(requiredPrefix) && newVal.length >= 10) {
+                isValidSession = true;
+            }
+            errorMessage += ` Your Hermit session ID must start with \`${requiredPrefix}\` and be at least 10 characters long, or be empty to clear.`;
+        // --- 💡 END OF FIX 💡 ---
+        
         } else {
+            // This is the error you were seeing
             errorMessage = 'Unknown bot type in state. Please start the variable update process again.';
         }
 
@@ -7909,7 +7924,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
 
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+      await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { // Emoji at end
           chat_id: cid,
           message_id: updateMsg.message_id
       });
@@ -7969,7 +7984,8 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
-  }
+}
+
   else {
         // If no other command or state matched, send it to Gemini
         handleFallbackWithGemini(cid, text);
