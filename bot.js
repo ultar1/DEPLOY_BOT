@@ -8176,7 +8176,7 @@ if (action === 'select_deploy_type') {
         sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
     } else if (botType === 'hermit') {
         prefix = HERMIT_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Using Levanter image as a placeholder for Hermit
+        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; // Using Levanter image as a placeholder for Hermit
         sessionSiteUrl = HERMIT_SESSION_SITE_URL;
     } else { // Default to Levanter
         prefix = LEVANTER_SESSION_PREFIX;
@@ -9997,20 +9997,40 @@ if (action === 'select_renewal') {
       const [step, value] = [payload, extra];
 
       if (step === 'autostatus') {
-          st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
+          // --- 💡 START OF FIX: Add Raganork/Hermit Logic 💡 ---
+          const botType = st.data.botType;
+          if (botType === 'levanter') {
+            st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
+          } else if (botType === 'raganork') {
+            st.data.AUTO_STATUS_VIEW = (value === 'true').toString(); // 'true' or 'false'
+          } else if (botType === 'hermit') {
+            st.data.AUTO_STATUS_VIEW = (value === 'true').toString(); // 'true' or 'false'
+          }
+          // --- 💡 END OF FIX 💡 ---
 
-          const confirmationText = ` *Deployment Configuration*\n\n` +
-                                   `*App Name:* \`${st.data.APP_NAME}\`\n` +
-                                   `*Session ID:* \`${st.data.SESSION_ID.slice(0, 15)}...\`\n` +
-                                   `*Bot Type:* \`${st.data.botType.toUpperCase()}\`\n` + // Display bot type
-                                   `*Auto Status:* \`${st.data.AUTO_STATUS_VIEW}\`\n\n` +
-                                   `Ready to proceed?`;
+          // --- 🎨 DESIGN UPDATE START 🎨 ---
+          const session = st.data.SESSION_ID.slice(0, 15) + '...';
+          const appName = st.data.APP_NAME;
+          const statusView = st.data.AUTO_STATUS_VIEW;
+
+          // Build the message inside a code block (```) for perfect formatting
+          let confirmationText = "```\n"; // Start code block
+          confirmationText += ` ═══ ${botType.toUpperCase()} ═══⊷\n`;
+          confirmationText += ` ┃❃╭──────────────\n`;
+          confirmationText += ` ┃❃│ Bot Type    : ${botType.toUpperCase()}\n`;
+          confirmationText += ` ┃❃│ App Name    : ${appName}\n`;
+          confirmationText += ` ┃❃│ Session     : ${session}\n`;
+          confirmationText += ` ┃❃│ Auto Status : ${statusView}\n`;
+          confirmationText += ` ┃❃╰───────────────\n\n`;
+          confirmationText += ` Ready to proceed?`;
+          confirmationText += "\n```"; // End code block
+          // --- 🎨 DESIGN UPDATE END 🎨 ---
 
           const confirmationKeyboard = {
               reply_markup: {
                   inline_keyboard: [
                       [
-                          { text: 'Confirm & Deploy', callback_data: `setup:startbuild` }, // Changed button text
+                          { text: 'Confirm & Deploy', callback_data: `setup:startbuild` },
                           { text: 'Cancel', callback_data: `setup:cancel` }
                       ]
                   ]
@@ -10020,19 +10040,22 @@ if (action === 'select_renewal') {
           await bot.editMessageText(confirmationText, {
               chat_id: cid,
               message_id: st.message_id,
-              parse_mode: 'Markdown',
+              parse_mode: 'Markdown', // Use Markdown for the code block
               ...confirmationKeyboard
           });
       }
 
+      // --- This part remains the same, but we add botType to the build call ---
       if (step === 'startbuild') {
           await bot.editMessageText('Configuration confirmed. Initiating deployment...', {
               chat_id: cid,
               message_id: st.message_id
           });
-          delete userStates[cid]; // Clear user state before starting build
+          const deployData = st.data; // Get all data
+          delete userStates[cid]; // Clear user state
+          
           // Pass botType to buildWithProgress
-          await dbServices.buildWithProgress(cid, st.data, st.data.isFreeTrial, false, st.data.botType); // Use dbServices
+          await dbServices.buildWithProgress(cid, deployData, deployData.isFreeTrial, false, deployData.botType);
       }
 
       if (step === 'cancel') {
@@ -10044,6 +10067,7 @@ if (action === 'select_renewal') {
       }
       return;
   }
+
 
 
   if (action === 'genkeyuses') {
@@ -10247,7 +10271,7 @@ if (action === 'apply_session_update') {
 
     if (!isLevanter && !isRaganork) {
         delete userStates[cid];
-        return bot.editMessageText(`❌ **Validation Error:** The session ID is not valid for your *${botType}* bot named *${escapeMarkdown(botName)}*.`, {
+        return bot.editMessageText(`**Validation Error:** The session ID is not valid for your *${botType}* bot named *${escapeMarkdown(botName)}*.`, {
             chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
         });
     }
