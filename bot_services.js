@@ -1794,19 +1794,29 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 
 
         // --- Step 3: Set Buildpacks ---
-        await herokuApi.put(
-          `/apps/${appName}/buildpack-installations`,
-          {
-            // ✅ LOGIC FILLED IN
-            updates: [
-              { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-              { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
-              { buildpack: 'heroku/nodejs' }
-            ]
-          },
-          { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } } // Typo fixed
-        );
+                // --- Step 3: Set Buildpacks ---
+        if (botType !== 'hermit') {
+            // This will only run for Levanter and Raganork
+            console.log(`[Build] Setting buildpacks for ${botType} bot: ${appName}`);
+            await herokuApi.put(
+              `/apps/${appName}/buildpack-installations`,
+              {
+                updates: [
+                  { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+                  { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+                  { buildpack: 'heroku/nodejs' }
+                ]
+              },
+              { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+            );
+        } else {
+            // If it's Hermit, just log the skip
+            console.log(`[Build] Skipping buildpack installation for Hermit bot: ${appName}`);
+        }
+        
+        // This must be outside the 'if' block so the animation always stops
         clearInterval(primaryAnimateIntervalId);
+
 
         // --- Step 4: Set Environment Variables ---
         await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
@@ -2207,22 +2217,31 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         }
         // --- End of NEON LOGIC Integration ---
         
-// ... (rest of the code continues: buildpacks, config vars, trigger build) ...
-
-
-
                 // --- Step 3: Set Buildpacks ---
-        await herokuApi.put(
-          `/apps/${appName}/buildpack-installations`,
-          {
-            updates: [
-              { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-              { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
-              { buildpack: 'heroku/nodejs' }
-            ]
-          },
-          { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
+        if (botType !== 'hermit') {
+            // This will only run for Levanter and Raganork
+            console.log(`[Build] Setting buildpacks for ${botType} bot: ${appName}`);
+            await herokuApi.put(
+              `/apps/${appName}/buildpack-installations`,
+              {
+                updates: [
+                  { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+                  { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+                  { buildpack: 'heroku/nodejs' }
+                ]
+              },
+              { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+            );
+        } else {
+            // If it's Hermit, just log the skip
+            console.log(`[Build] Skipping buildpack installation for Hermit bot: ${appName}`);
+        }
+        
+        // This must be outside the 'if' block so the animation always stops
+        clearInterval(primaryAnimateIntervalId);
+
+        // --- Step 4: Set Environment Variables ---
+
 
 
         // --- Step 4: Set Environment Variables ---
