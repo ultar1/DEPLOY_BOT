@@ -11955,7 +11955,7 @@ if (action === 'change_session') {
         sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
         prefix = RAGANORK_SESSION_PREFIX;
     } else if (botTypeForChangeSession === 'hermit') {
-        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Using Levanter image as a placeholder for Hermit
+        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; // Using Levanter image as a placeholder for Hermit
         sessionSiteUrl = HERMIT_SESSION_SITE_URL;
         prefix = HERMIT_SESSION_PREFIX;
     } else { // Default to Levanter
