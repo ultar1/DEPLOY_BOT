@@ -139,7 +139,7 @@ const TELEGRAM_CHANNEL_ID = '-1002892034574';
 
 const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
-const GITHUB_HERMIT_REPO_URL = 'https://github.com/ultar1/hermit-bot'; 
+const GITHUB_HERMIT_REPO_URL = 'https://github.com/A-d-i-t-h-y-a-n/hermit-bot'; 
 
 const SUPPORT_USERNAME = '@staries1';
 const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
