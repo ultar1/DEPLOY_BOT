@@ -572,7 +572,7 @@ const NEON_ACCOUNTS = [
     active_db_limit: 3,
     api_key: 'napi_yuf5uz71h43oveqy8xyt97nf2e1f1k944phcsot5sxsag25ubgh9l4ewrs7lvtku',
     project_id: 'tiny-dew-43326548',
-    branch_id: 'br-frosty-moon-ahh0tazs',
+    branch_id: 'br-frosty-meadow-ahb7ukdp',
     db_host: 'ep-frosty-moon-ahh0tazs-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_VaEzLBGD1yI6'
@@ -583,7 +583,7 @@ const NEON_ACCOUNTS = [
     active_db_limit: 3,
     api_key: 'napi_518h4ge1ospxj0xf3lgqmq9zt4nu9uj2z703oun6t7mfxooy1ktlegc37oymnn4k',
     project_id: 'summer-violet-35118232',
-    branch_id: 'br-calm-hat-a4e6yync',
+    branch_id: 'br-jolly-leaf-a43ndr3s',
     db_host: 'ep-calm-hat-a4e6yync-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_uyesMD04hnwU'
@@ -594,7 +594,7 @@ const NEON_ACCOUNTS = [
     active_db_limit: 3,
     api_key: 'napi_a934v4doo5h4zxcqe7jgi9xwlk4mi14062wcy9r6ecogjoc7pf2zcbvlqftv83as',
     project_id: 'summer-violet-50741169',
-    branch_id: 'br-shy-feather-a4svhn3t',
+    branch_id: 'br-aged-wind-a4n89qi5',
     db_host: 'ep-shy-feather-a4svhn3t-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_W9pAaNwKzQV3'
@@ -605,7 +605,7 @@ const NEON_ACCOUNTS = [
     active_db_limit: 3,
     api_key: 'napi_gj3er8nxa5gdt855ojwn9wtmqupixzmldi908sn7ze3f6lwcy0tmsp594q47azr4',
     project_id: 'fancy-violet-69350329',
-    branch_id: 'br-plain-bonus-a40kyhby',
+    branch_id: 'br-fancy-cloud-a4f8typt',
     db_host: 'ep-plain-bonus-a40kyhby-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_Waf7KP9zBAno'
