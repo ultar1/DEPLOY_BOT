@@ -5197,7 +5197,6 @@ bot.onText(/^\/exp$/, async (msg) => {
 
 
 // In bot.js, replace your entire bot.onText(/^\/dbstats$/, async (msg) => { ... }) function with this:
-
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -5207,8 +5206,9 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     // --- Helper function to fetch stats for one account ---
     async function getNeonAccountStats(accountConfig) {
         const accountId = accountConfig.id;
-        // CRITICAL FIX: The effective USER limit is 2, derived from the business rule.
-        const USER_DB_LIMIT = 2; 
+        // --- 💡 START OF FIX: Changed limit from 2 to 1 💡 ---
+        const USER_DB_LIMIT = 1; 
+        // --- 💡 END OF FIX 💡 ---
         
         const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}`;
         const dbsUrl = `${apiUrl}/databases`;
@@ -5216,7 +5216,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
 
         try {
-            // Fetch DB list and Branch usage concurrently
             const [dbsResponse, branchResponse] = await Promise.all([
                 axios.get(dbsUrl, { headers }),
                 axios.get(apiUrl, { headers })
@@ -5227,11 +5226,10 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
             const logicalSizeMB = branchData.logical_size ? (branchData.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
             
-            // Filter out the default 'neondb'
             const userDBs = dbList.filter(db => db.name !== 'neondb');
             const userDBCount = userDBs.length; 
             
-            // CRITICAL FIX: Calculate slots left based on the fixed USER_DB_LIMIT of 2
+            // This calculation now uses the 1-slot limit
             const slotsLeft = USER_DB_LIMIT - userDBCount; 
 
             return {
@@ -5268,8 +5266,9 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     let totalUserDBs = 0; 
     let totalSlotsLeft = 0; 
     const MAX_STORAGE_MB_PER_ACCOUNT = 512; 
-    // CRITICAL FIX: Total Capacity is strictly N * 2
-    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * 2; 
+    // --- 💡 START OF FIX: Total Capacity is now N * 1 💡 ---
+    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * 1; 
+    // --- 💡 END OF FIX 💡 ---
     let accountsWithCapacity = 0;
     
     let dbCounter = 1;
@@ -5281,18 +5280,14 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         
         if (result.success) {
             
-            // Accumulate Global Totals
             totalUserDBs += result.userDBCount; 
-            // CRITICAL FIX: Accumulate actual slots left (0 or more)
             totalSlotsLeft += Math.max(0, result.slotsLeft); 
             totalStorageUsedMB += parseFloat(result.storageUsed || 0); 
 
-            // Check if account has space based on fixed limit
             if (result.slotsLeft > 0) { 
                  accountsWithCapacity++;
             }
             
-            // Build Consolidated List
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
                     const dbNameSanitized = db.name.replace(/-/g, '_'); 
@@ -5304,7 +5299,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
                 });
             }
         } else {
-            // Log API failure for the admin
             consolidatedDBListMessage += `Account ${accountId} failed to retrieve data. Error: ${escapeHTML(result.error || 'Unknown API Error').substring(0, 50)}...\n\n`;
         }
     }
@@ -5321,7 +5315,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     combinedMessage += `\n========================================\n`;
     combinedMessage += `<b>GLOBAL RESOURCE SUMMARY</b>\n`;
     
-    // CRITICAL FIX: Display correct calculated numbers
     combinedMessage += `Total Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b> (Total DBs Capacity)\n`;
     combinedMessage += `Total Active User DBs: <b>${totalUserDBs}</b>\n`;
     combinedMessage += `Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
