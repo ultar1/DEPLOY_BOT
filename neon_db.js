@@ -622,7 +622,52 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-mute-feather-adjoyz68-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_7lTVJzOAnWe6'
+},
+
+  {
+    id: 57,
+    active_db_limit: 2,
+    api_key: 'napi_ssvl622onzd5cq4q46atbqywc0b9xtan8lo2qfiu474x16emkhftmho6wyh00n9y',
+    project_id: 'misty-frog-05896175',
+    branch_id: 'br-solitary-pond-ahozjue5',
+    db_host: 'ep-tiny-frost-ahqmfhun-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_QrJ3WTkDlL9n'
+},
+
+  {
+    id: 58,
+    active_db_limit: 2,
+    api_key: 'napi_hasl64vr7z74n8524uldv6dpwmcgw1ue9gyn28jvs10l75va6cpxfj1whzrnvbpj',
+    project_id: 'sweet-mouse-00199203',
+    branch_id: 'br-polished-pine-ad5h1yg0',
+    db_host: 'ep-broad-salad-aduvlkjj-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_ipNf0MWG6Uez'
+},
+
+  {
+    id: 59,
+    active_db_limit: 2,
+    api_key: 'napi_i0aoieg4c8p4j6vmp0c58nogr7353tvqmga2tg7ruude4u9khm14h6dwme8xhchm',
+    project_id: 'snowy-breeze-00482163',
+    branch_id: 'br-shiny-field-adm86usx',
+    db_host: 'ep-summer-wave-adsj23g0-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_NfH4DWj0FlZR'
+},
+
+  {
+    id: 60,
+    active_db_limit: 2,
+    api_key: 'napi_wew3rz9pgs6m97t5825c9vf7nz1n9u12zqudzcu17uvgjnuhb7kjegpag5s5nmzf',
+    project_id: 'summer-wave-24286132',
+    branch_id: 'br-holy-star-adyegdj9',
+    db_host: 'ep-wild-mud-adiha5ar-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_zZtvB2FwK5DN'
 }
+
 
 ];
 
