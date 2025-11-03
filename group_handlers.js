@@ -328,7 +328,7 @@ function registerGroupHandlers(_bot, _dbServices) {
 
     // Return the functions for bot.js to use
     return {
-        handleGroupMessage,
+        handleGroupCommand,
         handleNewMembers,
         handleLeftMembers
     };
