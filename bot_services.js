@@ -2110,6 +2110,21 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
         }
 
+
+
+
+        // --- 💡 START OF HERMIT RESTART FIX (STEP 7.5) 💡 ---
+        if (botType === 'hermit') {
+            console.log(`[Flow] Hermit build succeeded. Forcing an immediate restart for ${appName} to ensure connection.`);
+            
+            // We don't need to await this. Just send the command.
+            herokuApi.delete(`/apps/${appName}/dynos`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })
+                .catch(err => console.warn(`[Flow] Failed to force-restart ${appName}: ${err.message}`));
+            
+            // Give Heroku a 5-second head start before we listen
+            await new Promise(r => setTimeout(r, 5000));
+        }
+        // --- 💡 END OF HERMIT RESTART FIX 💡 ---
         // --- MODIFIED "Wait for Connect" Logic ---
         // This block now animates and edits the USER's message
         
