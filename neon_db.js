@@ -559,12 +559,12 @@ const NEON_ACCOUNTS = [
   {
     id: 51,
     active_db_limit: 3,
-    api_key: 'napi_9s5z9am5jxbwss6m8e74qs8u44jrjyudafzrgya4vxsc65a8o96l9uiyt1et4hme',
-    project_id: 'empty-dew-33678607',
-    branch_id: 'br-rapid-firefly-a4ywg5ab',
-    db_host: 'ep-rapid-firefly-a4ywg5ab-pooler.us-east-1.aws.neon.tech',
+    api_key: 'napi_b7x8fgm0lv55mc62xdofpf7v4oi1fw9pji52mxeatdw89u7zayr4bvfckok726ye',
+    project_id: 'holy-hall-96115450',
+    branch_id: 'br-steep-math-adtw2bwp', // <-- CORRECTED
+    db_host: 'ep-twilight-smoke-adzshook-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_7zwIkT3dZnPC'
+    db_password: 'npg_pZ50zVdHjrli'
 },
 
   {
