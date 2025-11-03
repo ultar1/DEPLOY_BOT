@@ -334,6 +334,19 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
           );
         `);
 
+      
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS group_blacklist (
+            chat_id TEXT NOT NULL,
+            name_fragment TEXT NOT NULL,
+            added_by TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chat_id, name_fragment)
+          );
+        `);
+        
+
+
         await client.query(`
           CREATE TABLE IF NOT EXISTS email_verification (
             user_id       TEXT PRIMARY KEY,
