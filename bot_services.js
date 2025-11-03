@@ -279,6 +279,51 @@ async function getLoggedOutBots() {
     }
 }
 
+// In bot_services.js
+
+async function addBlacklistedName(chatId, nameFragment, adminId) {
+  try {
+    // We store the name in lowercase to make checks case-insensitive
+    await pool.query(
+      `INSERT INTO group_blacklist(chat_id, name_fragment, added_by) 
+       VALUES($1, $2, $3) 
+       ON CONFLICT (chat_id, name_fragment) DO NOTHING`,
+      [chatId, nameFragment.toLowerCase(), adminId]
+    );
+    return { success: true };
+  } catch (error) {
+    console.error(`[DB] Failed to add blacklist name ${nameFragment} for chat ${chatId}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+async function removeBlacklistedName(chatId, nameFragment) {
+  try {
+    const result = await pool.query(
+      'DELETE FROM group_blacklist WHERE chat_id = $1 AND name_fragment = $2 RETURNING *',
+      [chatId, nameFragment.toLowerCase()]
+    );
+    // Return success: true only if a row was actually deleted
+    return { success: result.rowCount > 0 };
+  } catch (error) {
+    console.error(`[DB] Failed to remove blacklist name ${nameFragment} for chat ${chatId}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getBlacklistedNames(chatId) {
+  try {
+    const result = await pool.query(
+      'SELECT name_fragment FROM group_blacklist WHERE chat_id = $1 ORDER BY added_at ASC',
+      [chatId]
+    );
+    // Return an array of the names
+    return result.rows.map(row => row.name_fragment);
+  } catch (error) {
+    console.error(`[DB] Failed to get blacklist for chat ${chatId}:`, error.message);
+    return [];
+  }
+}
 
 
 async function syncDatabaseWithHeroku() {
@@ -2449,5 +2494,8 @@ module.exports = {
     getExpiringBackups,
     setBackupWarningLevel,
     getExpiredBackups,
+    getBlacklistedNames,
+    removeBlacklistedName,
+    addBlacklistedName,
     backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
