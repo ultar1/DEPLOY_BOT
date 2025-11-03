@@ -633,6 +633,54 @@ async function getExpiredBackups() {
 }
 
 
+// In bot_services.js (add with your other DB functions)
+
+async function getGroupSettings(chatId) {
+  try {
+    const result = await pool.query('SELECT welcome_message, welcome_enabled FROM group_settings WHERE chat_id = $1', [chatId]);
+    if (result.rows.length > 0) {
+      return result.rows[0];
+    }
+    // Return default settings if not found
+    return { welcome_message: null, welcome_enabled: false };
+  } catch (error) {
+    console.error(`[DB] Failed to get group settings for chat ${chatId}:`, error.message);
+    return { welcome_message: null, welcome_enabled: false }; // Default on error
+  }
+}
+
+async function setGroupWelcome(chatId, enabled) {
+  try {
+    await pool.query(
+      `INSERT INTO group_settings (chat_id, welcome_enabled) 
+       VALUES ($1, $2) 
+       ON CONFLICT (chat_id) DO UPDATE SET welcome_enabled = EXCLUDED.welcome_enabled`,
+      [chatId, enabled]
+    );
+    return { success: true };
+  } catch (error) {
+    console.error(`[DB] Failed to set welcome enabled for chat ${chatId}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+async function setGroupWelcomeMessage(chatId, message) {
+  try {
+    // Also enable welcome when a custom message is set
+    await pool.query(
+      `INSERT INTO group_settings (chat_id, welcome_message, welcome_enabled) 
+       VALUES ($1, $2, TRUE) 
+       ON CONFLICT (chat_id) DO UPDATE SET welcome_message = EXCLUDED.welcome_message, welcome_enabled = TRUE`,
+      [chatId, message]
+    );
+    return { success: true };
+  } catch (error) {
+    console.error(`[DB] Failed to set welcome message for chat ${chatId}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+
 // === Backup, Restore, and Sync Functions ===
 
 async function getUserIdByBotName(botName) {
@@ -2497,5 +2545,8 @@ module.exports = {
     getBlacklistedNames,
     removeBlacklistedName,
     addBlacklistedName,
+    setGroupWelcomeMessage,
+    setGroupWelcome,
+    getGroupSettings,
     backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
