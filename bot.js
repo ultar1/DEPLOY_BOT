@@ -3388,7 +3388,14 @@ async function notifyAdminUserOnline(msg) {
         escapeMarkdown: escapeMarkdown,
     });
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
-registerGroupHandlers(bot, dbServices); 
+
+  // This imports the functions from the module
+const { handleGroupMessage, handleNewMembers, handleLeftMembers } = registerGroupHandlers(bot, dbServices);
+
+// This tells the bot to use them for the correct events
+bot.on('new_chat_members', handleNewMembers);
+bot.on('left_chat_member', handleLeftMembers);
+
 
 
     await loadMaintenanceStatus(); // Load initial maintenance status
@@ -6522,6 +6529,15 @@ bot.on('message', async msg => {
     if (!text) 
         return;
   
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+        // This message is from a group. Pass it to the group handler.
+        // The group handler will manage commands, logging, and @admin calls.
+        await handleGroupMessage(msg);
+        return; // Stop. Do not let group messages fall through to the state machine.
+    }
+
+    // --- Step 5: Handle Private Chat / Bot Commands ---
+    // (If we are here, it's a private chat with the bot)
 
 
   // Now the rest of your code for handling text messages will run correctly
