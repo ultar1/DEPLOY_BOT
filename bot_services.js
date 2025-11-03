@@ -2310,10 +2310,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         }
         // --- End of NEON LOGIC Integration ---
         
-                // --- Step 3: Set Buildpacks ---
-        if (botType !== 'hermit') {
-            // This will only run for Levanter and Raganork
-            console.log(`[Build] Setting buildpacks for ${botType} bot: ${appName}`);
+                // --- Step 3: Set Buildpacks --
             await herokuApi.put(
               `/apps/${appName}/buildpack-installations`,
               {
@@ -2325,10 +2322,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
               },
               { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
             );
-        } else {
-            // If it's Hermit, just log the skip
-            console.log(`[Build] Skipping buildpack installation for Hermit bot: ${appName}`);
-        }
+        
         
         // This must be outside the 'if' block so the animation always stops
         clearInterval(primaryAnimateIntervalId);
