@@ -3390,7 +3390,7 @@ async function notifyAdminUserOnline(msg) {
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
 
   // This imports the functions from the module
-const { handleGroupMessage, handleNewMembers, handleLeftMembers } = registerGroupHandlers(bot, dbServices);
+const { handleGroupCommand, handleNewMembers, handleLeftMembers } = registerGroupHandlers(bot, dbServices);
 
 // This tells the bot to use them for the correct events
 bot.on('new_chat_members', handleNewMembers);
@@ -6532,7 +6532,7 @@ bot.on('message', async msg => {
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         // This message is from a group. Pass it to the group handler.
         // The group handler will manage commands, logging, and @admin calls.
-        await handleGroupMessage(msg);
+        await handleGroupCommand(msg);
         return; // Stop. Do not let group messages fall through to the state machine.
     }
 
