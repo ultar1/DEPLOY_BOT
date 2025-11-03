@@ -344,8 +344,16 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
             PRIMARY KEY (chat_id, name_fragment)
           );
         `);
-        
 
+      
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS group_settings (
+            chat_id TEXT PRIMARY KEY,
+            welcome_message TEXT,
+            welcome_enabled BOOLEAN DEFAULT FALSE
+          );
+        `);
+      
 
         await client.query(`
           CREATE TABLE IF NOT EXISTS email_verification (
