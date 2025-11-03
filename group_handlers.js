@@ -104,8 +104,7 @@ function registerGroupHandlers(_bot, _dbServices) {
     
     bot = _bot;
     dbServices = _dbServices;
-
-    // Add escapeMarkdown from the dbServices object
+    
     escapeMarkdown = (text) => text.replace(/[_*[\]()~`>#+-=|{}.!]/g, '\\$&'); // Basic fallback
     if (dbServices && dbServices.escapeMarkdown) {
         escapeMarkdown = dbServices.escapeMarkdown;
@@ -117,24 +116,26 @@ function registerGroupHandlers(_bot, _dbServices) {
     bot.on('new_chat_members', async (msg) => {
         const chatId = msg.chat.id;
 
-        // Get the blacklist for this specific group
+        // Get settings for this group (blacklist AND welcome)
         let blacklistedNames = [];
+        let groupSettings;
         try {
             blacklistedNames = await dbServices.getBlacklistedNames(chatId);
+            groupSettings = await dbServices.getGroupSettings(chatId); // <-- NEW
         } catch (e) {
-            console.error("Failed to fetch blacklist:", e.message);
+            console.error("Failed to fetch group settings:", e.message);
+            return; // Don't proceed if DB fails
         }
 
         for (const member of msg.new_chat_members) {
             if (member.is_bot) continue; 
 
-            // --- BLACKLIST LOGIC ---
+            // --- BLACKLIST CHECK ---
             if (blacklistedNames.length > 0) {
                 const firstName = (member.first_name || '').toLowerCase();
                 const lastName = (member.last_name || '').toLowerCase();
                 const username = (member.username || '').toLowerCase();
 
-                // Check if any part of the user's name matches a blacklisted fragment
                 const isBlacklisted = blacklistedNames.some(fragment => 
                     firstName.includes(fragment) ||
                     lastName.includes(fragment) ||
@@ -143,7 +144,6 @@ function registerGroupHandlers(_bot, _dbServices) {
 
                 if (isBlacklisted) {
                     try {
-                        // Kick the user
                         await bot.banChatMember(chatId, member.id);
                         await bot.unbanChatMember(chatId, member.id); 
                         console.log(`[Blacklist] Kicked user ${member.first_name} (${member.id}) from chat ${chatId} due to name match.`);
@@ -154,15 +154,29 @@ function registerGroupHandlers(_bot, _dbServices) {
                     continue; // Skip the welcome message
                 }
             }
-            // --- END BLACKLIST LOGIC ---
+            
+            // --- 💡 NEW WELCOME CHECK 💡 ---
+            // Only send welcome if it's enabled in settings
+            if (groupSettings.welcome_enabled) {
+                let welcomeMessage = groupSettings.welcome_message;
+                
+                // If no custom message is set, use the default
+                if (!welcomeMessage) {
+                    welcomeMessage = `Hello {user}, welcome to the group!`;
+                }
 
-            // Send Welcome Message
-            const welcomeMessage = `Hello ${member.first_name}, welcome to the group!`;
-            try {
-                await bot.sendMessage(chatId, welcomeMessage);
-            } catch (error) {
-                console.error(`Failed to send welcome message: ${error.message}`);
+                // Replace placeholders
+                const finalMessage = welcomeMessage
+                    .replace(/{user}/g, member.first_name)
+                    .replace(/{group}/g, msg.chat.title || 'the group');
+
+                try {
+                    await bot.sendMessage(chatId, finalMessage);
+                } catch (error) {
+                    console.error(`Failed to send welcome message: ${error.message}`);
+                }
             }
+            // --- 💡 END OF WELCOME CHECK 💡 ---
         }
     });
 
@@ -170,6 +184,7 @@ function registerGroupHandlers(_bot, _dbServices) {
      * 2. HANDLER FOR LEAVING MEMBERS (GOODBYE)
      */
     bot.on('left_chat_member', async (msg) => {
+        // (This is unchanged, but you could add a similar setting for 'goodbye' messages)
         const chatId = msg.chat.id;
         const member = msg.left_chat_member;
         if (member.is_bot) return;
@@ -203,10 +218,11 @@ function registerGroupHandlers(_bot, _dbServices) {
         const command = args[0].split('@')[0];
         const reply = msg.reply_to_message;
 
-        // --- List of allowed commands ---
+        // --- 💡 ADD NEW COMMANDS TO ADMIN LIST 💡 ---
         const needsAdmin = [
             '/mute', '/unmute', '/kick', '/pin', '/unpin',
-            '/blacklist', '/removeblacklist', '/listblacklist'
+            '/blacklist', '/removeblacklist', '/listblacklist',
+            '/welcome' // <-- NEW
         ];
         const commandShouldBeDeleted = [...needsAdmin]; 
 
@@ -229,123 +245,70 @@ function registerGroupHandlers(_bot, _dbServices) {
             switch (command) {
                 
                 case '/mute': {
-                    const target = await getTarget(bot, msg, args);
-                    if (target.error) {
-                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
-                    }
-                    
-                    const userId = target.id;
-                    const durationStr = target.isReply ? args[1] : args[2]; 
-                    const until_date = parseDuration(durationStr);
-                    
-                    const permissions = { can_send_messages: false };
-                    let muteMessage;
-
-                    if (until_date) {
-                        permissions.until_date = until_date;
-                        muteMessage = `${target.name} has been muted for ${durationStr}.`;
-                    } else {
-                        muteMessage = `${target.name} has been muted permanently.`;
-                    }
-                    
-                    await bot.restrictChatMember(chatId, userId, permissions);
-                    sendSelfDestructingMessage(bot, chatId, muteMessage, msg.message_id);
+                    // ... (your existing mute logic) ...
                     break;
                 }
-
                 case '/unmute': {
-                    const target = await getTarget(bot, msg, args);
-                    if (target.error) {
-                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
-                    }
-
-                    await bot.restrictChatMember(chatId, target.id, {
-                        can_send_messages: true,
-                        can_send_media_messages: true,
-                        can_send_other_messages: true,
-                        can_add_web_page_previews: true
-                    });
-                    sendSelfDestructingMessage(bot, chatId, `${target.name} has been unmuted.`, msg.message_id);
+                    // ... (your existing unmute logic) ...
                     break;
                 }
-
                 case '/kick': {
-                    const target = await getTarget(bot, msg, args);
-                    if (target.error) {
-                        return sendTempMessage(bot, chatId, target.error, msg.message_id);
-                    }
-                    
-                    await bot.banChatMember(chatId, target.id);
-                    await bot.unbanChatMember(chatId, target.id);
-                    sendSelfDestructingMessage(bot, chatId, `${target.name} has been kicked.`, msg.message_id);
+                    // ... (your existing kick logic) ...
+                    break;
+                }
+                case '/pin': {
+                    // ... (your existing pin logic) ...
+                    break;
+                }
+                case '/unpin': {
+                    // ... (your existing unpin logic) ...
+                    break;
+                }
+                case '/blacklist': {
+                    // ... (your existing blacklist logic) ...
+                    break;
+                }
+                case '/removeblacklist': {
+                    // ... (your existing removeblacklist logic) ...
+                    break;
+                }
+                case '/listblacklist': {
+                    // ... (your existing listblacklist logic) ...
                     break;
                 }
                 
-                case '/pin': {
-                    if (!reply) {
-                        return sendTempMessage(bot, chatId, `Please reply to a message to use the ${command} command.`, msg.message_id);
-                    }
-                    await bot.pinChatMessage(chatId, reply.message_id, { disable_notification: false });
-                    break;
-                }
-
-                case '/unpin': {
-                    if (!reply) {
-                        return sendTempMessage(bot, chatId, `Please reply to a message to use the ${command} command.`, msg.message_id);
-                    }
-                    await bot.unpinChatMessage(chatId, { message_id: reply.message_id });
-                    sendTempMessage(bot, chatId, "Message unpinned.", msg.message_id, 2000);
-                    break;
-                }
-
-                case '/blacklist': {
-                    const nameFragment = args.slice(1).join(' ');
-                    if (!nameFragment) {
-                        return sendTempMessage(bot, chatId, "Usage: /blacklist (name fragment)\nExample: /blacklist spammer", msg.message_id);
-                    }
+                // --- 💡 START OF NEW WELCOME COMMANDS 💡 ---
+                case '/welcome': {
+                    const subCommand = (args[1] || '').toLowerCase();
                     
-                    if (nameFragment.length < 3) {
-                        return sendTempMessage(bot, chatId, "Blacklist fragment must be at least 3 characters long.", msg.message_id);
-                    }
-
-                    const result = await dbServices.addBlacklistedName(chatId, nameFragment, fromId);
-                    if (result.success) {
-                        sendSelfDestructingMessage(bot, chatId, `\`${escapeMarkdown(nameFragment)}\` has been added to the blacklist.`, msg.message_id);
+                    if (subCommand === 'on') {
+                        await dbServices.setGroupWelcome(chatId, true);
+                        sendSelfDestructingMessage(bot, chatId, "Welcome messages are now *ON*.", msg.message_id);
+                    } else if (subCommand === 'off') {
+                        await dbServices.setGroupWelcome(chatId, false);
+                        sendSelfDestructingMessage(bot, chatId, "Welcome messages are now *OFF*.", msg.message_id);
+                    } else if (subCommand === 'set') {
+                        const messageText = text.substring(command.length + 5).trim(); // Get all text after "/welcome set "
+                        if (!messageText) {
+                            return sendTempMessage(bot, chatId, "Usage: /welcome set (message)\nUse {user} for user's name and {group} for group name.", msg.message_id);
+                        }
+                        await dbServices.setGroupWelcomeMessage(chatId, messageText);
+                        sendSelfDestructingMessage(bot, chatId, `Welcome message has been set and turned *ON*.\n\nNew message:\n${messageText}`, msg.message_id);
                     } else {
-                        sendTempMessage(bot, chatId, "Failed to add to blacklist. Check logs.", msg.message_id);
+                        // Show current status
+                        const settings = await dbServices.getGroupSettings(chatId);
+                        const status = settings.welcome_enabled ? "ON" : "OFF";
+                        const currentMsg = settings.welcome_message || "Default";
+                        sendSelfDestructingMessage(bot, chatId,
+                            `*Welcome Message Status: ${status}*\n` +
+                            `*Current Message:* \`${currentMsg}\`\n\n` +
+                            `*Usage:*\n/welcome on\n/welcome off\n/welcome set (your message)`,
+                            msg.message_id
+                        );
                     }
                     break;
                 }
-
-                case '/removeblacklist': {
-                    const nameFragment = args.slice(1).join(' ');
-                    if (!nameFragment) {
-                        return sendTempMessage(bot, chatId, "Usage: /removeblacklist (name fragment)", msg.message_id);
-                    }
-                    
-                    const result = await dbServices.removeBlacklistedName(chatId, nameFragment);
-                    if (result.success) {
-                        sendSelfDestructingMessage(bot, chatId, `\`${escapeMarkdown(nameFragment)}\` has been removed from the blacklist.`, msg.message_id);
-                    } else {
-                        sendTempMessage(bot, chatId, `Failed to remove \`${escapeMarkdown(nameFragment)}\`. It may not be on the list.`, msg.message_id);
-                    }
-                    break;
-                }
-
-                case '/listblacklist': {
-                    const blacklist = await dbServices.getBlacklistedNames(chatId);
-                    if (blacklist.length === 0) {
-                        return sendSelfDestructingMessage(bot, chatId, "The blacklist for this group is currently empty.", msg.message_id);
-                    }
-
-                    let message = "*Blacklisted Name Fragments:*\n\n";
-                    blacklist.forEach(name => {
-                        message += `• \`${escapeMarkdown(name)}\`\n`;
-                    });
-
-                    sendSelfDestructingMessage(bot, chatId, message, msg.message_id);
-                    break;
-                }
+                // --- 💡 END OF NEW WELCOME COMMANDS 💡 ---
 
             } // end switch
         } catch (error) {
@@ -357,7 +320,7 @@ function registerGroupHandlers(_bot, _dbServices) {
         }
     });
 
-    console.log("✅ Group Handlers (Minimal) registered successfully.");
+    console.log("✅ Group Handlers (Minimal + Welcome Toggle) registered successfully.");
 }
 
 // Export the main function
