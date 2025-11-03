@@ -611,12 +611,18 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-plain-bonus-a40kyhby-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_Waf7KP9zBAno'
+},
+
+  {
+    id: 56,
+    active_db_limit: 2,
+    api_key: 'napi_q8xhg1mhkc9e4s6j70wbu0bdyts5q1ruugndvffd6ri9lxmnngpu54wc55z245a5',
+    project_id: 'still-tooth-92313955',
+    branch_id: 'br-lively-brook-ad2e1kzd',
+    db_host: 'ep-mute-feather-adjoyz68-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_7lTVJzOAnWe6'
 }
-
-
-
-
-
 
 ];
 
