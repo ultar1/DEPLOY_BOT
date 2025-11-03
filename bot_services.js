@@ -1887,28 +1887,43 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 
 
         // --- Step 3: Set Buildpacks ---
-                // --- Step 3: Set Buildpacks ---
-        if (botType !== 'hermit') {
-            // This will only run for Levanter and Raganork
-            console.log(`[Build] Setting buildpacks for ${botType} bot: ${appName}`);
+        // --- Step 3: Set Buildpacks ---
+        let buildpacksToInstall = [];
+        
+        // --- 💡 START OF FIX 💡 ---
+        // This now groups Hermit with Levanter and Raganork.
+        // All three bots will get the same set of buildpacks.
+        if (botType === 'levanter' || botType === 'raganork' || botType === 'hermit') {
+            
+            console.log(`[Build] Setting full buildpacks (ffmpeg, nodejs) for ${botType} bot: ${appName}`);
+            buildpacksToInstall = [
+              { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+              { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+              { buildpack: 'heroku/nodejs' }
+            ];
+            
+        } else {
+            // This is now an error/unknown case
+            console.log(`[Build] No buildpacks set for unknown bot type: ${botType}`);
+        }
+        // --- 💡 END OF FIX 💡 ---
+
+        // This part remains the same
+        if (buildpacksToInstall.length > 0) {
             await herokuApi.put(
               `/apps/${appName}/buildpack-installations`,
-              {
-                updates: [
-                  { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-                  { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
-                  { buildpack: 'heroku/nodejs' }
-                ]
-              },
+              { updates: buildpacksToInstall },
               { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
             );
         } else {
-            // If it's Hermit, just log the skip
-            console.log(`[Build] Skipping buildpack installation for Hermit bot: ${appName}`);
+            // This will now only happen if the botType is somehow unknown
+            console.log(`[Build] Skipping buildpack installation step.`);
         }
         
         // This must be outside the 'if' block so the animation always stops
         clearInterval(primaryAnimateIntervalId);
+
+        // --- Step 4: Set Environment Variables ---
 
 
         // --- Step 4: Set Environment Variables ---
@@ -2323,9 +2338,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
               { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
             );
         
-        
-        // This must be outside the 'if' block so the animation always stops
-        clearInterval(primaryAnimateIntervalId);
+    
 
         // --- Step 4: Set Environment Variables ---
 
