@@ -676,7 +676,7 @@ const NEON_ACCOUNTS = [
     active_db_limit: 2,
     api_key: 'napi_ak6y7h6ofhs7caa9zkiquvfk0gezhxi1y381o2d01z59g3xbvui2g13qwv9dvinv',
     project_id: 'patient-darkness-18526863',
-    branch_id: 'br-plain-morning-a4y6xric',
+    branch_id: 'br-odd-fire-a4zc8m34',
     db_host: 'ep-plain-morning-a4y6xric-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_VuhLmX04xTBZ'
