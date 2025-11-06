@@ -713,11 +713,73 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-dark-river-a4wv61wv-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_Gjm0ZvxAIa7N'
+},
+
+  {
+    id: 65,
+    active_db_limit: 2,
+    api_key: 'napi_rbkf629fs2wfjoqgv049h4m3w4xav9tvr36akm363enj1hemsgnp6tvo3dyq5hye',
+    project_id: 'silent-fog-80417892',
+    branch_id: 'br-lucky-silence-adu8a4pm',
+    db_host: 'ep-summer-morning-adfgs89a-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_agptN2I6xwUh'
+},
+
+  {
+    id: 66,
+    active_db_limit: 2,
+    api_key: 'napi_18jdnissttvzyq5tnj4zq8feuxsrv2eud1z995jzse7u4thw1217y1an487djbmc',
+    project_id: 'falling-recipe-81833338',
+    branch_id: 'br-odd-sound-ahbb2t0b',
+    db_host: 'ep-mute-king-ahnpo0bd-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_aTqKvFQWIV27'
+},
+
+  {
+    id: 67,
+    active_db_limit: 2,
+    api_key: 'napi_0rfnsztr0cmm3jv8w3au7ie8n909dzxxiuhr7xmos06ay7c49folfsq4yhmn6w48',
+    project_id: 'crimson-queen-35243356',
+    branch_id: 'br-purple-forest-adczthue',
+    db_host: 'ep-cold-term-adh4llgx-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_ivr0Q4eULclZ'
+},
+
+  {
+    id: 68,
+    active_db_limit: 2,
+    api_key: 'napi_0i6vaoh3njd29toaui71ufd5g0ln9ghhhlkuuour52kynbvlj0qikhy8074920jy',
+    project_id: 'morning-recipe-25854905',
+    branch_id: 'br-bold-breeze-a41m0rf4',
+    db_host: 'ep-frosty-wave-a4b99gz5-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_l9CzBQE8PUJG'
+},
+
+  {
+    id: 69,
+    active_db_limit: 2,
+    api_key: 'napi_fxq33ue7n2f9c7izz6skrdvcrh09ptmdkekv5u1fltiifg0p0pd728g26p4tcxs5',
+    project_id: 'royal-credit-23084432',
+    branch_id: 'br-icy-cell-ahvcr30m',
+    db_host: 'ep-calm-rain-ahki847m-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_phsPJi70bVOe'
+},
+
+  {
+    id: 70,
+    active_db_limit: 2,
+    api_key: 'napi_j08eb81rekp6c9vlx5cuou687vh23jb0dpr4m2eta8ztk4g1thqdzopmpwvnn1v3',
+    project_id: 'super-thunder-03286039',
+    branch_id: 'br-dawn-mouse-aduy9ka4',
+    db_host: 'ep-steep-dream-adaiadrn-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_cAwKjyNu26GQ'
 }
-
-
-
-
 
 ];
 
