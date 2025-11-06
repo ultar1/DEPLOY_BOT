@@ -680,7 +680,42 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-plain-morning-a4y6xric-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_VuhLmX04xTBZ'
+},
+
+  {
+    id: 62,
+    active_db_limit: 2,
+    api_key: 'napi_n529mxhzylg9q68badrd5tp26r96rv2zjjs8ehcadk572yp2qbbmbu0eb0f5izdq',
+    project_id: 'lingering-morning-21523316',
+    branch_id: 'br-solitary-truth-adfjnak6',
+    db_host: 'ep-delicate-band-adtzc5ub-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_Ksl9i2ywpPOV'
+},
+
+  {
+    id: 63,
+    active_db_limit: 2,
+    api_key: 'napi_50z54wvtyykc7rojz7ps4es3vfx9wxe5ulkxkaljc8py9g8ab8jkg1367ce3qjz4',
+    project_id: 'winter-boat-75010742',
+    branch_id: 'br-raspy-flower-adkms8a5',
+    db_host: 'ep-silent-violet-adlg7dur-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_TQ3NVhkG1jre'
+},
+
+  {
+    id: 64,
+    active_db_limit: 2,
+    api_key: 'napi_u0fj3wlr10taitt9mo0oap6kjhafnqu6340t1ysl99kk58mes5woqoo2z2rznkw3',
+    project_id: 'lively-frost-53263268',
+    branch_id: 'br-solitary-darkness-a49iirg4',
+    db_host: 'ep-dark-river-a4wv61wv-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_Gjm0ZvxAIa7N'
 }
+
+
 
 
 
