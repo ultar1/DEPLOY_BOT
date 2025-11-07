@@ -32,12 +32,12 @@ const NEON_ACCOUNTS = [
     {
         id: 3,
         active_db_limit: 2,
-        api_key: 'napi_491ct4cxo84fgwcsa0q5c5r4fjl1jyb0httx9hf9mfe4b9ugn98vbyzuwny5d4uw', // <<< NEW API KEY
-        project_id: 'withered-cake-16066457', // <<< NEW PROJECT ID
-        branch_id: 'br-solitary-haze-a4lksvtc', // <<< NEW BRANCH ID
-        db_host: 'ep-snowy-king-a4sa1bcu-pooler.us-east-1.aws.neon.tech', // <<< NEW HOST
-        db_user: 'neondb_owner', // <<< NEW USER
-        db_password: 'npg_4naqoi3yKLXZ' // <<< NEW PASSWORD
+        api_key: 'napi_491ct4cxo84fgwcsa0q5c5r4fjl1jyb0httx9hf9mfe4b9ugn98vbyzuwny5d4uw',
+        project_id: 'withered-cake-16066457',
+        branch_id: 'br-solitary-haze-a4lksvtc',
+        db_host: 'ep-snowy-king-a4sa1bcu-pooler.us-east-1.aws.neon.tech',
+        db_user: 'neondb_owner', 
+        db_password: 'npg_4naqoi3yKLXZ' 
     },
 
       
@@ -778,7 +778,19 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-steep-dream-adaiadrn-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_cAwKjyNu26GQ'
+},
+
+  {
+    id: 71,
+    active_db_limit: 2,
+    api_key: 'napi_x1l1kds8iert6adk689hokv8ludgqlj1v7i6pxbjn1nzl2ydl9tw8q49bdof424o',
+    project_id: 'jolly-dew-19734933',
+    branch_id: 'br-dry-king-a47bfqpg',
+    db_host: 'ep-nameless-cloud-a4wcxlo5-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_jdx3JYn6ozNf'
 }
+
 
 ];
 
