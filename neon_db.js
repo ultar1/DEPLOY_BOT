@@ -40,17 +40,17 @@ const NEON_ACCOUNTS = [
         db_password: 'npg_4naqoi3yKLXZ' // <<< NEW PASSWORD
     },
 
-      // Account 4 (NEW Account - Restless Rain)
+      
     {
-        id: 4,
-        active_db_limit: 2,
-        api_key: 'napi_g9en1dvfzqmptq1sukf8lrc5675qb5kxrvm1ds7i1dmwta7i23b9qdv301j8szmk', // <<< NEW API KEY
-        project_id: 'restless-rain-47875493', // <<< NEW PROJECT ID
-        branch_id: 'br-frosty-shape-ah56d26z', // <<< NEW BRANCH ID
-        db_host: 'ep-purple-meadow-ahuzulz2-pooler.c-3.us-east-1.aws.neon.tech', // <<< NEW HOST
-        db_user: 'neondb_owner', // <<< NEW USER
-        db_password: 'npg_g1uPt0CxAEso' // <<< NEW PASSWORD
-    },
+    id: 4,
+    active_db_limit: 2,
+    api_key: 'napi_ngqrlndn0dp1ewihm66gvf3gzm4uuz2b6x45s7v9mdb7bgso50oxxx298neq46on',
+    project_id: 'twilight-tree-48561616',
+    branch_id: 'br-sparkling-term-ahldpafn',
+    db_host: 'ep-nameless-river-ah76bump-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_DYxpyNWMeP87'
+},
 
     
    {
@@ -63,7 +63,6 @@ const NEON_ACCOUNTS = [
     db_user: 'neondb_owner',
     db_password: 'npg_vQ9Gz1EePIWh'
 },
-
 
       {
         id: 6,
