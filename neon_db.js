@@ -132,12 +132,12 @@ const NEON_ACCOUNTS = [
   {
     id: 12,
     active_db_limit: 2,
-    api_key: 'napi_a7b0trleis22454y1uinq17xr08sffpfpydtargea290uc2psboukod4b433eqcv',
-    project_id: 'cold-shadow-28726812',
-    branch_id: 'br-calm-violet-ahi56uxm',
-    db_host: 'ep-mute-cell-ahmjsep7-pooler.c-3.us-east-1.aws.neon.tech',
+    api_key: 'napi_uid4lv77tss8k3cl6lfj3ypnrw9n1wh94ze5f1bb4yy2mnfufgz646kxkht4cdz0',
+    project_id: 'steep-resonance-38888209',
+    branch_id: 'br-weathered-sound-ahi1ldbp',
+    db_host: 'ep-aged-queen-ahxg9dnx-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_wvaKPiBIUm74'
+    db_password: 'npg_Gzfw5CtSL7lJ'
 },
 
   {
