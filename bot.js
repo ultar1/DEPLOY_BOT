@@ -1407,15 +1407,6 @@ function getAnimatedEmoji() {
     return emoji;
 }
 
-// In bot.js (REPLACES the original createNeonDatabase function)
-
-/**
- * Universal provisioning router. Cycles through all defined Neon accounts, enforcing the 3 DB limit.
- * Tries the next account if the current one is full OR if database creation fails due to API issues.
- * @param {string} newDbName The name for the new database/service.
- * @returns {Promise<{success: boolean, db_name?: string, connection_string?: string, provider_type: string, provider_account_id: string, error?: string}>}
- */
-async function createNeonDatabase(newDbName) {
 // In bot.js (REPLACE the entire createNeonDatabase function)
 
 /**
