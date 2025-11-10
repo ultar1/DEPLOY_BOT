@@ -787,8 +787,62 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-nameless-cloud-a4wcxlo5-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_jdx3JYn6ozNf'
-}
+},
 
+  {
+    id: 72,
+    active_db_limit: 2,
+    api_key: 'napi_uvbaja8fj7r9ktqfpe8j01wxwf72lgp6qm36zr75ud52jp2h9o7z4mk8zvstvnrh',
+    project_id: 'damp-glitter-86497205',
+    branch_id: 'br-orange-meadow-a4l0x0rl',
+    db_host: 'ep-steep-surf-a46ecci3-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_i4DY5Ttjhlzr'
+},
+
+  {
+    id: 73,
+    active_db_limit: 2,
+    api_key: 'napi_iha63v5fe2cpxvbt8o9pbfp6oc4iottoq7eufcn87h2j07boryip5t15sj087hgs',
+    project_id: 'calm-sunset-50149830',
+    branch_id: 'br-solitary-heart-ad61iv3v',
+    db_host: 'ep-solitary-shape-advxc7su-pooler.c-2.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_6yOfgM2xRrPz'
+},
+
+  {
+    id: 74,
+    active_db_limit: 2,
+    api_key: 'napi_mbkbl3f21junoii5i33y7fp8y689mwxy0frct1vug1rw9edsr8qds26t2w6dzcug',
+    project_id: 'bitter-sunset-02501283',
+    branch_id: 'br-mute-morning-a4vrb8yk',
+    db_host: 'ep-morning-pine-a4ny6ryo-pooler.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_gv5aiPQ0kmlH'
+},
+
+  {
+    id: 75,
+    active_db_limit: 2,
+    api_key: 'napi_nziu8l1cva9b3qjmj1j7s822f2plmi1d8emgs3dwf2h2pjjg2oak2ayprbj52qq5',
+    project_id: 'restless-art-68201006',
+    branch_id: 'br-small-boat-ahki2gfk',
+    db_host: 'ep-tiny-moon-ahug18u1-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_mL78OHnSZizQ'
+},
+
+  {
+    id: 76,
+    active_db_limit: 2,
+    api_key: 'napi_mp09896k4vwwxxrkcvk28k9krb972exp50tzyqvz6aphtqhaaq3x3yi0xaexf99e',
+    project_id: 'frosty-shadow-73512797',
+    branch_id: 'br-lively-grass-a4txvl19', // From connection string (matches console URL too!)
+    db_host: 'ep-dry-poetry-a49ap7gi-pooler.us-east-1.aws.neon.tech', // From connection string
+    db_user: 'neondb_owner',
+    db_password: 'npg_BgDCytHd12uJ'
+}
 
 ];
 
