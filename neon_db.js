@@ -15,19 +15,17 @@ const NEON_ACCOUNTS = [
 },
 
     
-      
     {
     id: 2,
     active_db_limit: 2,
-    api_key: 'napi_yqjf0u3qmd3awm4oq67hcr8olzi2zprfru1an3a92gmcy6gv2e4382utvxfv6p1e',
-    project_id: 'calm-sound-36464652',
-    branch_id: 'br-withered-cloud-a44wsqzj',
-    db_host: 'ep-spring-water-a421mch5-pooler.us-east-1.aws.neon.tech',
+    api_key: 'napi_porjzfkmk7xyqvb2j4itgp2qhb5352ww1ya4egqxqf79009zuu8nsl3yu6gd3r9x',
+    project_id: 'wild-dawn-96387352',
+    branch_id: 'br-old-dust-adgecx9t',
+    db_host: 'ep-autumn-glade-adlrg9f7-pooler.c-2.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_vsIaXRcVH8h1'
+    db_password: 'npg_ojNKTsHaZ3k9'
 },
 
-  
         
     {
         id: 3,
