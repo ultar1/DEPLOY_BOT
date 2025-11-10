@@ -150,6 +150,10 @@ const LEVANTER_SESSION_SITE_URL = `https://levanter-delta.vercel.app/`;
 const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
 const HERMIT_SESSION_SITE_URL = 'https://hermit-md.vercel.app'; 
 
+// Track the last Neon account used for deployment (starts at -1 so first deploy uses index 0)
+let lastUsedNeonIndex = -1;
+
+
 // A strict allow-list of Render environment variables that the admin can edit remotely.
 const EDITABLE_RENDER_VARS = [
     'HEROKU_API_KEY',
@@ -1412,45 +1416,56 @@ function getAnimatedEmoji() {
  * @returns {Promise<{success: boolean, db_name?: string, connection_string?: string, provider_type: string, provider_account_id: string, error?: string}>}
  */
 async function createNeonDatabase(newDbName) {
-    // Check if the NEON_ACCOUNTS array is defined and accessible
+// In bot.js (REPLACE the entire createNeonDatabase function)
+
+/**
+ * Universal provisioning router with ROUND-ROBIN load balancing.
+ * Starts checking from the account *after* the last one successfully used.
+ */
+async function createNeonDatabase(newDbName) {
     if (typeof NEON_ACCOUNTS === 'undefined' || NEON_ACCOUNTS.length === 0) {
         const errorMsg = "CRITICAL: NEON_ACCOUNTS array is not defined or is empty.";
         console.error(`[Router] ${errorMsg}`);
         return { success: false, provider_type: 'FAILURE', provider_account_id: '0', error: errorMsg };
     }
     
-    // Cycle through all accounts defined in the imported array
-    for (const accountConfig of NEON_ACCOUNTS) {
+    const totalAccounts = NEON_ACCOUNTS.length;
+    // Calculate where to start: the index *after* the last used one, wrapped around by the total count.
+    const startIndex = (lastUsedNeonIndex + 1) % totalAccounts;
+
+    console.log(`[Router] Starting round-robin search at Index ${startIndex} (Account ID ${NEON_ACCOUNTS[startIndex].id})...`);
+
+    // Loop exactly 'totalAccounts' times to check every account once
+    for (let i = 0; i < totalAccounts; i++) {
+        // Calculate the actual index for this iteration (wraps around to 0 after reaching the end)
+        const currentIndex = (startIndex + i) % totalAccounts;
+        const accountConfig = NEON_ACCOUNTS[currentIndex];
         const accountId = String(accountConfig.id);
-        const limit = accountConfig.active_db_limit || 3; // Use limit defined in the array (default 3)
-
-        console.log(`[Router] Checking Neon Account ${accountId} (Limit: ${limit})...`);
-
-        let statsError = null;
+        // Use the limit from config, defaulting to 2 if missing (safe default)
+        const limit = accountConfig.active_db_limit || 2; 
 
         // --- Step 1: Check Database Count Limit ---
-        const dbCountResult = await getNeonDbCount(accountId); // This function gets the COUNT of existing DBs
+        const dbCountResult = await getNeonDbCount(accountId); 
         
         if (!dbCountResult.success) {
-            statsError = dbCountResult.error;
-            // If the count API fails (e.g., bad key, API down), we cannot trust the capacity.
-            // We assume capacity and proceed to the creation attempt (Step 2) but log a warning.
-            console.warn(`[Router] Account ${accountId} STATS CHECK FAILED: ${statsError}. Attempting creation as fallback.`);
+             // API failed for this account, log and skip to next
+            console.warn(`[Router] Account ${accountId} (Index ${currentIndex}) check failed: ${dbCountResult.error}. Skipping.`);
+            continue;
         } else if (dbCountResult.count >= limit) {
-            // Account is genuinely full based on the active limit. Skip to next account.
-            console.log(`[Router] Account ${accountId} is full by DB count (${dbCountResult.count}/${limit}). Skipping.`);
+            // Account is full, skip to next. (Commented out log to reduce noise, optional to uncomment)
+            // console.log(`[Router] Account ${accountId} is full (${dbCountResult.count}/${limit}). Skipping.`);
             continue;
         }
 
-        // --- Step 2: Attempt Database Creation (Only run if not explicitly full) ---
-        // If we reach this point, either the capacity check passed OR the check failed (statsError exists).
-        
-        console.log(`[Router] Account ${accountId} has apparent capacity. Attempting creation...`);
-
-        const createResult = await attemptCreateOnAccount(newDbName, accountId); // This function attempts to make the DB
+        // --- Step 2: Attempt Creation (Capacity Found!) ---
+        console.log(`[Router] Account ${accountId} has capacity (${dbCountResult.count}/${limit}). Attempting creation...`);
+        const createResult = await attemptCreateOnAccount(newDbName, accountId);
         
         if (createResult.success) {
-            // SUCCESS! Creation worked. Immediately return the details.
+            // SUCCESS! Update the global index so next time we start *after* this one.
+            lastUsedNeonIndex = currentIndex;
+            console.log(`[Router] Deployment successful on Account ${accountId}. Next search will start at Index ${(lastUsedNeonIndex + 1) % totalAccounts}.`);
+            
             return {
                 success: true,
                 db_name: createResult.db_name,
@@ -1460,25 +1475,16 @@ async function createNeonDatabase(newDbName) {
             };
         }
         
-        // --- Step 3: Handle Creation Failure (Move to next account) ---
-        // If creation failed, it could be due to:
-        // 1. API key failure (if stats check passed)
-        // 2. Hidden storage/egress limit
-        // 3. Any other API/server error
-        
-        console.warn(`[Router] Account ${accountId} CREATION FAILED: ${createResult.error}. Proceeding to next account in the array.`);
-        // The loop will automatically continue to the next account.
+        // Creation failed (e.g. API error), loop continues to next account...
+        console.warn(`[Router] Account ${accountId} creation failed: ${createResult.error}. Continuing search.`);
     }
 
-    // --- Final Failure if the loop completes ---
-    const errorMsg = "Database provisioning failed: All defined Neon accounts are full or unavailable.";
+    // --- Final Failure ---
+    const errorMsg = "Database provisioning failed: All Neon accounts are full or unavailable.";
     console.error(`[Router] CRITICAL FAILURE: ${errorMsg}`);
     return { success: false, provider_type: 'FAILURE', provider_account_id: '0', error: errorMsg };
 }
-
-
-// In bot.js (or bot_services.js, if you prefer, but keep it accessible)
-
+ 
 /**
  * Fetches all known bot names from the primary tracking tables.
  * @param {object} pool - The main PostgreSQL pool.
