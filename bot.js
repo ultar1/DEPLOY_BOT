@@ -2843,9 +2843,15 @@ async function initiatePaystackPayment(chatId, messageId, paymentDetails) {
         );
     } catch (error) {
         console.error("[Paystack] Error creating payment link:", error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the Paystack payment link.', {
+        await bot.editMessageText('Sorry, an error occurred while creating the Paystack payment link. Please try another method.', {
             chat_id: chatId,
-            message_id: sentMsg.message_id
+            message_id: sentMsg.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    // This button takes them back to the "Pay with Paystack / Flutterwave / Crypto" menu
+                    [{ text: '« Back to Payment Options', callback_data: `select_plan:${priceNgn}:${days}` }]
+                ]
+            }
         });
     }
 }
