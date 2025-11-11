@@ -2396,7 +2396,7 @@ async function sendPricingTiers(chatId, messageId) {
     // callback_data format: action : amount_in_naira : duration_in_days
     if (!isExistingUser) {
         planButtons.push({ 
-            text: `✨ Basic: $${pricesUsd.basic} / 10 Days`, 
+            text: `Basic: $${pricesUsd.basic} / 10 Days`, 
             callback_data: `select_plan:${p.basic}:10` 
         });
     }
@@ -10393,16 +10393,16 @@ if (action === 'confirm_and_pay_step') {
     return;
 }
 
-  // In bot.js (inside bot.on('callback_query', ...))
+// In bot.js (inside bot.on('callback_query', ...))
 
 if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
     const isRenewal = action === 'nowpayments_renew';
     
-    // ⚠️ CRITICAL: 'payload' contains NGN (e.g. 525), so we DO NOT use it for crypto billing.
-    // We use 'extra' (days) to determine the correct USD price.
-    const days = parseInt(extra, 10);
+    // We receive NGN amount in payload, but we need to ignore it or use it for display.
+    // We primarily rely on the 'days' (extra) to determine the USD price.
     
-    // Define strict USD pricing map to match your tiers
+    // 1. Calculate USD Price based on Days
+    const days = parseInt(extra, 10);
     const usdPrices = {
         10: 0.35,
         30: 1.00,
@@ -10410,56 +10410,62 @@ if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
         185: 3.35,
         365: 5.35
     };
+    const priceUsd = usdPrices[days] || 1.00; // Fallback safety
     
-    // Fallback to $1.00 if days don't match (safety net)
-    const finalPriceUsd = usdPrices[days] || 1.00;
+    const appName = isRenewal ? extra2 : null; // extra2 might be undefined if not renewal, handled below
 
-    const appName = isRenewal ? flag : null; // 'flag' contains appName for renewals
+    // State check for new deployments
+    let deployAppName, deploySessionId;
+    if (!isRenewal) {
+        const st = userStates[cid];
+        // Safety check: if state is lost (bot restart), ask user to restart
+        if (!st || !st.data) {
+            return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start /deploy again.", show_alert: true });
+        }
+        deployAppName = st.data.APP_NAME;
+        deploySessionId = st.data.SESSION_ID;
+    }
 
-    let orderId; 
-    let botType, deployAppName, deploySessionId;
-
+    // Generate Order ID
+    let orderId;
     if (isRenewal) {
         orderId = `renew_${appName}_${crypto.randomBytes(8).toString('hex')}`;
     } else {
-        // For new deployments, get data from state
-        const st = userStates[cid];
-        if (!st || st.step !== 'AWAITING_KEY') {
-            return bot.answerCallbackQuery(q.id, { text: "⚠️ Session expired. Please start over.", show_alert: true });
-        }
-        botType = st.data.botType;
-        deployAppName = st.data.APP_NAME;
-        deploySessionId = st.data.SESSION_ID;
         orderId = `deploy_${deployAppName}_${crypto.randomBytes(4).toString('hex')}`;
     }
 
-    await bot.editMessageText('<b>Creating Crypto Invoice...</b>\n\nConnecting to NOWPayments...', {
-        chat_id: cid, 
-        message_id: q.message.message_id,
-        parse_mode: 'HTML'
+    await bot.editMessageText('Generating Crypto Invoice...', {
+        chat_id: cid, message_id: q.message.message_id
     });
 
     try {
-        // 1. Save to pending_payments
-        // We attempt to get email, but fallback to a placeholder if not set
-        const userEmail = (await getUserEmail(cid)) || 'crypto-user@placeholder.com';
-        
+        // 2. Save to Pending Payments
+        const userEmail = await getUserEmail(cid);
         await pool.query(
-            `INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) 
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, amount_expected) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (reference) DO NOTHING`,
-            [orderId, cid, userEmail, botType || 'renewal', deployAppName || appName, deploySessionId || 'renewal']
+            [
+                orderId, 
+                cid, 
+                userEmail || 'crypto@user.com', 
+                isRenewal ? 'renewal' : 'deploy', 
+                isRenewal ? appName : deployAppName, 
+                isRenewal ? 'renewal' : deploySessionId,
+                priceUsd // Storing USD amount here for reference
+            ]
         );
         
-        // 2. Call NOWPayments API
-        const response = await axios.post('https://api.nowpayments.io/v1/payment', 
+        // 3. Call NOWPayments INVOICE API (Changed from /payment to /invoice)
+        const response = await axios.post('https://api.nowpayments.io/v1/invoice', 
         {
-            price_amount: finalPriceUsd, // Sending correct USD amount (e.g., 0.35)
-            price_currency: 'usd',       // We are pricing in USD
-            // pay_currency: 'usdt',     // REMOVED: Let user choose any coin (BTC/LTC/USDT/TRX) on the checkout page
-            order_id: orderId,           
-            order_description: `${days} Days Bot Subscription`,
-            ipn_callback_url: `${process.env.APP_URL}/nowpayments-webhook`
+            price_amount: priceUsd,
+            price_currency: 'usd',
+            order_id: orderId,
+            order_description: isRenewal ? `Renew ${appName} (${days} days)` : `Deploy Bot (${days} days)`,
+            ipn_callback_url: `${process.env.APP_URL}/nowpayments-webhook`,
+            success_url: `https://t.me/${process.env.BOT_USERNAME}`,
+            cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
         }, 
         {
             headers: {
@@ -10468,21 +10474,19 @@ if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
             }
         });
 
-        const paymentUrl = response.data.payment_url;
+        // Note: Invoice API returns 'invoice_url', not 'payment_url'
+        const paymentUrl = response.data.invoice_url; 
         
-        // 3. Send the invoice link
+        // 4. Send the Invoice Link
         await bot.editMessageText(
-            `<b>Invoice Generated</b>\n\n` +
-            `<b>Plan:</b> ${days} Days\n` +
-            `<b>Amount:</b> $${finalPriceUsd} USD\n\n` +
-            `<i>Click the button below to pay with Crypto (BTC, USDT, TRX, LTC, etc). The bot will start automatically once confirmed.</i>`, 
+            `<b>Crypto Invoice Created</b>\n\nAmount: <b>$${priceUsd}</b>\nDuration: ${days} Days\n\nPlease click the button below to choose your coin (BTC, ETH, USDT, etc) and pay.\n\n<i>Your bot will start automatically once the network confirms the transaction.</i>`, 
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
                 parse_mode: 'HTML',
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Pay with Crypto', url: paymentUrl }],
+                        [{ text: 'Click to Pay Crypto', url: paymentUrl }],
                         [{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]
                     ]
                 }
@@ -10491,13 +10495,9 @@ if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
 
     } catch (error) {
         console.error("[NOWPayments] Error:", error.response?.data || error.message);
-        await bot.editMessageText('<b>Error</b>\n\nCould not generate crypto invoice. Please try again later or use another payment method.', {
+        await bot.editMessageText('Could not generate crypto invoice. Please try again later.', {
             chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [[{ text: '« Back', callback_data: 'cancel_payment_and_deploy' }]]
-            }
+            message_id: q.message.message_id
         });
     }
     return;
