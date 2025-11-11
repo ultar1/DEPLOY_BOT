@@ -418,6 +418,7 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
+        await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS amount_expected NUMERIC;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
 
         // --- Step 3: INSERT DEFAULT DATA ---
