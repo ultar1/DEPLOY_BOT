@@ -1411,10 +1411,7 @@ function getAnimatedEmoji() {
 
 // In bot.js (REPLACE the entire createNeonDatabase function)
 
-/**
- * Universal provisioning router with ROUND-ROBIN load balancing.
- * Starts checking from the account *after* the last one successfully used.
- */
+
 async function createNeonDatabase(newDbName) {
     if (typeof NEON_ACCOUNTS === 'undefined' || NEON_ACCOUNTS.length === 0) {
         const errorMsg = "CRITICAL: NEON_ACCOUNTS array is not defined or is empty.";
@@ -1423,30 +1420,41 @@ async function createNeonDatabase(newDbName) {
     }
     
     const totalAccounts = NEON_ACCOUNTS.length;
-    // Calculate where to start: the index *after* the last used one, wrapped around by the total count.
-    const startIndex = (lastUsedNeonIndex + 1) % totalAccounts;
+    let lastUsedIndex = -1;
 
-    console.log(`[Router] Starting round-robin search at Index ${startIndex} (Account ID ${NEON_ACCOUNTS[startIndex].id})...`);
+    // 1. Fetch the last used index from the database (Persist memory)
+    try {
+        const result = await pool.query("SELECT setting_value FROM app_settings WHERE setting_key = 'last_neon_index'");
+        if (result.rows.length > 0) {
+            lastUsedIndex = parseInt(result.rows[0].setting_value, 10);
+        }
+    } catch (e) {
+        console.warn("[Router] Could not fetch last_neon_index from DB, defaulting to -1. (First run?)");
+    }
+
+    // Calculate start index: (Last + 1) wrapped around total
+    const startIndex = (lastUsedIndex + 1) % totalAccounts;
+
+    console.log(`[Router] Last used Index was ${lastUsedIndex}. Starting round-robin search at Index ${startIndex} (Account ID ${NEON_ACCOUNTS[startIndex].id})...`);
 
     // Loop exactly 'totalAccounts' times to check every account once
     for (let i = 0; i < totalAccounts; i++) {
-        // Calculate the actual index for this iteration (wraps around to 0 after reaching the end)
+        // Calculate the actual index for this iteration
         const currentIndex = (startIndex + i) % totalAccounts;
         const accountConfig = NEON_ACCOUNTS[currentIndex];
         const accountId = String(accountConfig.id);
-        // Use the limit from config, defaulting to 2 if missing (safe default)
+        // Use the limit from config, defaulting to 2 if missing
         const limit = accountConfig.active_db_limit || 2; 
 
         // --- Step 1: Check Database Count Limit ---
         const dbCountResult = await getNeonDbCount(accountId); 
         
         if (!dbCountResult.success) {
-             // API failed for this account, log and skip to next
             console.warn(`[Router] Account ${accountId} (Index ${currentIndex}) check failed: ${dbCountResult.error}. Skipping.`);
             continue;
         } else if (dbCountResult.count >= limit) {
-            // Account is full, skip to next. (Commented out log to reduce noise, optional to uncomment)
-            // console.log(`[Router] Account ${accountId} is full (${dbCountResult.count}/${limit}). Skipping.`);
+            // Account is full, skip to next
+            // console.log(`[Router] Account ${accountId} is full. Skipping.`);
             continue;
         }
 
@@ -1455,9 +1463,21 @@ async function createNeonDatabase(newDbName) {
         const createResult = await attemptCreateOnAccount(newDbName, accountId);
         
         if (createResult.success) {
-            // SUCCESS! Update the global index so next time we start *after* this one.
-            lastUsedNeonIndex = currentIndex;
-            console.log(`[Router] Deployment successful on Account ${accountId}. Next search will start at Index ${(lastUsedNeonIndex + 1) % totalAccounts}.`);
+            // SUCCESS! 
+            console.log(`[Router] Deployment successful on Account ${accountId}.`);
+            
+            // 3. Save this index to the database so we start from the NEXT one next time
+            try {
+                await pool.query(
+                    `INSERT INTO app_settings (setting_key, setting_value) 
+                     VALUES ('last_neon_index', $1) 
+                     ON CONFLICT (setting_key) DO UPDATE SET setting_value = $1`,
+                    [currentIndex.toString()]
+                );
+                console.log(`[Router] Saved Index ${currentIndex} to database as last used.`);
+            } catch (saveError) {
+                console.error("[Router] Failed to save last_neon_index to DB:", saveError.message);
+            }
             
             return {
                 success: true,
@@ -1468,7 +1488,6 @@ async function createNeonDatabase(newDbName) {
             };
         }
         
-        // Creation failed (e.g. API error), loop continues to next account...
         console.warn(`[Router] Account ${accountId} creation failed: ${createResult.error}. Continuing search.`);
     }
 
