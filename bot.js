@@ -21,6 +21,8 @@ const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
 const express = require('express');
+const crypto = require('crypto');
+
 
 // In bot.js (near the top)
 
@@ -2560,54 +2562,62 @@ async function isUserVerified(userId) {
     }
 }
 
-
-// REPLACE this function in bot.js
-
 async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = null) {
     const isRenewal = !!appName; // If appName is provided, it's a renewal
     
-    // Construct callback data carefully to pass all necessary info
+    // 1. Define USD Prices to display (Must match your pricing tiers)
+    const usdPrices = {
+        10: 0.35,
+        30: 1.00,
+        92: 2.00,
+        185: 3.35,
+        365: 5.35
+    };
+    // Fallback to 1.00 if days don't match
+    const priceUsd = usdPrices[days] || 1.00;
+
+    // 2. Define Callbacks
+    // NOTE: We use 'nowpayments_deploy' to match the handler we created in the previous step.
     
-    // 1. Paystack (Naira)
+    // Paystack
     const paystackCallback = isRenewal 
         ? `paystack_renew:${priceNgn}:${days}:${appName}` 
         : `paystack_deploy:${priceNgn}:${days}`;
 
-    // 2. Flutterwave (Naira)
+    // Flutterwave
     const flutterwaveCallback = isRenewal 
         ? `flutterwave_renew:${priceNgn}:${days}:${appName}` 
         : `flutterwave_deploy:${priceNgn}:${days}`;
 
-    // 3. Crypto (Passes NGN price; Handle conversion to USD/BTC in your callback handler)
+    // Crypto (NOWPayments)
+    // Format: action : NGN_Amount : Days : AppName(optional)
     const cryptoCallback = isRenewal 
-        ? `crypto_renew:${priceNgn}:${days}:${appName}` 
-        : `crypto_deploy:${priceNgn}:${days}`;
+        ? `nowpayments_renew:${priceNgn}:${days}:${appName}` 
+        : `nowpayments_deploy:${priceNgn}:${days}`;
 
-    // 4. Cancel
+    // Cancel
     const cancelCallback = isRenewal 
         ? `cancel_renewal:${appName}` 
         : 'cancel_payment_and_deploy';
 
+    // 3. Send the Message
+    // Displays: $5.35 (₦8025)
     await bot.editMessageText(
-        `Please choose your preferred payment method to get your key for **₦${priceNgn} (${days} days)**.`, {
+        `Please choose your preferred payment method to get your key for <b>$${priceUsd} (₦${priceNgn})</b> (${days} days).`, {
             chat_id: chatId,
             message_id: messageId,
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML', // HTML is safer for bolding than Markdown
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'Pay with Paystack', callback_data: paystackCallback }],
                     [{ text: 'Pay with Flutterwave', callback_data: flutterwaveCallback }],
-                    [{ text: 'Pay with Crypto', callback_data: cryptoCallback }], // Added Crypto Option
+                    [{ text: 'Pay with Crypto', callback_data: cryptoCallback }], 
                     [{ text: '« Cancel', callback_data: cancelCallback }]
                 ]
             }
         }
     );
 }
-
-
-
-// bot.js (Replace existing initiateFlutterwavePayment function)
 
 /**
  * Creates a Flutterwave payment link and returns the URL.
