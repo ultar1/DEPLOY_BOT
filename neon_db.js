@@ -83,16 +83,17 @@ const NEON_ACCOUNTS = [
     db_password: 'npg_FGpmJsSc43le'
 },
 
-  {
-    id: 8,
-    active_db_limit: 2,
-    api_key: 'napi_ebzn1kz4j159r44ks95ftgsymfn8nmcyww0zdaq21tef6xu7b9v4x5ekka07qcuv',
-    project_id: 'blue-surf-00535598',
-    branch_id: 'br-ancient-wind-a4lc7fga',
-    db_host: 'ep-twilight-surf-a4pzgfqa-pooler.us-east-1.aws.neon.tech',
-    db_user: 'neondb_owner',
-    db_password: 'npg_T4zqHKx7yVQD'
-},
+    {
+        id: 8,
+        api_key: 'napi_sc6kczcuqxrzcgmn57ksju41n1aex8c9fle3q53zmfa5wfk66mzj4e4teo0193fm',
+        project_id: 'orange-surf-76330106',
+        branch_id: 'br-lively-thunder-adcpx5f0',
+        db_user: 'neondb_owner',
+        db_password: 'npg_WmPD0kfEoiO7',
+        db_host: 'ep-rough-frost-adgrjmjd-pooler.c-2.us-east-1.aws.neon.tech',
+        active_db_limit: 2
+    },
+  
     {
         id: 9,
         api_key: 'napi_mnks37ho21qr2801psy7be0seuznghfcj40vimw3qgsjq51zwj5txmyt0dpm521v',
