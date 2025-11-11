@@ -93,17 +93,16 @@ const NEON_ACCOUNTS = [
     db_user: 'neondb_owner',
     db_password: 'npg_T4zqHKx7yVQD'
 },
-
-  {
-    id: 9,
-    active_db_limit: 2,
-    api_key: 'napi_pq1lry4dw7kd255m8klwhb64b2dompnogs6a2qk0icnqp6hce2le4oig3d2ky4s6',
-    project_id: 'curly-credit-13217129',
-    branch_id: 'br-dawn-river-adanqx7b',
-    db_host: 'ep-gentle-truth-adqwo8yx-pooler.c-2.us-east-1.aws.neon.tech',
-    db_user: 'neondb_owner',
-    db_password: 'npg_GJki9ZpxNj8U'
-},
+    {
+        id: 9,
+        api_key: 'napi_mnks37ho21qr2801psy7be0seuznghfcj40vimw3qgsjq51zwj5txmyt0dpm521v',
+        project_id: 'broad-darkness-17786719',
+        branch_id: 'br-polished-breeze-a4zz5udt',
+        db_user: 'neondb_owner',
+        db_password: 'npg_2crNgjmT4XQV',
+        db_host: 'ep-shy-boat-a4wsorsh-pooler.us-east-1.aws.neon.tech',
+        active_db_limit: 2
+    },
 
   {
     id: 10,
