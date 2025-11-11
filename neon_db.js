@@ -105,16 +105,16 @@ const NEON_ACCOUNTS = [
         active_db_limit: 2
     },
 
-  {
-    id: 10,
-    active_db_limit: 2,
-    api_key: 'napi_77269nythdttiu2u7lkj7b52vf93txlb0ezp5yqqeqn1y7sxsj93sxw4bgfevn3u',
-    project_id: 'steep-sun-83347485',
-    branch_id: 'br-hidden-breeze-ahkvn95s',
-    db_host: 'ep-dawn-salad-ahnbc76j-pooler.c-3.us-east-1.aws.neon.tech',
-    db_user: 'neondb_owner',
-    db_password: 'npg_PSNXc6np1FZe'
-},
+    {
+        id: 10,
+        api_key: 'napi_b01yxszssbyjxl8rm6ao216jdai1vpv9m24te251zw8c12xcf51okewuibz7dvqa',
+        project_id: 'spring-river-94828477',
+        branch_id: 'br-bitter-cake-ahjwj8jy',
+        db_user: 'neondb_owner',
+        db_password: 'npg_XfAHTZ27lDvS',
+        db_host: 'ep-cool-waterfall-ahw08c4v-pooler.c-3.us-east-1.aws.neon.tech',
+        active_db_limit: 2
+    },
 
   {
     id: 11,
