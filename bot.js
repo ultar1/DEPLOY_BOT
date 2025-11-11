@@ -2356,43 +2356,93 @@ async function animateMessage(chatId, messageId, baseText) {
 }
 
 
+// REPLACE the entire sendPricingTiers function in bot.js
+
 async function sendPricingTiers(chatId, messageId) {
+    // Check if user has existing bots to determine if they are a new user
     const userBotsResult = await pool.query('SELECT 1 FROM user_bots WHERE user_id = $1 LIMIT 1', [chatId]);
     const isExistingUser = userBotsResult.rows.length > 0;
 
-    let pricingMessage = "Please select a plan to proceed with your payment:"; // Default message
-    const planButtons = []; // Store all plan buttons here first
+    // 1. Get the rate from environment variables (Default to 1500 if not set)
+    const rate = parseInt(process.env.DOLLAR_RATE || '1500', 10);
 
-    // Basic Plan (New users ONLY)
+    // 2. Define Base Prices in USD
+    const pricesUsd = {
+        basic: 0.35,      // (~₦525)
+        standard: 1.00,   // (₦1,500)
+        quarterly: 2.00,  // (₦3,000)
+        semi: 3.35,       // (~₦5,025)
+        annual: 5.35      // (~₦8,025)
+    };
+
+    // 3. Calculate NGN prices dynamically for the callback data
+    // These 'p' values are what get sent to the payment gateway
+    const p = {
+        basic: Math.ceil(pricesUsd.basic * rate),
+        standard: Math.ceil(pricesUsd.standard * rate),
+        quarterly: Math.ceil(pricesUsd.quarterly * rate),
+        semi: Math.ceil(pricesUsd.semi * rate),
+        annual: Math.ceil(pricesUsd.annual * rate)
+    };
+
+    // Message text showing the current exchange rate
+    let pricingMessage = `Please select a plan to proceed with your payment (Rate: $1 = ₦${rate}):`; 
+    const planButtons = []; 
+
+    // --- BUTTONS CONFIGURATION ---
+    
+    // Basic Plan (Visible to New users ONLY)
+    // callback_data format: action : amount_in_naira : duration_in_days
     if (!isExistingUser) {
-        planButtons.push({ text: 'Basic: ₦500 / 10 Days', callback_data: 'select_plan:500:10' });
+        planButtons.push({ 
+            text: `✨ Basic: $${pricesUsd.basic} / 10 Days`, 
+            callback_data: `select_plan:${p.basic}:10` 
+        });
     }
 
-    // Standard & Premium Plans
-    planButtons.push({ text: 'Standard: ₦1500 / 30 Days', callback_data: 'select_plan:1500:30' });
+    // Standard Plan
+    planButtons.push({ 
+        text: `Standard: $${pricesUsd.standard} / 30 Days`, 
+        callback_data: `select_plan:${p.standard}:30` 
+    });
 
-    // New Longer Plans
-    planButtons.push({ text: 'Quarterly: ₦3,000 / 3 months', callback_data: 'select_plan:3000:92' });
-    planButtons.push({ text: 'Semi-Annual: ₦5,000 / 6 months', callback_data: 'select_plan:5000:185' });
-    planButtons.push({ text: 'Annual: ₦8,000 / 1 year', callback_data: 'select_plan:8000:365' });
+    // Quarterly Plan
+    planButtons.push({ 
+        text: `Quarterly: $${pricesUsd.quarterly} / 3 Mos`, 
+        callback_data: `select_plan:${p.quarterly}:92` 
+    });
+
+    // Semi-Annual Plan
+    planButtons.push({ 
+        text: `Semi-Annual: $${pricesUsd.semi} / 6 Mos`, 
+        callback_data: `select_plan:${p.semi}:185` 
+    });
+
+    // Annual Plan
+    planButtons.push({ 
+        text: `Annual: $${pricesUsd.annual} / 1 Year`, 
+        callback_data: `select_plan:${p.annual}:365` 
+    });
 
     // --- Arrange buttons into rows of 2 ---
-    const pricingKeyboardRows = chunkArray(planButtons, 2); // Group into pairs
+    // Ensure you have the 'chunkArray' helper function defined elsewhere in your bot.js
+    const pricingKeyboardRows = chunkArray(planButtons, 2); 
 
-    // Add the Cancel button as a separate row at the end
+    // Add the Cancel button at the bottom
     pricingKeyboardRows.push([{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]);
 
-    // --- Final Keyboard Structure ---
     const finalKeyboard = {
         inline_keyboard: pricingKeyboardRows
     };
 
+    // Update the message with the buttons
     await bot.editMessageText(pricingMessage, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: finalKeyboard // Use the structured keyboard
+        reply_markup: finalKeyboard 
     });
 }
+
 
 
 
@@ -2517,9 +2567,26 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
     const isRenewal = !!appName; // If appName is provided, it's a renewal
     
     // Construct callback data carefully to pass all necessary info
-    const paystackCallback = isRenewal ? `paystack_renew:${priceNgn}:${days}:${appName}` : `paystack_deploy:${priceNgn}:${days}`;
-    const flutterwaveCallback = isRenewal ? `flutterwave_renew:${priceNgn}:${days}:${appName}` : `flutterwave_deploy:${priceNgn}:${days}`;
-    const cancelCallback = isRenewal ? `cancel_renewal:${appName}` : 'cancel_payment_and_deploy'; // <-- This is the fix
+    
+    // 1. Paystack (Naira)
+    const paystackCallback = isRenewal 
+        ? `paystack_renew:${priceNgn}:${days}:${appName}` 
+        : `paystack_deploy:${priceNgn}:${days}`;
+
+    // 2. Flutterwave (Naira)
+    const flutterwaveCallback = isRenewal 
+        ? `flutterwave_renew:${priceNgn}:${days}:${appName}` 
+        : `flutterwave_deploy:${priceNgn}:${days}`;
+
+    // 3. Crypto (Passes NGN price; Handle conversion to USD/BTC in your callback handler)
+    const cryptoCallback = isRenewal 
+        ? `crypto_renew:${priceNgn}:${days}:${appName}` 
+        : `crypto_deploy:${priceNgn}:${days}`;
+
+    // 4. Cancel
+    const cancelCallback = isRenewal 
+        ? `cancel_renewal:${appName}` 
+        : 'cancel_payment_and_deploy';
 
     await bot.editMessageText(
         `Please choose your preferred payment method to get your key for **₦${priceNgn} (${days} days)**.`, {
@@ -2530,7 +2597,8 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
                 inline_keyboard: [
                     [{ text: 'Pay with Paystack', callback_data: paystackCallback }],
                     [{ text: 'Pay with Flutterwave', callback_data: flutterwaveCallback }],
-                    [{ text: '« Cancel', callback_data: cancelCallback }] // <-- This is the fix
+                    [{ text: 'Pay with Crypto', callback_data: cryptoCallback }], // Added Crypto Option
+                    [{ text: '« Cancel', callback_data: cancelCallback }]
                 ]
             }
         }
@@ -3947,6 +4015,106 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
     }
 });
 
+
+// --- 💡 NEW NOWPAYMENTS WEBHOOK HANDLER 💡 ---
+app.post('/nowpayments-webhook', express.json(), async (req, res) => {
+    
+    // 1. Verify the signature
+    const hmac = crypto.createHmac('sha512', process.env.NOWPAYMENTS_IPN_SECRET);
+    hmac.update(JSON.stringify(req.body, Object.keys(req.body).sort()));
+    const signature = hmac.digest('hex');
+
+    if (req.headers['x-nowpayments-sig'] !== signature) {
+        console.warn('[NOWPayments] Invalid IPN signature received. Ignoring.');
+        return res.status(401).send('Invalid signature');
+    }
+
+    // 2. Process the payment
+    const { payment_status, order_id, price_amount, pay_amount, pay_currency } = req.body;
+    console.log(`[NOWPayments] Webhook received for order: ${order_id}, Status: ${payment_status}`);
+
+    // We only care if the payment is actually confirmed ('finished')
+    if (payment_status === 'finished') {
+        try {
+            // 3. Find the pending payment
+            const pendingPayment = await pool.query(
+                'SELECT * FROM pending_payments WHERE reference = $1', 
+                [order_id]
+            );
+
+            if (pendingPayment.rows.length === 0) {
+                console.warn(`[NOWPayments] Webhook for ${order_id} received, but no pending payment found.`);
+                return res.status(200).send('OK'); // Already processed or invalid
+            }
+            
+            const payment = pendingPayment.rows[0];
+            const userId = payment.user_id;
+
+            // 4. Check if it's a renewal or new deploy
+            const isRenewal = payment.bot_type === 'renewal';
+            
+            // 5. Calculate days based on USD amount (Thresholds adjusted for your new pricing)
+            // Prices: Basic($0.35), Standard($1.00), Quarterly($2.00), Semi($3.35), Annual($5.35)
+            let days;
+            if (price_amount >= 5.0) {
+                days = 365; // Annual ($5.35)
+            } else if (price_amount >= 3.0) {
+                days = 185; // Semi-Annual ($3.35) -> Corrected threshold from 3.5
+            } else if (price_amount >= 1.5) {
+                days = 92;  // Quarterly ($2.00)
+            } else if (price_amount >= 0.8) {
+                days = 30;  // Standard ($1.00)
+            } else {
+                days = 10;  // Basic ($0.35) -> Catches anything smaller
+            }
+            
+            const userChat = await bot.getChat(userId);
+            const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
+
+            if (isRenewal) {
+                // --- RENEWAL LOGIC ---
+                const appName = payment.app_name;
+                await pool.query(
+                    `UPDATE user_deployments 
+                     SET expiration_date = 
+                        CASE 
+                           WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
+                           ELSE expiration_date + ($1 * INTERVAL '1 day')
+                        END
+                     WHERE user_id = $2 AND app_name = $3`,
+                    [days, userId, appName]
+                );
+                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days** with ${pay_amount} ${pay_currency.toUpperCase()}.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Crypto)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${appName}\`\n*Amount:* $${price_amount} USD`, { parse_mode: 'Markdown' });
+            
+            } else { 
+                // --- NEW DEPLOYMENT LOGIC ---
+                await bot.sendMessage(userId, `Crypto payment confirmed! Your bot *${payment.app_name}* deployment has started.`, { parse_mode: 'Markdown' });
+                
+                const deployVars = { 
+                    SESSION_ID: payment.session_id, 
+                    APP_NAME: payment.app_name, 
+                    DAYS: days 
+                }; 
+                
+                // Trigger the build process
+                dbServices.buildWithProgress(userId, deployVars, false, false, payment.bot_type);
+                
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Crypto)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${payment.app_name}\`\n*Amount:* $${price_amount} USD`, { parse_mode: 'Markdown' });
+            }
+            
+            // 6. Clean up pending payment so we don't process it twice
+            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [order_id]);
+            
+        } catch (dbError) {
+            console.error('[NOWPayments Webhook] DB Error:', dbError);
+            await bot.sendMessage(ADMIN_ID, `CRITICAL NOWPAYMENTS WEBHOOK ERROR for ref ${order_id}. Manual review needed. Error: ${dbError.message}`);
+        }
+    }
+    
+    // 7. Acknowledge the webhook to NOWPayments
+    res.status(200).send('OK');
+});
 
 // POST /api/bots/delete - Deletes a bot from Heroku and the database
 app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
@@ -10210,6 +10378,116 @@ if (action === 'confirm_and_pay_step') {
                 inline_keyboard: [
                     [{ text: `Make payment`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
                 ]
+            }
+        });
+    }
+    return;
+}
+
+  // In bot.js (inside bot.on('callback_query', ...))
+
+if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
+    const isRenewal = action === 'nowpayments_renew';
+    
+    // ⚠️ CRITICAL: 'payload' contains NGN (e.g. 525), so we DO NOT use it for crypto billing.
+    // We use 'extra' (days) to determine the correct USD price.
+    const days = parseInt(extra, 10);
+    
+    // Define strict USD pricing map to match your tiers
+    const usdPrices = {
+        10: 0.35,
+        30: 1.00,
+        92: 2.00,
+        185: 3.35,
+        365: 5.35
+    };
+    
+    // Fallback to $1.00 if days don't match (safety net)
+    const finalPriceUsd = usdPrices[days] || 1.00;
+
+    const appName = isRenewal ? flag : null; // 'flag' contains appName for renewals
+
+    let orderId; 
+    let botType, deployAppName, deploySessionId;
+
+    if (isRenewal) {
+        orderId = `renew_${appName}_${crypto.randomBytes(8).toString('hex')}`;
+    } else {
+        // For new deployments, get data from state
+        const st = userStates[cid];
+        if (!st || st.step !== 'AWAITING_KEY') {
+            return bot.answerCallbackQuery(q.id, { text: "⚠️ Session expired. Please start over.", show_alert: true });
+        }
+        botType = st.data.botType;
+        deployAppName = st.data.APP_NAME;
+        deploySessionId = st.data.SESSION_ID;
+        orderId = `deploy_${deployAppName}_${crypto.randomBytes(4).toString('hex')}`;
+    }
+
+    await bot.editMessageText('<b>Creating Crypto Invoice...</b>\n\nConnecting to NOWPayments...', {
+        chat_id: cid, 
+        message_id: q.message.message_id,
+        parse_mode: 'HTML'
+    });
+
+    try {
+        // 1. Save to pending_payments
+        // We attempt to get email, but fallback to a placeholder if not set
+        const userEmail = (await getUserEmail(cid)) || 'crypto-user@placeholder.com';
+        
+        await pool.query(
+            `INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) 
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (reference) DO NOTHING`,
+            [orderId, cid, userEmail, botType || 'renewal', deployAppName || appName, deploySessionId || 'renewal']
+        );
+        
+        // 2. Call NOWPayments API
+        const response = await axios.post('https://api.nowpayments.io/v1/payment', 
+        {
+            price_amount: finalPriceUsd, // Sending correct USD amount (e.g., 0.35)
+            price_currency: 'usd',       // We are pricing in USD
+            // pay_currency: 'usdt',     // REMOVED: Let user choose any coin (BTC/LTC/USDT/TRX) on the checkout page
+            order_id: orderId,           
+            order_description: `${days} Days Bot Subscription`,
+            ipn_callback_url: `${process.env.APP_URL}/nowpayments-webhook`
+        }, 
+        {
+            headers: {
+                'x-api-key': process.env.NOWPAYMENTS_API_KEY,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const paymentUrl = response.data.payment_url;
+        
+        // 3. Send the invoice link
+        await bot.editMessageText(
+            `<b>Invoice Generated</b>\n\n` +
+            `<b>Plan:</b> ${days} Days\n` +
+            `<b>Amount:</b> $${finalPriceUsd} USD\n\n` +
+            `<i>Click the button below to pay with Crypto (BTC, USDT, TRX, LTC, etc). The bot will start automatically once confirmed.</i>`, 
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Pay with Crypto', url: paymentUrl }],
+                        [{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]
+                    ]
+                }
+            }
+        );
+
+    } catch (error) {
+        console.error("[NOWPayments] Error:", error.response?.data || error.message);
+        await bot.editMessageText('<b>Error</b>\n\nCould not generate crypto invoice. Please try again later or use another payment method.', {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [[{ text: '« Back', callback_data: 'cancel_payment_and_deploy' }]]
             }
         });
     }
