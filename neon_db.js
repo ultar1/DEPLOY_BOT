@@ -63,16 +63,17 @@ const NEON_ACCOUNTS = [
     db_password: 'npg_vQ9Gz1EePIWh'
 },
 
-      {
-        id: 6,
-        active_db_limit: 2,
-        api_key: 'napi_1humrpzeiauc8l12o7qiu1k4xcmiw0wu84ky952vtq0iric2j0bfmy9t68yu1xdl',
-        project_id: 'square-bird-32736723',
-        branch_id: 'br-broad-cherry-a4io6h2w',
-        db_host: 'ep-odd-shadow-a4kr1rvx-pooler.us-east-1.aws.neon.tech',
-        db_user: 'neondb_owner',
-        db_password: 'npg_gkvWfjlC7Rm6'
-    },
+    {
+    id: 6,
+    active_db_limit: 2,
+    api_key: 'napi_7bfozcveuq672ejw8b4wm006cmsya5ecqy5utxul6ft9oe8uezts6p5yix0t120s',
+    project_id: 'spring-resonance-15376432',
+    branch_id: 'br-patient-cherry-ah6nbe0w',
+    db_host: 'ep-mute-forest-ahkro5mm-pooler.c-3.us-east-1.aws.neon.tech',
+    db_user: 'neondb_owner',
+    db_password: 'npg_MdH9a2uxGhZC'
+},
+
 
 {
     id: 7,
