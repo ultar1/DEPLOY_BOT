@@ -15,16 +15,17 @@ const NEON_ACCOUNTS = [
 },
 
     
-    {
+  {
     id: 2,
     active_db_limit: 2,
-    api_key: 'napi_porjzfkmk7xyqvb2j4itgp2qhb5352ww1ya4egqxqf79009zuu8nsl3yu6gd3r9x',
-    project_id: 'wild-dawn-96387352',
-    branch_id: 'br-old-dust-adgecx9t',
-    db_host: 'ep-autumn-glade-adlrg9f7-pooler.c-2.us-east-1.aws.neon.tech',
+    api_key: 'napi_l19j6pmk9nl6k94w7nift59buugl13if1d9chfzi1hedknkdv1jy7tott3vj60hu',
+    project_id: 'floral-scene-98654433',
+    branch_id: 'br-curly-river-ah9xfrto',
+    db_host: 'ep-empty-brook-ah56xhbe-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_ojNKTsHaZ3k9'
+    db_password: 'npg_t10KIVHAoysP'
 },
+
 
         
     {
