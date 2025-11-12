@@ -4697,6 +4697,41 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 });
 
 
+// In bot.js
+
+bot.onText(/^\/key (\d+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    
+    // 1. Security Check: Admin Only
+    if (cid !== ADMIN_ID) return;
+
+    // 2. Parse the number of uses
+    const uses = parseInt(match[1], 10);
+
+    if (isNaN(uses) || uses <= 0) {
+        return bot.sendMessage(cid, "Please provide a valid number of uses (e.g., `/key 5`).");
+    }
+
+    try {
+        // 3. Generate and Save
+        const newKey = generateKey(); // Uses your existing helper function
+        // Passing 'null' as the 4th argument makes it a general key (not tied to specific user)
+        await dbServices.addDeployKey(newKey, uses, 'Admin Command', null); 
+
+        // 4. Send Confirmation
+        await bot.sendMessage(cid, 
+            `**Key Generated!**\n\n` +
+            `Key: \`${newKey}\`\n` +
+            `Uses: *${uses}*`, 
+            { parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error("Error generating key via command:", error);
+        await bot.sendMessage(cid, "❌ Failed to generate key. Check logs.");
+    }
+});
+
 // This new /id command is smarter and provides guidance.
 bot.onText(/^\/id$/, async (msg) => {
     const cid = msg.chat.id.toString();
