@@ -73,15 +73,16 @@ const NEON_ACCOUNTS = [
         db_user: 'neondb_owner',
         db_password: 'npg_gkvWfjlC7Rm6'
     },
+
 {
     id: 7,
     active_db_limit: 2,
-    api_key: 'napi_auin6afjtou5sxffq1x9w02b0pcdf7uet5w5uuksyqpfat9e3940zb96qlk895az',
-    project_id: 'young-truth-69765005',
-    branch_id: 'br-icy-voice-a4oxcxlt',
-    db_host: 'ep-nameless-shape-a44m82fa-pooler.us-east-1.aws.neon.tech',
+    api_key: 'napi_zypbau218uwazyia0x52pzn65oif2znee7352nqlh2wmpr2vf2o0l9hb6pkjrhz9',
+    project_id: 'dark-paper-69089483',
+    branch_id: 'br-dark-mouse-ahzw9jes',
+    db_host: 'ep-cool-rice-ahoz8frn-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_FGpmJsSc43le'
+    db_password: 'npg_H2JZ3IrOPBVm'
 },
 
     {
