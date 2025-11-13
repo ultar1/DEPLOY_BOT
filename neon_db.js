@@ -155,13 +155,13 @@ const NEON_ACCOUNTS = [
   {
     id: 14,
     active_db_limit: 2,
-    api_key: 'napi_869q12o29v89rmkg16mamatyso5divjv3gloc0e9ga3imdh7t0rwcb6mzwhdiv7m',
-    project_id: 'blue-dew-12781736',
-    branch_id: 'br-winter-bread-ahnn1tuh',
-    db_host: 'ep-noisy-mud-ahqjetlk-pooler.c-3.us-east-1.aws.neon.tech',
+    api_key: 'napi_mp09896k4vwwxxrkcvk28k9krb972exp50tzyqvz6aphtqhaaq3x3yi0xaexf99e',
+    project_id: 'frosty-shadow-73512797',
+    branch_id: 'br-lively-grass-a4txvl19', // From connection string (matches console URL too!)
+    db_host: 'ep-dry-poetry-a49ap7gi-pooler.us-east-1.aws.neon.tech', // From connection string
     db_user: 'neondb_owner',
-    db_password: 'npg_RVG5Wmnzi0oc'
-},
+    db_password: 'npg_BgDCytHd12uJ'
+  },
 
   {
     id: 15,
@@ -174,15 +174,15 @@ const NEON_ACCOUNTS = [
     db_password: 'npg_mxZNMSHa6r2K'
 },
 
-  {
+    {
     id: 16,
     active_db_limit: 2,
-    api_key: 'napi_4afjnczcnal1m6dx0pd2daynpv656nbf3elov5q4d9t9tbgmqu9chkp1l5n0j573',
-    project_id: 'wispy-bird-03194060',
-    branch_id: 'br-bold-sky-a4jyxcbx',
-    db_host: 'ep-shy-butterfly-a4ctr6ne-pooler.us-east-1.aws.neon.tech',
+    api_key: 'napi_nziu8l1cva9b3qjmj1j7s822f2plmi1d8emgs3dwf2h2pjjg2oak2ayprbj52qq5',
+    project_id: 'restless-art-68201006',
+    branch_id: 'br-small-boat-ahki2gfk',
+    db_host: 'ep-tiny-moon-ahug18u1-pooler.c-3.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_JLQG9saWqy7F'
+    db_password: 'npg_mL78OHnSZizQ'
 },
 
   {
@@ -823,28 +823,6 @@ const NEON_ACCOUNTS = [
     db_host: 'ep-morning-pine-a4ny6ryo-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
     db_password: 'npg_gv5aiPQ0kmlH'
-},
-
-  {
-    id: 75,
-    active_db_limit: 2,
-    api_key: 'napi_nziu8l1cva9b3qjmj1j7s822f2plmi1d8emgs3dwf2h2pjjg2oak2ayprbj52qq5',
-    project_id: 'restless-art-68201006',
-    branch_id: 'br-small-boat-ahki2gfk',
-    db_host: 'ep-tiny-moon-ahug18u1-pooler.c-3.us-east-1.aws.neon.tech',
-    db_user: 'neondb_owner',
-    db_password: 'npg_mL78OHnSZizQ'
-},
-
-  {
-    id: 76,
-    active_db_limit: 2,
-    api_key: 'napi_mp09896k4vwwxxrkcvk28k9krb972exp50tzyqvz6aphtqhaaq3x3yi0xaexf99e',
-    project_id: 'frosty-shadow-73512797',
-    branch_id: 'br-lively-grass-a4txvl19', // From connection string (matches console URL too!)
-    db_host: 'ep-dry-poetry-a49ap7gi-pooler.us-east-1.aws.neon.tech', // From connection string
-    db_user: 'neondb_owner',
-    db_password: 'npg_BgDCytHd12uJ'
 }
 
 ];
