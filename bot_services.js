@@ -296,6 +296,93 @@ async function addBlacklistedName(chatId, nameFragment, adminId) {
     return { success: false, error: error.message };
   }
 }
+// In bot_services.js (Add these functions)
+
+/**
+ * Stores a new contact entry for VCF generation.
+ */
+async function storeNewVcfContact(userId, fullName, phoneNumber) {
+    // Sanitize name and ensure number has '+'
+    const cleanName = fullName.trim();
+    const cleanNumber = phoneNumber.trim().replace(/\s/g, ''); 
+
+    try {
+        await pool.query(
+            `INSERT INTO vcf_contacts (user_id, full_name, phone_number, submitted_by_chat_id) 
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (phone_number) 
+             DO UPDATE SET full_name = EXCLUDED.full_name, user_id = EXCLUDED.user_id, created_at = NOW()`,
+            [userId, cleanName, cleanNumber, userId]
+        );
+        return { success: true };
+    } catch (error) {
+        console.error(`[VCF] Failed to store contact for ${cleanName}:`, error.message);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Generates the VCF file, deletes the data, and sends it to the group.
+ * Assumes the targetChatId (Group ID) is passed in the .env or config.
+ */
+async function generateAndSendVcf(targetGroupId, adminId) {
+    console.log('[VCF] Starting VCF generation and cleanup task...');
+    
+    // 1. Fetch all contacts
+    const contactsResult = await pool.query('SELECT full_name, phone_number FROM vcf_contacts ORDER BY full_name ASC');
+    const contacts = contactsResult.rows;
+
+    if (contacts.length === 0) {
+        console.log('[VCF] No new contacts to process.');
+        return;
+    }
+    
+    // 2. Build VCF Content (using vCard 3.0 standard)
+    let vcfContent = '';
+    const VCF_SUFFIX = ' WBD';
+
+    contacts.forEach(c => {
+        // Ensure the full name includes the WBD suffix
+        const displayName = `${c.full_name}${VCF_SUFFIX}`;
+        
+        vcfContent += 'BEGIN:VCARD\r\n';
+        vcfContent += 'VERSION:3.0\r\n';
+        vcfContent += `FN:${displayName}\r\n`; // Formatted Name
+        vcfContent += `N:${c.full_name};;;;\r\n`; // Name structure (Last;First;Middle;Prefix;Suffix)
+        vcfContent += `TEL;TYPE=CELL:${c.phone_number}\r\n`;
+        vcfContent += 'END:VCARD\r\n';
+    });
+
+    // 3. Save VCF to buffer/memory
+    const fileName = `WBD_Contacts_${new Date().toISOString().substring(0, 10)}.vcf`;
+    const vcfBuffer = Buffer.from(vcfContent, 'utf8');
+
+    // 4. Send the file to Telegram Group
+    try {
+        await moduleParams.bot.sendDocument(targetGroupId, vcfBuffer, {
+            caption: `**Ultar WBD Contact Exchange**\n\nGenerated VCF file contains ${contacts.length} new contacts. Download and import!`,
+            filename: fileName,
+            parse_mode: 'Markdown'
+        });
+        
+        // Notify admin of success
+        await moduleParams.bot.sendMessage(adminId, `VCF file containing ${contacts.length} contacts sent to group ${targetGroupId}.`, { parse_mode: 'Markdown' });
+
+    } catch (e) {
+        console.error('[VCF] Failed to send VCF document:', e.message);
+        await moduleParams.bot.sendMessage(adminId, `CRITICAL: Failed to send VCF file to group ${targetGroupId}. Error: ${e.message}`, { parse_mode: 'Markdown' });
+        return;
+    }
+
+    // 5. Delete all records (Hourly cleanup)
+    try {
+        await pool.query('TRUNCATE vcf_contacts');
+        console.log('[VCF] Successfully deleted all contact records.');
+    } catch (e) {
+        console.error('[VCF] CRITICAL: Failed to truncate vcf_contacts table:', e.message);
+        await moduleParams.bot.sendMessage(adminId, `⚠️ CRITICAL: Failed to delete contacts from database after sending VCF. Manual check required.`, { parse_mode: 'Markdown' });
+    }
+}
 
 async function removeBlacklistedName(chatId, nameFragment) {
   try {
@@ -2542,6 +2629,8 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
+    generateAndSendVcf,
+    storeNewVcfContact,
     permanentlyDeleteBotRecord,
     deleteUserBot,
     getLoggedOutBotsForEmail,
