@@ -5803,7 +5803,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+))?$/i, async (msg, match) => {
         
         // 1. Try AWS Self-Hosted First
         if (process.env.SELF_HOSTED_DB_URL) {
-            const awsResult = await dbServices.deleteSelfHostedDatabase(singleDbName);
+            const awsResult = await deleteSelfHostedDatabase(singleDbName);
             if (awsResult.success) {
                 result = { success: true, accounts_checked: 'AWS' };
                 location = 'AWS Self-Hosted';
@@ -5813,7 +5813,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+))?$/i, async (msg, match) => {
         // 2. Fallback to Neon Search if AWS failed or was not checked
         if (!result.success) {
             // Check all Neon accounts (passing '1' triggers the full search logic)
-            const neonResult = await dbServices.deleteNeonDatabase(singleDbName, '1');
+            const neonResult = await deleteNeonDatabase(singleDbName, '1');
             if (neonResult.success) {
                  result = neonResult;
                  location = `Neon Account ${neonResult.accounts_checked}`;
@@ -5861,7 +5861,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+))?$/i, async (msg, match) => {
                         if (!knownApps.has(dbName) && dbName !== 'postgres' && dbName !== 'rdsadmin') {
                             dbCounter++;
                             deletionPromises.push({
-                                promise: dbServices.deleteSelfHostedDatabase(dbName),
+                                promise: deleteSelfHostedDatabase(dbName),
                                 dbName: dbName,
                                 accountId: 'AWS'
                             });
@@ -5888,7 +5888,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+))?$/i, async (msg, match) => {
                     if (!knownApps.has(dbName) && dbName !== 'neondb') {
                         dbCounter++;
                         deletionPromises.push({
-                            promise: dbServices.deleteNeonDatabase(dbName, accountId), 
+                            promise: deleteNeonDatabase(dbName, accountId), 
                             dbName: dbName,
                             accountId: `Neon-${accountId}`
                         });
