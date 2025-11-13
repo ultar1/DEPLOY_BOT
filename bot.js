@@ -1410,9 +1410,123 @@ function getAnimatedEmoji() {
 }
 
 // In bot.js (REPLACE the entire createNeonDatabase function)
+// In bot_services.js
+
+/**
+ * Creates a database on your private AWS Self-Hosted Platform.
+ */
+async function createSelfHostedDatabase(dbName) {
+    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+    if (!apiUrl || !apiKey) {
+        console.error("[Self-Hosted] Missing URL or Secret in .env");
+        return { success: false, error: "Configuration missing." };
+    }
+
+    try {
+        console.log(`[Self-Hosted] Requesting new DB '${dbName}' from AWS server...`);
+        
+        const response = await axios.post(`${apiUrl}/create`, {
+            dbName: dbName
+        }, {
+            headers: { 'x-api-key': apiKey }
+        });
+
+        const data = response.data;
+
+        if (data.success) {
+            console.log(`[Self-Hosted] Success! DB Created: ${data.db_name}`);
+            return {
+                success: true,
+                db_name: data.db_name,
+                connection_string: data.connection_string,
+                provider_type: 'AWS_SELF_HOSTED',
+                provider_account_id: 'AWS_MAIN' 
+            };
+        } else {
+            return { success: false, error: "Unknown error from API" };
+        }
+
+    } catch (error) {
+        const errorMsg = error.response?.data?.error || error.message;
+        console.error(`[Self-Hosted] API Request Failed:`, errorMsg);
+        return { success: false, error: errorMsg };
+    }
+}
+// In bot_services.js
+
+/**
+ * Deletes a database on your private AWS Self-Hosted Platform.
+ */
+async function deleteSelfHostedDatabase(dbName) {
+    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+    if (!apiUrl || !apiKey) {
+        console.warn("[Self-Hosted] Config missing. Skipping deletion.");
+        return { success: false, error: "Configuration missing." };
+    }
+
+    try {
+        console.log(`[Self-Hosted] Requesting DELETION of DB '${dbName}' from AWS server...`);
+        
+        const response = await axios.post(`${apiUrl}/delete`, {
+            dbName: dbName
+        }, {
+            headers: { 'x-api-key': apiKey }
+        });
+
+        const data = response.data;
+
+        if (data.success) {
+            console.log(`[Self-Hosted] Success! DB Deleted: ${dbName}`);
+            return { success: true };
+        } else {
+            return { success: false, error: "Unknown error from API" };
+        }
+
+    } catch (error) {
+        // Handle 404 (Already deleted) gracefully
+        if (error.response && error.response.status === 404) {
+             console.log(`[Self-Hosted] DB '${dbName}' not found (404). Assuming already deleted.`);
+             return { success: true };
+        }
+
+        const errorMsg = error.response?.data?.error || error.message;
+        console.error(`[Self-Hosted] API Delete Request Failed:`, errorMsg);
+        return { success: false, error: errorMsg };
+    }
+}
 
 
+/**
+ * Universal provisioning router.
+ * Priority: AWS Self-Hosted -> Neon Round-Robin.
+ */
 async function createNeonDatabase(newDbName) {
+    
+    // --- 🚀 STRATEGY 1: AWS SELF-HOSTED (UNLIMITED) ---
+    // Check if the self-hosted platform is configured
+    if (process.env.SELF_HOSTED_DB_URL && process.env.SELF_HOSTED_DB_SECRET) {
+        console.log(`[Router] Attempting deployment on Self-Hosted AWS Platform...`);
+        
+        // Call the AWS helper function
+        // (Make sure createSelfHostedDatabase is defined in this file or imported!)
+        const awsResult = await createSelfHostedDatabase(newDbName);
+        
+        if (awsResult.success) {
+            console.log(`[Router] AWS Deployment Successful! DB: ${awsResult.db_name}`);
+            return awsResult; // Return immediately, skipping Neon entirely
+        } else {
+            console.warn(`[Router] AWS Creation Failed: ${awsResult.error}. Falling back to Neon Round-Robin...`);
+        }
+    }
+    // --------------------------------------------------
+
+
+    // --- 🔄 STRATEGY 2: NEON ROUND-ROBIN (FALLBACK) ---
+    
     if (typeof NEON_ACCOUNTS === 'undefined' || NEON_ACCOUNTS.length === 0) {
         const errorMsg = "CRITICAL: NEON_ACCOUNTS array is not defined or is empty.";
         console.error(`[Router] ${errorMsg}`);
@@ -1492,10 +1606,11 @@ async function createNeonDatabase(newDbName) {
     }
 
     // --- Final Failure ---
-    const errorMsg = "Database provisioning failed: All Neon accounts are full or unavailable.";
+    const errorMsg = "Database provisioning failed: AWS failed and all Neon accounts are full.";
     console.error(`[Router] CRITICAL FAILURE: ${errorMsg}`);
     return { success: false, provider_type: 'FAILURE', provider_account_id: '0', error: errorMsg };
 }
+
  
 /**
  * Fetches all known bot names from the primary tracking tables.
@@ -1662,15 +1777,33 @@ async function runOrphanDbCleanup(adminId) {
 
 
 
- /**
- * Deletes a specific database from the expected Neon account. If deletion fails,
- * it cycles through ALL other configured accounts as a fallback to ensure removal.
- * * NOTE: This relies on the global NEON_ACCOUNTS array being accessible.
- * * @param {string} dbName The name of the database to delete (e.g., 'atesttt').
- * @param {string} expectedAccountId The primary, expected account ID (e.g., '1' through '6').
- * @returns {Promise<{success: boolean, error?: string, accounts_checked: number}>}
+// In bot_services.js (REPLACE the entire deleteNeonDatabase function)
+
+/**
+ * Deletes a database. First tries AWS Self-Hosted, then falls back to Neon.
  */
 async function deleteNeonDatabase(dbName, expectedAccountId) {
+    
+    // --- 🚀 STRATEGY 1: AWS SELF-HOSTED ---
+    // If the self-hosted platform is configured, try to delete there first.
+    if (process.env.SELF_HOSTED_DB_URL) {
+        console.log(`[Delete Router] Attempting deletion via AWS Self-Hosted...`);
+        
+        // Call the helper function (Make sure deleteSelfHostedDatabase is defined in this file!)
+        const awsResult = await deleteSelfHostedDatabase(dbName);
+        
+        if (awsResult.success) {
+            // If successful (or 404/not found on AWS), we are done!
+            console.log(`[Delete Router] AWS deletion successful (or confirmed missing).`);
+            return { success: true, accounts_checked: 'AWS' };
+        } else {
+            // If it failed (e.g. 500 error or connection refused), log it and continue to Neon
+            console.warn(`[Delete Router] AWS deletion failed (${awsResult.error}). Checking Neon accounts...`);
+        }
+    }
+    
+    // --- 🔄 STRATEGY 2: NEON (Your Existing Logic) ---
+
     // --- Step 1: Input Validation and ID Parsing ---
     if (!dbName) {
         return { success: false, error: "Missing dbName provided.", accounts_checked: 0 };
@@ -4763,6 +4896,88 @@ bot.onText(/^\/id$/, async (msg) => {
     }
 });
 
+// In bot.js
+
+// --- Command: /createawsdb <dbname> ---
+bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const dbName = match[1].trim();
+    
+    // Basic validation
+    if (!/^[a-z0-9_]+$/.test(dbName)) {
+        return bot.sendMessage(adminId, "⚠️ Invalid name. Use lowercase letters, numbers, and underscores only.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, `☁️ Creating database \`${dbName}\` on AWS Self-Hosted Platform...`, { parse_mode: 'Markdown' });
+
+    try {
+        // Call the specific AWS function directly
+        const result = await dbServices.createSelfHostedDatabase(dbName);
+
+        if (result.success) {
+            await bot.editMessageText(
+                `**AWS Database Created!**\n\n` +
+                `**Name:** \`${result.db_name}\`\n` +
+                `**Connection:** \`${result.connection_string}\``,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            await bot.editMessageText(
+                `**AWS Creation Failed.**\n\nReason: ${result.error}`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id
+                }
+            );
+        }
+    } catch (e) {
+        console.error(e);
+        await bot.editMessageText(`Error: ${e.message}`, { chat_id: adminId, message_id: workingMsg.message_id });
+    }
+});
+
+// --- Command: /deleteawsdb <dbname> ---
+bot.onText(/^\/deleteawsdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const dbName = match[1].trim();
+
+    const workingMsg = await bot.sendMessage(adminId, `🗑️ Deleting database \`${dbName}\` from AWS Self-Hosted Platform...`, { parse_mode: 'Markdown' });
+
+    try {
+        // Call the specific AWS function directly
+        const result = await dbServices.deleteSelfHostedDatabase(dbName);
+
+        if (result.success) {
+            await bot.editMessageText(
+                `**AWS Database Deleted.**\n\nThe database \`${dbName}\` has been removed from your self-hosted server.`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            await bot.editMessageText(
+                `**AWS Deletion Failed.**\n\nReason: ${result.error}`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id
+                }
+            );
+        }
+    } catch (e) {
+        console.error(e);
+        await bot.editMessageText(`Error: ${e.message}`, { chat_id: adminId, message_id: workingMsg.message_id });
+    }
+});
 
 
 // New /add <user_id> command for admin
