@@ -5033,15 +5033,17 @@ bot.onText(/^\/key (\d+)$/, async (msg, match) => {
     }
 });
 
-// This new /id command is smarter and provides guidance.
+
 bot.onText(/^\/id$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
     const repliedMsg = msg.reply_to_message;
 
-    // --- Case 1: The user correctly replied to a forwarded message from a channel. ---
-    if (repliedMsg && repliedMsg.forward_from_chat) {
-        const forwardInfo = repliedMsg.forward_from_chat;
+    // --- FIX 1: Safely access the forward_from_chat object ---
+    const forwardInfo = repliedMsg?.forward_from_chat;
+
+    // --- Case 1: Reply to a forwarded message from a channel ---
+    if (repliedMsg && forwardInfo) {
         
         const channelTitle = escapeMarkdown(forwardInfo.title);
         const channelId = forwardInfo.id; // This is the ID you need
@@ -5050,8 +5052,9 @@ bot.onText(/^\/id$/, async (msg) => {
             parse_mode: 'Markdown' 
         });
 
-    // --- Case 2: The user replied, but NOT to a forwarded message. ---
+    // --- Case 2: Reply to a regular message (or no forward info found) ---
     } else if (repliedMsg) {
+        // This is the error case you were hitting incorrectly
         await bot.sendMessage(cid, "It looks like you replied to a regular message. To get a channel ID, you must **reply to a forwarded message** from that channel.", {
             parse_mode: 'Markdown'
         });
@@ -5064,7 +5067,6 @@ bot.onText(/^\/id$/, async (msg) => {
     }
 });
 
-// In bot.js
 
 
 bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
