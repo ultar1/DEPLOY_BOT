@@ -1790,106 +1790,145 @@ async function runOrphanDbCleanup(adminId) {
 }
 
 
-
-// In bot_services.js (REPLACE the entire deleteNeonDatabase function)
+// In bot_services.js (Add this helper function)
 
 /**
- * Deletes a database by routing the request to the correct host (AWS or Neon).
- * This function is used by the /deldb command for both explicit and orphan cleanup.
+ * Searches and attempts to delete a database by its name across AWS and all Neon accounts.
+ * @returns {Promise<{success: boolean, location: string}>}
  */
-async function deleteNeonDatabase(dbName, expectedAccountId) {
+async function deleteDatabaseGlobally(dbName) {
+    let attemptedLocations = [];
     
-    // Step 1: Input Validation
-    if (!dbName) {
-        return { success: false, error: "Missing dbName provided.", accounts_checked: 0 };
-    }
-
-    const expectedIdInt = parseInt(expectedAccountId, 10) || 1;
-    const neonDbName = dbName.replace(/-/g, '_'); 
-
-    // --- Sub-function to safely check credentials ---
-    const checkCredentials = (account) => {
-        return account && account.api_key && account.project_id && account.branch_id;
-    }
-
-    // =================================================================
-    // 1. STRATEGY A: EXPLICIT NEON DELETE (If ID is provided)
-    // =================================================================
-    if (expectedAccountId && expectedAccountId !== '1') { 
-        const primaryAccount = NEON_ACCOUNTS.find(acc => acc.id === expectedIdInt);
-        
-        if (checkCredentials(primaryAccount)) {
-            try {
-                const apiUrl = `https://console.neon.tech/api/v2/projects/${primaryAccount.project_id}/branches/${primaryAccount.branch_id}/databases/${neonDbName}`;
-                const headers = { 'Authorization': `Bearer ${primaryAccount.api_key}`, 'Accept': 'application/json' };
-
-                await axios.delete(apiUrl, { headers });
-                
-                console.log(`[Neon Delete] SUCCESS on Explicit Account ${expectedIdInt}.`);
-                return { success: true, accounts_checked: expectedIdInt };
-                
-            } catch (error) {
-                if (error.response?.status === 404) {
-                     return { success: true, accounts_checked: expectedIdInt };
-                }
-                const primaryErrorMsg = error.response?.data?.message || error.message;
-                return { success: false, error: `Neon Explicit Delete Failed: ${primaryErrorMsg}`, accounts_checked: expectedIdInt };
-            }
-        } else {
-             return { success: false, error: `Neon Account ${expectedIdInt} has invalid credentials.` };
-        }
-    }
-
-
-    // =================================================================
-    // 2. STRATEGY B: HYBRID SEARCH (If no ID provided - /deldb name or /deldb)
-    // =================================================================
-    
-    // --- STEP 1: TRY AWS SELF-HOSTED FIRST ---
+    // 1. Try AWS Self-Hosted
     if (process.env.SELF_HOSTED_DB_URL && process.env.SELF_HOSTED_DB_SECRET) {
-        console.log(`[Delete Router] Attempting deletion via AWS Self-Hosted...`);
-        // Assumes deleteSelfHostedDatabase is defined/exported in bot_services.js
         const awsResult = await deleteSelfHostedDatabase(dbName);
-        
-        if (awsResult.success) {
-            console.log(`[Delete Router] AWS deletion successful (or confirmed missing).`);
-            return { success: true, accounts_checked: 'AWS' };
-        }
-        console.warn(`[Delete Router] AWS deletion failed. Starting Neon Search...`);
+        if (awsResult.success) return { success: true, location: 'AWS' };
+        attemptedLocations.push('AWS');
     }
 
-    // --- STEP 2: FALLBACK TO FULL NEON SEARCH ---
-    
-    let accountsChecked = 0;
-    for (const fallbackAccount of NEON_ACCOUNTS) {
-        const fallbackAccountId = fallbackAccount.id;
-        accountsChecked++;
-        
-        console.log(`[Neon Delete] Search: Checking Account ${fallbackAccountId}...`);
+    // 2. Try All Neon Accounts
+    for (const accountConfig of NEON_ACCOUNTS) {
+        const accountId = String(accountConfig.id);
+        attemptedLocations.push(`Neon-${accountId}`);
 
-        if (checkCredentials(fallbackAccount)) {
+        if (checkCredentials(accountConfig)) {
             try {
-                const apiUrl = `https://console.neon.tech/api/v2/projects/${fallbackAccount.project_id}/branches/${fallbackAccount.branch_id}/databases/${neonDbName}`;
-                const headers = { 'Authorization': `Bearer ${fallbackAccount.api_key}`, 'Accept': 'application/json' };
-
+                const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}/databases/${dbName}`;
+                const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
                 await axios.delete(apiUrl, { headers });
-                
-                console.log(`[Neon Delete] SUCCESS on Fallback Account ${fallbackAccountId}.`);
-                return { success: true, accounts_checked: fallbackAccountId }; 
-                
+                return { success: true, location: `Neon Account ${accountId}` };
             } catch (error) {
-                 if (error.response?.status === 404) continue; 
-                 const fallbackErrorMsg = error.response?.data?.message || error.message;
-                 console.warn(`[Neon Delete] Fallback FAIL on Account ${fallbackAccountId}: ${fallbackErrorMsg}.`);
+                if (error.response?.status === 404) continue; // Not here, continue search
             }
         }
     }
-    
-    // --- Step 3: Final Failure ---
-    const finalErrorMsg = `Database not found in AWS or any configured Neon account.`;
-    console.error(`[Delete Router] FINAL FAILURE: ${finalErrorMsg}`);
-    return { success: false, error: finalErrorMsg, accounts_checked: accountsChecked };
+
+    return { 
+        success: false, 
+        location: `Deletion failed across all ${attemptedLocations.length} sources.` 
+    };
 }
+
+/// In bot_services.js (REPLACE the entire changeBotDatabase function)
+
+/**
+ * Migrates a bot to a new database (AWS or Neon), ensuring the old database 
+ * is targeted for deletion before a new one is created.
+ */
+async function changeBotDatabase(appName) {
+    console.log(`[ChangeDB] Starting database swap for ${appName}...`);
+    
+    // 0. Get current deployment details (needed for deletion and ID preservation)
+    const deploymentInfo = await pool.query(`
+        SELECT user_id, config_vars, neon_account_id
+        FROM user_deployments 
+        WHERE app_name = $1
+    `, [appName]);
+    
+    if (deploymentInfo.rows.length === 0) {
+        await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Migration failed for \`${appName}\`. Deployment record not found.`, { parse_mode: 'Markdown' });
+        return { success: false, message: "Deployment record not found." };
+    }
+
+    const oldConfig = deploymentInfo.rows[0];
+    const targetUserId = oldConfig.user_id; // Get owner ID (preserved)
+    const oldDbUrl = oldConfig.config_vars?.DATABASE_URL;
+    
+    // --- 1. DELETE OLD DATABASE (FIRST STEP) ---
+    let deletionSuccess = true;
+    
+    if (oldDbUrl) {
+        const dbUrlMatch = oldDbUrl.match(/\/([\w-]+)\?/);
+        const oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
+
+        if (oldDbNameForDeletion) {
+            // Find and delete the old DB using the global search method
+            const deleteResult = await deleteDatabaseGlobally(oldDbNameForDeletion);
+            
+            if (!deleteResult.success) {
+                 deletionSuccess = false;
+                 console.warn(`[ChangeDB] Failed to delete old DB ${oldDbNameForDeletion}. Result: ${deleteResult.location}`);
+            }
+        }
+    }
+
+    // --- 2. PROVISION NEW DATABASE (Clean Name) ---
+    // Use the CLEAN APP NAME as the database name.
+    const newDbName = appName.replace(/-/g, '_'); 
+    const creationResult = await createNeonDatabase(newDbName); 
+
+    if (!creationResult.success) {
+        const message = `**MIGRATION FAILED for \`${appName}\`**\nReason: Database provisioning failed: ${creationResult.error}`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: `Provisioning failed: ${creationResult.error}` };
+    }
+
+    const newDbUrl = creationResult.connection_string;
+    const newAccountId = creationResult.provider_account_id;
+
+    // --- 3. UPDATE LOCAL DATABASE RECORD (MUST SUCCEED FIRST) ---
+    try {
+        await pool.query(`
+            UPDATE user_deployments 
+            SET neon_account_id = $1,
+                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
+            WHERE app_name = $3
+        `, [newAccountId, newDbUrl, appName]);
+        
+    } catch (dbError) {
+        // CRITICAL FAIL: Clean up the new DB before exiting with failure.
+        console.error(`[ChangeDB] CRITICAL: Local DB record update failed for ${appName}:`, dbError);
+        const message = `⚠️ MIGRATION CRITICAL FAIL for \`${appName}\` (Owner: ${targetUserId})\n\nLocal records failed to update. Deleting newly created DB: ${newDbName}.`;
+        
+        await deleteDatabaseGlobally(newDbName).catch(()=>{});
+
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: "Local DB update failed." };
+    }
+
+    // --- 4. Update Heroku Config Var (Triggers Restart - NOW SAFE) ---
+    try {
+        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+            { DATABASE_URL: newDbUrl },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+    } catch (e) {
+        const err = e.response?.data?.message || e.message;
+        const message = `❌ **MIGRATION FAILED for \`${appName}\`**\nReason: Heroku update failed (Bot is down): ${err}`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: `Heroku update failed: ${err}` };
+    }
+    
+    // --- 5. Final Admin Success Notification ---
+    const successMessage = `✅ **MIGRATION SUCCESS** for \`${appName}\` (Owner: ${targetUserId})\n` +
+                           `📍 **New Location:** ${newAccountId}\n` +
+                           `🗑️ **Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
+    
+    await bot.sendMessage(ADMIN_ID, successMessage, { parse_mode: 'Markdown' });
+
+    return { success: true, account: newAccountId };
+}
+
 
 
 /**
