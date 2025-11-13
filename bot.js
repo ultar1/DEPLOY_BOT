@@ -2834,6 +2834,57 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
 }
 
 
+
+
+/**
+ * Migrates a bot to a new database (AWS or Neon) and updates records.
+ */
+async function changeBotDatabase(appName) {
+    console.log(`[ChangeDB] Starting database swap for ${appName}...`);
+
+    // 1. Provision New Database (Uses your Router: AWS First -> Neon Fallback)
+    const dbName = appName.replace(/-/g, '_');
+    const creationResult = await createNeonDatabase(dbName); 
+
+    if (!creationResult.success) {
+        return { success: false, message: `Provisioning failed: ${creationResult.error}` };
+    }
+
+    const newDbUrl = creationResult.connection_string;
+    const newAccountId = creationResult.provider_account_id;
+
+    // 2. Update Heroku Config Var (This automatically restarts the bot)
+    try {
+        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+            { DATABASE_URL: newDbUrl },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+    } catch (e) {
+        const err = e.response?.data?.message || e.message;
+        return { success: false, message: `Heroku update failed: ${err}` };
+    }
+
+    // 3. Update Local Database Record
+    // We update 'neon_account_id' so deletion works later.
+    // We also update the 'config_vars' JSON blob so backups are accurate.
+    try {
+        await pool.query(`
+            UPDATE user_deployments 
+            SET neon_account_id = $1,
+                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
+            WHERE app_name = $3
+        `, [newAccountId, newDbUrl, appName]);
+        
+        console.log(`[ChangeDB] Success for ${appName}. Moved to Account: ${newAccountId}`);
+        return { success: true, account: newAccountId };
+
+    } catch (dbError) {
+        console.error(`[ChangeDB] Local DB update failed for ${appName}:`, dbError);
+        return { success: true, message: "Heroku updated, but local DB record failed." };
+    }
+}
+
+
 /**
  * Fetches detailed statistics for a specific Neon account.
  * @param {string} accountId - The account identifier ('1' or '2').
@@ -5690,6 +5741,84 @@ You can now use /stats or /bapp to see the updated count of all your bots.
         });
     }
 });
+
+
+// In bot.js
+
+bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const target = match[1].trim();
+    
+    // --- CASE 1: MASS MIGRATION (/changedb all) ---
+    if (target.toLowerCase() === 'all') {
+        const confirmMsg = await bot.sendMessage(adminId, `**Mass Database Migration**\n\nThis will create a new database for EVERY active bot and restart them. This may take a long time.\n\nType \`/changedb confirm_all\` to proceed.`);
+        return;
+    }
+
+    if (target === 'confirm_all') {
+        const workingMsg = await bot.sendMessage(adminId, "Starting Mass Database Migration...");
+        
+        // Fetch all bots
+        const allBotsResult = await pool.query("SELECT bot_name FROM user_bots");
+        const allBots = allBotsResult.rows;
+        
+        let success = 0;
+        let failed = 0;
+        
+        for (const [i, botRow] of allBots.entries()) {
+            const appName = botRow.bot_name;
+            
+            // Update progress every 5 bots
+            if (i % 5 === 0) {
+                await bot.editMessageText(
+                    `**Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                ).catch(()=>{});
+            }
+
+            // Call the helper
+            // 💡 We use 'dbServices' because it's imported in bot.js
+            const result = await changeBotDatabase(appName);
+            
+            if (result.success) success++;
+            else {
+                failed++;
+                console.error(`Failed to migrate ${appName}: ${result.message}`);
+            }
+            
+            // Small delay to prevent API rate limits
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        await bot.editMessageText(
+            `**Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+        return;
+    }
+
+    // --- CASE 2: SINGLE APP MIGRATION (/changedb botname) ---
+    const appName = target;
+    const workingMsg = await bot.sendMessage(adminId, `🔄 Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
+
+    // Call helper
+    const result = await changeBotDatabase(appName);
+
+    if (result.success) {
+        await bot.editMessageText(
+            `**Success!**\n\nDatabase for \`${appName}\` has been changed.\nNew Location: **${result.account}**\nBot is restarting...`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    } else {
+        await bot.editMessageText(
+            `**Failed**\n\nReason: ${result.message}`,
+            { chat_id: adminId, message_id: workingMsg.message_id }
+        );
+    }
+});
+
 
 
 // In bot.js (REPLACE the entire /dbstats function)
