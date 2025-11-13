@@ -2695,7 +2695,6 @@ async function changeBotDatabase(appName) {
     }
 }
 
-}
 
 
 
