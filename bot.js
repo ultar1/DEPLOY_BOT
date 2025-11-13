@@ -5805,7 +5805,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+)(?:\s+(\d+))?)?$/i, async (msg, match) => {
             // B. Fallback to Neon Search if AWS failed/is not configured
             if (!result || !result.success) {
                 // We use the full Neon search logic, passing '1' as a default start ID
-                result = await deleteDatabaseFromNeon(singleDbName, '1');
+                result = await deleteNeonDatabase(singleDbName, '1');
             }
         }
         
