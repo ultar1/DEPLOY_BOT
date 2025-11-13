@@ -2598,6 +2598,57 @@ async function sendPricingTiers(chatId, messageId) {
 }
 
 
+// In bot_services.js (REPLACE the changeBotDatabase function)
+
+/**
+ * Migrates a bot to a new database (AWS or Neon) and updates records.
+ */
+async function changeBotDatabase(appName) {
+    console.log(`[ChangeDB] Starting database swap for ${appName}...`);
+
+    // --- FIX: GENERATE A UNIQUE NAME WITH A RANDOM SUFFIX ---
+    const randomSuffix = require('crypto').randomBytes(2).toString('hex');
+    const baseDbName = appName.replace(/-/g, '_');
+    const newUniqueDbName = `${baseDbName}_${randomSuffix}`;
+    
+    // 1. Provision New Database (Uses your Router: AWS First -> Neon Fallback)
+    const creationResult = await createNeonDatabase(newUniqueDbName); 
+
+    if (!creationResult.success) {
+        return { success: false, message: `Provisioning failed: ${creationResult.error}` };
+    }
+
+    const newDbUrl = creationResult.connection_string;
+    const newAccountId = creationResult.provider_account_id;
+
+    // 2. Update Heroku Config Var (This automatically restarts the bot)
+    try {
+        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+            { DATABASE_URL: newDbUrl },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+    } catch (e) {
+        const err = e.response?.data?.message || e.message;
+        return { success: false, message: `Heroku update failed: ${err}` };
+    }
+
+    // 3. Update Local Database Record
+    try {
+        await pool.query(`
+            UPDATE user_deployments 
+            SET neon_account_id = $1,
+                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
+            WHERE app_name = $3
+        `, [newAccountId, newDbUrl, appName]);
+        
+        console.log(`[ChangeDB] Success for ${appName}. Moved to Account: ${newAccountId}. New DB Name: ${newUniqueDbName}`);
+        return { success: true, account: newAccountId };
+
+    } catch (dbError) {
+        console.error(`[ChangeDB] Local DB update failed for ${appName}:`, dbError);
+        return { success: true, message: "Heroku updated, but local DB record failed." };
+    }
+}
 
 
 // --- FIX: Corrected sendLatestKeyboard function for reliable database updates ---
@@ -2833,56 +2884,6 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
     }
 }
 
-
-
-
-/**
- * Migrates a bot to a new database (AWS or Neon) and updates records.
- */
-async function changeBotDatabase(appName) {
-    console.log(`[ChangeDB] Starting database swap for ${appName}...`);
-
-    // 1. Provision New Database (Uses your Router: AWS First -> Neon Fallback)
-    const dbName = appName.replace(/-/g, '_');
-    const creationResult = await createNeonDatabase(dbName); 
-
-    if (!creationResult.success) {
-        return { success: false, message: `Provisioning failed: ${creationResult.error}` };
-    }
-
-    const newDbUrl = creationResult.connection_string;
-    const newAccountId = creationResult.provider_account_id;
-
-    // 2. Update Heroku Config Var (This automatically restarts the bot)
-    try {
-        await herokuApi.patch(`/apps/${appName}/config-vars`, 
-            { DATABASE_URL: newDbUrl },
-            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
-    } catch (e) {
-        const err = e.response?.data?.message || e.message;
-        return { success: false, message: `Heroku update failed: ${err}` };
-    }
-
-    // 3. Update Local Database Record
-    // We update 'neon_account_id' so deletion works later.
-    // We also update the 'config_vars' JSON blob so backups are accurate.
-    try {
-        await pool.query(`
-            UPDATE user_deployments 
-            SET neon_account_id = $1,
-                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
-            WHERE app_name = $3
-        `, [newAccountId, newDbUrl, appName]);
-        
-        console.log(`[ChangeDB] Success for ${appName}. Moved to Account: ${newAccountId}`);
-        return { success: true, account: newAccountId };
-
-    } catch (dbError) {
-        console.error(`[ChangeDB] Local DB update failed for ${appName}:`, dbError);
-        return { success: true, message: "Heroku updated, but local DB record failed." };
-    }
-}
 
 
 /**
