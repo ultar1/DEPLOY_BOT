@@ -2,11 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultar WBD Console</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultar WBD</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        /* Base styles */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
@@ -19,69 +18,29 @@
             text-align: center;
         }
 
-        /* Variables */
-        :root {
-            --bg-primary: #1c1c1e;
-            --bg-secondary: #2c2c2e;
-            --bg-tertiary: #3a3a3c;
-            --text-primary: #ffffff;
-            --text-secondary: #8e8e93;
-            --accent-cyan: #00FFD1; /* Neon Cyan */
-            --accent-blue: #0a84ff;
-            --status-online: #34c759;
-            --status-offline: #ff3b30;
-            --status-warning: #ffcc00;
-        }
-
-        #app {
-            display: flex;
-            flex-direction: column;
+        #main-container {
             width: 100%;
             max-width: 600px;
             margin: 0 auto;
             text-align: left;
-            flex: 1;
         }
-        .content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px 0;
-        }
-
-        /* Header */
-        .header {
-            border-bottom: 1px solid var(--bg-tertiary);
-            padding-bottom: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-shrink: 0;
-            margin-bottom: 10px;
-        }
-
-        .header-title {
-            font-size: 1.5em;
+        
+        #header-title {
+            font-size: 1.8em;
             font-weight: 700;
-            color: var(--text-primary);
-            flex: 1;
+            color: #fff;
+            margin-bottom: 20px;
             text-align: center;
         }
 
-        .header-back {
-            background: none;
-            border: none;
-            color: var(--accent-cyan);
-            font-size: 20px;
-            cursor: pointer;
-            padding: 4px 8px;
-            flex-shrink: 0;
-            margin-left: -10px;
+        .bot-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
 
-        /* Bot List & Cards */
-        .bot-list { display: flex; flex-direction: column; gap: 12px; }
-        .bot-card, .management-option {
-            background-color: var(--bg-secondary);
+        .create-bot-card, .bot-card {
+            background-color: #2c2c2e;
             border-radius: 12px;
             padding: 15px;
             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
@@ -90,473 +49,355 @@
             display: flex;
             align-items: center;
             gap: 15px;
-            margin-bottom: 12px;
         }
-        .bot-card:active { transform: translateY(-2px); background-color: var(--bg-tertiary); }
+        
+        .create-bot-card:hover, .bot-card:hover {
+            transform: translateY(-2px);
+            background-color: #3a3a3c;
+        }
+
+        .icon-plus {
+            font-size: 1.8em;
+            color: #0a84ff;
+            font-weight: 600;
+        }
+
         .bot-icon-circle {
-            width: 40px; height: 40px;
+            width: 40px;
+            height: 40px;
+            background-color: #5856d6;
             border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.5em; font-weight: bold; color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #fff;
         }
-        .bot-details { display: flex; flex-direction: column; flex-grow: 1; }
-        .bot-name { font-size: 1.1em; font-weight: 600; }
-        .bot-username { font-size: 0.9em; color: var(--text-secondary); }
-        .status-tag { 
-            padding: 4px 8px; border-radius: 6px; font-weight: bold; font-size: 0.75em;
-            text-transform: uppercase; margin-left: 8px;
-        }
-        
-        /* Status Colors */
-        .bg-green { background-color: var(--status-online); color: var(--bg-secondary); }
-        .bg-red { background-color: var(--status-offline); color: var(--text-primary); }
-        .bg-yellow { background-color: var(--status-warning); color: var(--bg-secondary); }
-        
-        /* Management View */
-        .action-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
-        .action-button {
-            padding: 12px 0; border-radius: 10px; border: none;
-            background-color: var(--bg-tertiary); color: var(--text-primary);
-            font-weight: 600; cursor: pointer; transition: background-color 0.2s ease;
-        }
-        .action-button:active { background-color: #48484a; }
-        .action-button.danger { background-color: #ef4444; }
 
-        /* Variable Modal */
-        .variable-item {
-            background: var(--bg-tertiary); border-radius: 10px; padding: 12px;
-            display: flex; justify-content: space-between; align-items: center;
+        .bot-details {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+        }
+
+        .bot-name {
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .bot-username {
+            font-size: 0.9em;
+            color: #8e8e93;
+        }
+
+        .chevron {
+            font-size: 1.5em;
+            color: #8e8e93;
+        }
+        
+        #deployment-view, #management-view {
+            padding: 20px 0;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #f1f1f1;
+        }
+
+        .input-container {
+            position: relative;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid #3a3a3c;
+            background-color: #2c2c2e;
+            color: #fff;
+            box-sizing: border-box;
+            transition: border-color 0.3s ease;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #5856d6;
+        }
+
+        .input-status-icon {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.2em;
+        }
+
+        .status-green-border {
+            border-color: #34c759;
+        }
+
+        .status-red-border {
+            border-color: #ff3b30;
+        }
+
+        .status-icon-green { color: #34c759; }
+        .status-icon-red { color: #ff3b30; }
+
+        .inline-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .inline-buttons button {
+            flex-grow: 1;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid #3a3a3c;
+            background-color: #2c2c2e;
+            color: #f1f1f1;
             cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
         }
-        .variable-name { color: var(--accent-cyan); font-weight: 600; }
-        .variable-value { font-size: 0.9em; color: var(--text-secondary); word-break: break-all; }
-
-        /* Input Modal */
-        .modal-overlay {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.7); display: none; align-items: flex-end; z-index: 1000;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal {
-            background: var(--bg-secondary); border-radius: 20px 20px 0 0;
-            padding: 20px; width: 100%; max-height: 90vh; overflow-y: auto;
-        }
-        .modal-header { padding-bottom: 16px; border-bottom: 1px solid var(--bg-tertiary); margin-bottom: 16px; }
-        .modal-title { font-size: 18px; font-weight: 600; }
-        .modal-close { background: none; border: none; color: var(--text-secondary); font-size: 24px; cursor: pointer; }
         
-        .input-field {
-            width: 100%; padding: 12px; border-radius: 10px;
-            border: 1px solid var(--border-color); background: var(--bg-tertiary);
-            color: var(--text-primary); margin-bottom: 10px;
+        .inline-buttons button.active {
+            background-color: #5856d6;
+            border-color: #5856d6;
         }
-        .btn { padding: 12px; border-radius: 10px; border: none; background-color: var(--accent-cyan); color: #000; font-weight: 600; cursor: pointer; }
-        .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); }
 
-        /* Utilities */
-        .loading-text { text-align: center; color: var(--text-secondary); padding: 20px; }
+        .deploy-button {
+            width: 100%;
+            padding: 15px;
+            border-radius: 12px;
+            background-color: #5856d6;
+            color: #fff;
+            font-size: 1.1em;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s ease, opacity 0.2s ease;
+        }
+        
+        .deploy-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .glowing-button {
+            animation: glowing-button 2s infinite;
+        }
+
+        @keyframes glowing-button {
+            0% { box-shadow: 0 0 5px #0a84ff, 0 0 10px #0a84ff; }
+            50% { box-shadow: 0 0 10px #5856d6, 0 0 20px #5856d6; }
+            100% { box-shadow: 0 0 5px #0a84ff, 0 0 10px #0a84ff; }
+        }
+
+        .back-button {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #0a84ff;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        
+        .back-button .chevron-left {
+            font-size: 1.2em;
+        }
+
+        .management-option {
+            background-color: #2c2c2e;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .management-option:hover {
+            background-color: #3a3a3c;
+            transform: translateY(-1px);
+        }
+
+        .option-label {
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .option-info {
+            font-size: 0.9em;
+            color: #8e8e93;
+            margin-top: 5px;
+        }
+        
     </style>
 </head>
 <body>
-    <div id="app">
-        <!-- Header -->
-        <div class="header">
-            <button class="header-back" id="headerBack" style="display: none;">←</button>
-            <div class="header-title" id="headerTitle">Bot Console</div>
-            <div style="width: 24px;"></div>
-        </div>
+    <div id="main-container">
+        <div id="view-container">
+            </div>
+    </div>
 
-        <!-- Content Area -->
-        <div class="content">
-            <!-- View 1: My Bots List -->
-            <div class="view active" id="myBotsView">
-                <div id="botsListContainer" class="bot-list">
-                    <div id="loadingIndicator" class="loading-text">
-                        <div class="loading"></div> Fetching active bots...
-                    </div>
+    
+   <script>
+    const API_BASE_URL = window.location.origin + '/api';
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+
+    // --- State & Cache ---
+    let deploymentState = {};
+
+    // --- Main Router / View Renderer ---
+    function renderView(viewName, data = null) {
+        const viewContainer = document.getElementById('view-container');
+        let newHtml = '';
+        switch (viewName) {
+            case 'myBots': newHtml = getMyBotsViewHtml(); break;
+            case 'botTypeSelection': newHtml = getBotTypeSelectionViewHtml(); break;
+            case 'deploymentForm': newHtml = getDeploymentFormViewHtml(); break;
+            case 'management': newHtml = getBotManagementViewHtml(data); break;
+            case 'variables': newHtml = getVariablesViewHtml(data); break;
+        }
+        viewContainer.innerHTML = newHtml;
+
+        if (viewName === 'myBots') fetchAndDisplayBots();
+        if (viewName === 'variables') fetchAndDisplayVariables(data);
+        if (viewName === 'deploymentForm') attachDeploymentFormListeners();
+    }
+
+    // --- HTML Template Functions (getMyBotsViewHtml, getBotTypeSelectionViewHtml, etc.) ---
+    function getMyBotsViewHtml() {
+        return `
+            <div id="header-title">My Bots</div>
+            <div class="bot-list" id="bot-list">
+                <div class="create-bot-card" data-action="render" data-view-name="botTypeSelection">
+                    <span class="icon-plus">+</span><div class="bot-details"><span class="bot-name">Create a New Bot</span></div>
                 </div>
-            </div>
+                <div id="bot-list-loading">Loading your bots...</div>
+            </div>`;
+    }
+    function getBotTypeSelectionViewHtml() { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render" data-view-name="myBots"><span class="chevron-left">&lt;</span> Back</div><div id="header-title">Select Bot Type</div><div class="inline-buttons"><button data-action="select-bot-type" data-bot-type="levanter">Levanter</button><button data-action="select-bot-type" data-bot-type="raganork">Raganork</button></div>`; }
+    function getDeploymentFormViewHtml() { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render" data-view-name="botTypeSelection"><span class="chevron-left">&lt;</span> Back</div><div id="header-title">New ${deploymentState.botType.charAt(0).toUpperCase()+deploymentState.botType.slice(1)} Bot</div><div id="deployment-view"><div class="form-group"><label for="appNameInput">App Name (unique, no spaces):</label><div class="input-container"><input type="text" id="appNameInput" placeholder="my-cool-bot-123"><span id="appNameStatus" class="input-status-icon"></span></div></div><div class="form-group"><label for="sessionIdInput">Session ID:</label><div class="input-container"><input type="text" id="sessionIdInput" placeholder="Paste your session ID here"><span id="sessionIdStatus" class="input-status-icon"></span></div></div><div class="form-group"><label>Auto Status View:</label><div class="inline-buttons" id="autoview-buttons"><button data-action="select-autostatus" data-value="yes">Yes</button><button data-action="select-autostatus" data-value="no" class="active">No</button></div></div><div class="form-group"><label for="deployKeyInput">Deploy Key:</label><div class="input-container"><input type="text" id="deployKeyInput" placeholder="Enter your paid deploy key"><span id="deployKeyStatus" class="input-status-icon"></span></div></div><button id="deploy-button" data-action="deploy-bot" class="deploy-button" disabled>Deploy</button></div>`; }
+    function getBotManagementViewHtml(bot) { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render" data-view-name="myBots"><span class="chevron-left">&lt;</span> Back</div><div id="header-title">${bot.appName}</div><div id="management-view"><div class="management-option" data-action="restart-bot" data-app-name="${bot.appName}"><div class="option-label">Restart Bot</div><div class="option-info">Restart the bot's server process.</div></div><div class="management-option" data-action="redeploy-bot" data-app-name="${bot.appName}"><div class="option-label">Redeploy Bot</div><div class="option-info">Update the bot to the latest version.</div></div><div class="management-option" data-action="render-variables" data-bot-json='${JSON.stringify(bot)}'><div class="option-label">Set Variables</div><div class="option-info">Edit your bot's configuration and settings.</div></div><div class="management-option" data-action="delete-bot" data-app-name="${bot.appName}"><div class="option-label">Delete Bot</div><div class="option-info">Permanently delete this bot.</div></div><div class="management-option" style="cursor: default;"><div class="option-label">Expiration Date</div><div class="option-info">${new Date(bot.expirationDate).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div></div></div>`; }
+    function getVariablesViewHtml(bot) { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render-management" data-bot-json='${JSON.stringify(bot)}'><span class="chevron-left">&lt;</span> Back</div><div id="header-title">Bot Variables</div><div id="variables-list">Loading settings...</div>`; }
 
-            <!-- View 2: Bot Management -->
-            <div class="view" id="managementView">
-                <div class="management-header">
-                    <div class="management-bot-name" id="managementBotName"></div>
-                    <div class="management-description" id="managementBotStatus">Status: Loading</div>
-                </div>
-                <div class="action-buttons-group" id="actionButtonsContainer"></div>
-            </div>
-
-            <!-- View 3: Variables List -->
-            <div class="view" id="variablesView">
-                <div class="modal-title" style="margin-bottom: 16px;" id="variablesBotName">Bot Variables</div>
-                <div id="variablesListContainer" class="variables-list"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Variables Modal -->
-    <div class="modal-overlay" id="variablesModal">
-        <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">Set Variables</div>
-                <button class="modal-close" onclick="closeModal('variablesModal')">×</button>
-            </div>
-            <div class="variables-list" id="variablesList"></div>
-        </div>
-    </div>
-
-    <!-- Input Variable Modal -->
-    <div class="confirmation-dialog" id="inputVariableModal">
-        <div class="confirmation-message">
-             <div style="font-weight: 600;" id="inputModalTitle">Edit Variable</div>
-             <div style="font-size: 0.8em; color: var(--text-secondary);" id="inputVarLabel"></div>
-        </div>
-        <div class="input-modal">
-            <input type="text" class="input-field" id="inputVariableValue" placeholder="Enter new value">
-            <div class="input-error" id="inputError" style="display: none;"></div>
-            <button class="btn" onclick="submitVariableChange()">Save Variable</button>
-            <button class="btn btn-secondary" onclick="closeModal('inputVariableModal')">Cancel</button>
-        </div>
-    </div>
-
-    <!-- Logs Modal -->
-    <div class="modal-overlay" id="logsModal">
-        <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">Bot Logs</div>
-                <button class="modal-close" onclick="closeModal('logsModal')">×</button>
-            </div>
-            <div class="logs-container" id="logsContainer">
-                <div class="log-line">Fetching real-time logs...</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Confirmation Dialog -->
-    <div class="confirmation-dialog" id="confirmationDialog">
-        <div class="confirmation-message" id="confirmationMessage">Are you sure?</div>
-        <div class="confirmation-buttons">
-            <button class="confirmation-btn cancel" onclick="cancelConfirmation()">Cancel</button>
-            <button class="confirmation-btn confirm" id="confirmationConfirmBtn" onclick="confirmAction()">Confirm</button>
-        </div>
-    </div>
-
-    <script>
-        // --- Global Config & State ---
-        let currentBot = null;
-        let pendingConfirmation = null;
-        let currentVariable = { name: null, value: null };
-        const apiBaseUrl = window.location.origin + '/api'; 
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-
-        // Utility Functions
-        function showAlert(message) { tg.showAlert(message); }
-        function showProgress(show) { show ? tg.showProgress(true) : tg.hideProgress(); }
-
-        function showConfirm(message, onConfirm, destructive = false) {
-            const dialog = document.getElementById('confirmationDialog');
-            document.getElementById('confirmationMessage').textContent = message;
-            
-            const confirmBtn = document.getElementById('confirmationConfirmBtn');
-            confirmBtn.classList.toggle('destructive', destructive);
-            
-            pendingConfirmation = { onConfirm };
-            dialog.classList.add('active');
-        }
-
-        function confirmAction() {
-            document.getElementById('confirmationDialog').classList.remove('active');
-            if (pendingConfirmation && pendingConfirmation.onConfirm) {
-                pendingConfirmation.onConfirm();
-            }
-            pendingConfirmation = null;
-        }
-
-        function cancelConfirmation() {
-            document.getElementById('confirmationDialog').classList.remove('active');
-            pendingConfirmation = null;
-        }
-
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('active');
-        }
-
-        // --- View Routing ---
-        function switchView(viewId) {
-            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-            document.getElementById(viewId).classList.add('active');
-
-            const isManagementView = viewId === 'managementView' || viewId === 'variablesView';
-            
-            // Update Header Display
-            document.getElementById('headerTitle').textContent = isManagementView ? currentBot?.name : 'My Bots';
-            document.getElementById('headerBack').style.display = isManagementView ? 'block' : 'none';
-        }
-
-        // --- Component Render Logic ---
-        
-        // Helper to format expiration date
-        function formatExpiration(dateStr) {
-            const expiration = new Date(dateStr);
-            const diffDays = Math.ceil((expiration.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-            if (diffDays <= 0) return 'Expired';
-            if (diffDays < 30) return `Expires in ${diffDays}d`;
-            return `Expires ${expiration.toLocaleDateString()}`;
-        }
-
-        // Helper to get color/class based on status text
-        const getStatusData = (status) => {
-            if (status === 'Online') return { color: '#34c759', text: 'ONLINE', class: 'bg-green' };
-            if (status === 'Offline') return { color: '#ff3b30', text: 'LOGGED OUT', class: 'bg-red' };
-            return { color: '#ffcc00', text: 'OFF/ERROR', class: 'bg-yellow' };
+    // --- Logic & Event Handlers ---
+    async function fetchAndDisplayBots() { /* ... content from previous answer ... */ const botListEl=document.getElementById("bot-list");try{const e=await fetch(`${API_BASE_URL}/bots`,{headers:{"X-Telegram-Init-Data":tg.initData}}),t=await e.json();if(document.getElementById("bot-list-loading").style.display="none",t.success&&t.bots.length>0)t.bots.forEach((e=>{const t=document.createElement("div");t.className="bot-card",t.dataset.action="render-management",t.dataset.botJson=JSON.stringify(e);const a=e.appName.charAt(0).toUpperCase(),o="Online"===e.status?"#34c759":"#ff3b30",n=Math.ceil((new Date(e.expirationDate)-new Date)/(1e3*60*60*24));t.innerHTML=`\n                        <div class="bot-icon-circle" style="background-color: ${o};">${a}</div>\n                        <div class="bot-details">\n                            <span class="bot-name">${e.appName}</span>\n                            <span class="bot-username">Status: ${e.status} | ${n>0?`Expires in ${n} days`:"Expired"}</span>\n                        </div>\n                        <div class="chevron">&gt;</div>\n                    `,botListEl.appendChild(t)}));else botListEl.insertAdjacentHTML("beforeend","<div>You have no bots deployed. Create one!</div>")}catch(e){tg.showAlert("Failed to load your bots.")} }
+    async function fetchAndDisplayVariables(bot) { /* ... content from previous answer ... */ const varListEl=document.getElementById("variables-list");try{const e=await fetch(`${API_BASE_URL}/bots/config-vars/${bot.appName}`,{headers:{"X-Telegram-Init-Data":tg.initData}}),t=await e.json();if(!t.success)throw new Error(t.message);let a="";for(const[o,n]of Object.entries(t.configVars)){const e=n&&n.length>20?n.substring(0,20)+"...":n;a+=`\n                        <div class="management-option" data-action="edit-variable" data-app-name="${bot.appName}" data-var-name="${o}" data-current-value="${n}">\n                            <div class="option-label">${o}</div>\n                            <div class="option-info">${e||"Not Set"}</div>\n                        </div>\n                    `}varListEl.innerHTML=a}catch(e){varListEl.innerHTML=`Error: ${e.message}`} }
+    function editVariable(appName, varName, currentValue) { /* ... content from previous answer ... */ const booleanVars=["ALWAYS_ONLINE","AUTO_READ_STATUS","AUTO_STATUS_VIEW","ANTI_DELETE"];booleanVars.includes(varName)?tg.showPopup({title:`Set ${varName}`,message:"Choose an option:",buttons:[{id:"enable",type:"default",text:"✅ Enable"},{id:"disable",type:"default",text:"🚫 Disable"},{type:"cancel"}]},(e=>{("enable"===e||"disable"===e)&&updateVariableOnServer(appName,varName,"enable"===e)})):tg.showPopup({title:`Edit ${varName}`,message:"Enter the new value:",buttons:[{id:"input",type:"input",placeholder:currentValue||"Enter value"},{id:"ok",type:"ok"},{type:"cancel"}]},((e,t)=>{ "ok"===e&&t&&updateVariableOnServer(appName,varName,t)}))}
+    async function updateVariableOnServer(appName, varName, varValue) { /* ... content from previous answer ... */ tg.showProgress(!0);try{const e=await fetch(`${API_BASE_URL}/bots/set-var`,{method:"POST",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg.initData},body:JSON.stringify({appName,varName,varValue})}),t=await e.json();tg.hideProgress(),tg.showAlert(t.message),t.success&&renderView("variables",JSON.parse(document.querySelector('[data-action="render-variables"]').dataset.botJson))}catch(e){tg.hideProgress(),tg.showAlert("An error occurred while updating the variable.")}}
+    function attachDeploymentFormListeners() { /* ... content from previous answer ... */ deploymentState.autoStatusView="no",["appNameInput","sessionIdInput","deployKeyInput"].forEach((e=>{document.getElementById(e).addEventListener("input",checkAllInputs)}))}
+    async function checkAllInputs() { /* ... content from previous answer ... */ const e=document.getElementById("deploy-button"),t=document.getElementById("appNameInput").value.length>2,a=document.getElementById("sessionIdInput").value.length>9,o=document.getElementById("deployKeyInput").value.length>4;e.disabled=!(t&&a&&o),e.disabled?e.classList.remove("glowing-button"):e.classList.add("glowing-button")}
+    async function handleDeploy() { /* ... content from previous answer ... */ tg.showProgress("Deploying...");const e={botType:deploymentState.botType,appName:document.getElementById("appNameInput").value.trim(),sessionId:document.getElementById("sessionIdInput").value.trim(),autoStatusView:deploymentState.autoStatusView,deployKey:document.getElementById("deployKeyInput").value.trim()};try{const t=await fetch(`${API_BASE_URL}/deploy`,{method:"POST",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg.initData},body:JSON.stringify(e)}),a=await t.json();tg.hideProgress(),tg.showAlert(a.message),a.success&&renderView("myBots")}catch(e){tg.hideProgress(),tg.showAlert("Failed to initiate deployment.")}}
+    
+    // ❗️ THIS IS THE UPDATED FUNCTION ❗️
+    async function handleBotAction(action, appName) {
+        const endpointMap = {
+            'restart-bot': 'bots/restart',
+            'redeploy-bot': 'bots/redeploy',
+            'delete-bot': 'bots/delete'
         };
-
-        // Renders View 1
-        function renderMyBotsView() {
-            switchView('myBotsView');
-            fetchBotsList();
-        }
-
-        // Renders View 2
-        function renderManagementView(bot) {
-            currentBot = bot;
-            const data = getStatusData(bot.status);
-            
-            document.getElementById('managementBotName').textContent = bot.name;
-            document.getElementById('managementBotStatus').innerHTML = `
-                Status: <span class="status-tag ${data.class}">${data.text}</span> | Expiration: ${formatExpiration(bot.expirationDate)}
-            `;
-
-            const container = document.getElementById('actionButtonsContainer');
-            container.innerHTML = `
-                <div class="action-row">
-                    <button class="action-btn" onclick="handleBotAction('restart', '${bot.name}')">Restart</button>
-                    <button class="action-btn" onclick="handleBotAction('redeploy', '${bot.name}')">Redeploy</button>
-                    <button class="action-btn" onclick="handleBotAction('logs', '${bot.name}')">View Logs</button>
-                </div>
-                <button class="action-btn" onclick="renderView('variablesView')">Set Variables</button>
-                <button class="action-btn danger-button" onclick="handleBotAction('delete', '${bot.name}')">Delete Bot</button>
-            `;
-            switchView('managementView');
-        }
+        const verb = action.split('-')[0];
         
-        // Renders View 3
-        function renderVariablesView() {
-            document.getElementById('variablesBotName').textContent = `${currentBot.name} Variables`;
-            switchView('variablesView');
-            fetchAndDisplayVariables(currentBot.name);
-        }
+        tg.showConfirm(`Are you sure you want to ${verb} the bot "${appName}"?`, async (ok) => {
+            if (!ok) return;
 
-        // --- API & Core Functions ---
-        
-        async function fetchBotsList() {
-            const container = document.getElementById('botsListContainer');
-            container.innerHTML = `<div id="loadingIndicator" class="loading-text"><div class="loading"></div> Fetching active bots...</div>`;
+            const button = document.querySelector(`[data-action='${action}'][data-app-name='${appName}']`);
+            const label = button ? button.querySelector('.option-label') : null;
+            const originalText = label ? label.textContent : '';
 
-            try {
-                const data = await apiCall('/api/bots');
-                
-                container.innerHTML = '';
-                if (data && data.bots && data.bots.length > 0) {
-                    data.bots.forEach(bot => {
-                        const statusData = getStatusData(bot.status);
-                        
-                        const card = document.createElement('div');
-                        card.className = 'bot-card';
-                        card.onclick = () => renderManagementView(bot);
+            // --- New UX for Restart ---
+            if (action === 'restart-bot' && label) {
+                label.textContent = '🔄 Restarting...';
+                button.style.pointerEvents = 'none';
+                button.style.opacity = '0.6';
 
-                        card.innerHTML = `
-                            <div class="bot-icon-circle" style="background-color: ${statusData.color};">${bot.appName.charAt(0).toUpperCase()}</div>
-                            <div class="bot-details">
-                                <div class="bot-name">${bot.appName} (${bot.type.toUpperCase()})</div>
-                                <div class="bot-status">
-                                    <span class="status-tag ${statusData.class}">${statusData.text}</span>
-                                </div>
-                            </div>
-                            <div class="bot-expiration">
-                                <div class="expiration-time">${formatExpiration(bot.expirationDate)}</div>
-                            </div>
-                        `;
-                        container.appendChild(card);
-                    });
-                } else {
-                     document.getElementById('emptyState').style.display = 'block';
-                }
-            } catch (e) {
-                container.innerHTML = `<div class="info-box icon-color-red">Error loading bots. Check console.</div>`;
-            }
-        }
-        
-        async function fetchAndDisplayVariables(appName) {
-            const container = document.getElementById('variablesListContainer');
-            container.innerHTML = '<div class="loading-text">Fetching settings...</div>';
-
-            try {
-                const data = await apiCall(`/api/bots/config-vars/${appName}`);
-                let html = '';
-                
-                if (data && data.configVars) {
-                    Object.entries(data.configVars).forEach(([key, value]) => {
-                        const displayValue = formatVarDisplay(value);
-                        
-                        html += `
-                            <div class="management-option variable-item" onclick="openInputModal('${appName}', '${key}', '${value}', '${data.botType}')">
-                                <div>
-                                    <div class="variable-name">${key}</div>
-                                    <div class="variable-value">${displayValue}</div>
-                                </div>
-                                <div class="variable-edit-icon">✎</div>
-                            </div>
-                        `;
-                    });
-                    container.innerHTML = html;
-                } else {
-                    container.innerHTML = '<div class="info-box icon-color-red">No configuration variables found.</div>';
-                }
-            } catch (e) {
-                container.innerHTML = `<div class="info-box icon-color-red">Error: ${e.message}</div>`;
-            }
-        }
-
-        async function handleBotAction(action, appName) {
-            const endpointMap = {
-                'restart': 'bots/restart',
-                'redeploy': 'bots/redeploy',
-                'delete': 'bots/delete',
-                'logs': `bots/logs/${appName}`
-            };
-            
-            // Handle Logs (GET request, opens modal)
-            if (action === 'logs') {
-                showProgress(true);
                 try {
-                    const data = await apiCall(endpointMap[action], 'GET');
-                    showProgress(false);
-                    document.getElementById('logsContainer').innerHTML = data.logs 
-                        .split('\n')
-                        .map(log => `<div class="log-line">${escapeHtml(log)}</div>`)
-                        .join('');
-                    openModal('logsModal');
-                } catch (e) {
-                    showProgress(false);
-                    showAlert(`Failed to fetch logs: ${e.message}`);
-                }
-                return;
-            }
-
-            // Handle POST actions (Restart, Redeploy, Delete)
-            const isDestructive = action === 'delete';
-            
-            showConfirm(`Are you sure you want to ${action} ${appName}?`, async () => {
-                showProgress(true);
-                try {
-                    const data = await apiCall(endpointMap[action], 'POST', { appName });
-                    showProgress(false);
-                    
+                    const res = await fetch(`${API_BASE_URL}/${endpointMap[action]}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+                        body: JSON.stringify({ appName })
+                    });
+                    const data = await res.json();
                     if (!data.success) throw new Error(data.message);
+                    
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+                    label.textContent = '✅ Restarted!';
 
-                    showAlert(`${appName} ${action} initiated successfully!`);
-                    
-                    // After action, refresh the list after a delay
-                    setTimeout(() => fetchBotsList(), 5000); 
-                    
                 } catch (e) {
-                    showProgress(false);
-                    showAlert(e.message || `Failed to perform ${action} on ${appName}.`);
+                    label.textContent = '❌ Failed';
+                    tg.showAlert(e.message || 'An error occurred during restart.');
+                } finally {
+                    setTimeout(() => { // Revert button to original state
+                        if(label) label.textContent = originalText;
+                        if(button) {
+                            button.style.pointerEvents = 'auto';
+                            button.style.opacity = '1';
+                        }
+                    }, 2000);
                 }
-            }, isDestructive);
-        }
-
-        // --- Variable Input & Submission ---
-        
-        function openInputModal(appName, varName, varValue, botType) {
-            // Set current state for submission
-            currentVariable = { appName, varName, value: varValue, botType };
-            
-            document.getElementById('inputModalTitle').textContent = `Edit ${varName}`;
-            document.getElementById('inputVarLabel').textContent = `${varName} for ${appName} (${botType.toUpperCase()})`;
-            document.getElementById('inputVariableValue').value = varValue;
-            document.getElementById('inputError').style.display = 'none';
-
-            openModal('inputVariableModal');
-        }
-
-        window.submitVariableChange = async function() {
-            const { appName, varName, botType } = currentVariable;
-            const newValue = document.getElementById('inputVariableValue').value.trim();
-            const errorEl = document.getElementById('inputError');
-
-            // 1. Validation Logic
-            if (varName === 'SESSION_ID') {
-                let prefix = '';
-                if (botType === 'levanter') prefix = 'levanter_';
-                else if (botType === 'raganork') prefix = 'RGNK';
-                else if (botType === 'hermit') prefix = 'H';
-                
-                const isValid = newValue.startsWith(prefix) && newValue.length > 10;
-                if (!isValid) {
-                    errorEl.textContent = `Invalid. Must start with '${prefix}' and be > 10 chars.`;
-                    errorEl.classList.add('show');
-                    return;
-                }
-            }
-
-            errorEl.classList.remove('show');
-            showProgress(true);
-
-            // 2. API Call
-            try {
-                const data = await apiCall('/api/bots/set-var', 'POST', { appName, varName, varValue: newValue });
-                showProgress(false);
-
-                if (!data.success) throw new Error(data.message);
-
-                showAlert('Variable updated successfully. Bot is restarting...');
-                
-                // 3. Close modals and update the list
-                closeModal('inputVariableModal');
-                closeModal('variablesModal');
-                setTimeout(() => fetchBotsList(), 1000); // Quick refresh to show new state
-
-            } catch (e) {
-                showProgress(false);
-                showAlert(e.message || 'An error occurred while updating the variable.');
-            }
-        };
-
-        // --- Utilities ---
-        function escapeHtml(text) {
-            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-            return text.replace(/[&<>"']/g, m => map[m]);
-        }
-        
-        function formatVarDisplay(val) {
-            if (val === 'false' || val === 'no-dl' || !val) return 'Disabled/Off';
-            if (val === 'true' || val === 'p') return 'Enabled/Set';
-            return val.substring(0, 30) + (val.length > 30 ? '...' : '');
-        }
-
-
-        // --- Event Listeners ---
-        document.getElementById('headerBack').addEventListener('click', () => {
-            if (document.getElementById('variablesView').classList.contains('active')) {
-                renderManagementView(currentBot);
             } else {
-                renderMyBotsView();
+                // --- Original UX for Redeploy & Delete ---
+                tg.showProgress(true);
+                try {
+                    const res = await fetch(`${API_BASE_URL}/${endpointMap[action]}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+                        body: JSON.stringify({ appName })
+                    });
+                    const data = await res.json();
+                    tg.hideProgress();
+                    tg.showAlert(data.message);
+                    if (data.success) {
+                         setTimeout(() => renderView('myBots'), action === 'delete-bot' ? 500 : 3000);
+                    }
+                } catch (e) {
+                    tg.hideProgress();
+                    tg.showAlert('An error occurred.');
+                }
             }
         });
-        
-        // Initial Load
-        window.addEventListener('load', () => {
-            // Check if the current environment is set in the main bot.js file
-            if (window.location.origin.includes('deploy-bot')) {
-                 // Set the API base url to the correct origin if running on Render
-                 apiBaseUrl = window.location.origin + '/api';
+    }
+
+    // --- Central Event Listener ---
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('view-container').addEventListener('click', (event) => {
+            const target = event.target.closest('[data-action]');
+            if (!target) return;
+            const { action, viewName, botJson, appName, varName, currentValue, botType, value } = target.dataset;
+            switch (action) {
+                case 'render': renderView(viewName); break;
+                case 'render-management': renderView('management', JSON.parse(botJson)); break;
+                case 'render-variables': renderView('variables', JSON.parse(botJson)); break;
+                case 'restart-bot':
+                case 'redeploy-bot':
+                case 'delete-bot':
+                    handleBotAction(action, appName); break;
+                case 'edit-variable': editVariable(appName, varName, currentValue); break;
+                case 'select-bot-type': deploymentState.botType = botType; renderView('deploymentForm'); break;
+                case 'select-autostatus':
+                    deploymentState.autoStatusView = value;
+                    document.querySelectorAll('#autoview-buttons button').forEach(btn => btn.classList.remove('active'));
+                    target.classList.add('active');
+                    checkAllInputs(); break;
+                case 'deploy-bot': handleDeploy(); break;
             }
-            fetchBotsList();
-            setInterval(fetchBotsList, 30000); // Refresh bot list every 30 seconds
         });
-    </script>
+        renderView('myBots');
+    });
+</script>
+     
+    
 </body>
 </html>
