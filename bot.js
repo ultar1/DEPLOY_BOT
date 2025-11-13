@@ -2593,12 +2593,6 @@ async function sendPricingTiers(chatId, messageId) {
 
 
 
-// In bot_services.js (REPLACE the entire changeBotDatabase function)
-
-/**
- * Migrates a bot to a new database (AWS or Neon), deletes the old database, 
- * and updates records.
- */
 async function changeBotDatabase(appName) {
     console.log(`[ChangeDB] Starting database swap for ${appName}...`);
     
@@ -2637,12 +2631,14 @@ async function changeBotDatabase(appName) {
     // --- 2. UPDATE LOCAL DATABASE RECORD (MUST SUCCEED FIRST) ---
     try {
         // We set the newAccountId and the new DATABASE_URL
+        // 💡 FIX: Explicitly set targetUserId to ensure data integrity
         await pool.query(`
             UPDATE user_deployments 
             SET neon_account_id = $1,
-                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
+                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true),
+                user_id = $4
             WHERE app_name = $3
-        `, [newAccountId, newDbUrl, appName]);
+        `, [newAccountId, newDbUrl, appName, targetUserId]); // Added targetUserId as $4
         
     } catch (dbError) {
         // If this fails, the Heroku update (restart) must NOT run.
@@ -6039,10 +6035,17 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
     const workingMsg = await bot.sendMessage(adminId, "Fetching database lists (AWS + Neon)...");
 
-    // --- 0. PREPARE OWNER MAPPING ---
-    // We fetch the local DB once to map "app_name" -> "user_id" for both AWS and Neon
-    const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
-    const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
+    // --- 0. CRITICAL FIX: PREPARE ROBUST OWNER MAPPING ---
+    // This query uses UNION to merge user_id and app/bot_name from both core tables,
+    // ensuring we find the owner for apps tracked in user_deployments (like after /changedb).
+    const allBotsResult = await pool.query(`
+        SELECT bot_name, user_id FROM user_bots
+        UNION 
+        SELECT app_name AS bot_name, user_id FROM user_deployments
+    `);
+    
+    // Create a map of canonical DB name (underscores) -> user_id
+    const ownerMap = new Map(allBotsResult.rows.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
     // --- 1. AWS SELF-HOSTED REPORT ---
     let awsReport = "";
@@ -6053,7 +6056,6 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             const apiUrl = process.env.SELF_HOSTED_DB_URL;
             const apiKey = process.env.SELF_HOSTED_DB_SECRET;
             
-            // 💡 Call the /list endpoint we added to your AWS server
             const res = await axios.get(`${apiUrl}/list`, {
                 headers: { 'x-api-key': apiKey },
                 timeout: 5000 // 5s timeout
@@ -6144,7 +6146,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
                     const dbNameSanitized = db.name.replace(/-/g, '_'); 
-                    const ownerUserId = ownerMap.get(dbNameSanitized) || 'Unknown';
+                    // 💡 FIX APPLIED: This now correctly fetches the owner ID from the robust ownerMap
+                    const ownerUserId = ownerMap.get(dbNameSanitized) || 'Unknown'; 
                     consolidatedDBListMessage += `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerUserId}</code>\n`;
                 });
             }
@@ -6165,6 +6168,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     combinedMessage += `Neon Active DBs: <b>${totalUserDBs}</b>\n`;
     combinedMessage += `Neon Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
     
+    // The total max storage should ideally be taken from NEON_ACCOUNTS config if specified, 
+    // but assuming 512MB default * number of accounts as per your configuration context.
     const totalMaxStorage = NEON_ACCOUNTS.length * 512; 
     const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
     combinedMessage += `Neon Storage Left: <b>${storageRemaining.toFixed(2)} MB</b>\n`;
