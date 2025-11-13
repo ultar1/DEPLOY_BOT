@@ -12965,6 +12965,36 @@ bot.on('channel_post', async msg => {
     let status = null;
     let match;
 
+  // --- 💡 1. AUTO-FIX: NEON DATA QUOTA EXCEEDED 💡 ---
+    // If a bot reports it hit the limit, we move it to a new DB immediately.
+    if (text.includes('NEON QUOTA EXCEEDED')) {
+        // Extract app name from format: "App: `bot-name`"
+        match = text.match(/App:\s*`?([\w-]+)`?/i);
+        if (match) {
+            const targetApp = match[1];
+            console.log(`[Auto-Fix] Quota exceeded for ${targetApp}. Triggering automatic database migration...`);
+            
+            // Notify admin that fix is starting
+            await bot.sendMessage(ADMIN_ID, `**Auto-Fix Triggered**\n\nDetected Quota Limit for \`${targetApp}\`. Moving to new database...`, { parse_mode: 'Markdown' });
+
+            try {
+                // Call the changeDB function
+                const result = await changeBotDatabase(targetApp);
+                
+                if (result.success) {
+                    await bot.sendMessage(ADMIN_ID, `**Auto-Fix Successful!**\n\n\`${targetApp}\` has been moved to **Account ${result.account}** and is restarting.`, { parse_mode: 'Markdown' });
+                } else {
+                    await bot.sendMessage(ADMIN_ID, `**Auto-Fix Failed** for \`${targetApp}\`.\nReason: ${result.message}`, { parse_mode: 'Markdown' });
+                }
+            } catch (e) {
+                console.error(`[Auto-Fix] Error migrating ${targetApp}:`, e);
+                await bot.sendMessage(ADMIN_ID, `**Auto-Fix Critical Error** for \`${targetApp}\`: ${e.message}`, { parse_mode: 'Markdown' });
+            }
+        }
+        return; // Stop processing this message
+    }
+    // --- 💡 END OF AUTO-FIX 💡 ---
+
     // --- High-priority check for a single, raw R14 Memory Error log ---
     const r14Match = text.match(/^\[([\w-]+)\].*Error R14/);
     if (r14Match) {
