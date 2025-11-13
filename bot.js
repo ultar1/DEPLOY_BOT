@@ -44,7 +44,7 @@ const STICKER_PACK_TITLE = 'Ultar';
 // Make sure ADMIN_ID and BOT_USERNAME are defined above this!
 const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 
-
+const VCF_GROUP_LINK = 'https://t.me/+R2JkDX9h0ng0MWU0'; 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
 const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
@@ -174,6 +174,22 @@ const backupPool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+// In bot.js (near your other constants)
+// ⚠️ IMPORTANT: Replace with your actual group ID where the VCF should be sent.
+const VCF_GROUP_ID = '-1001234567890'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
+
+// Schedule the VCF generation every day at 11:00 PM (Lagos Time)
+cron.schedule('0 23 * * *', () => {
+    console.log('[Scheduler] Running daily VCF generation task.');
+    // 💡 The function now resides in dbServices
+    dbServices.generateAndSendVcf(VCF_GROUP_ID, ADMIN_ID).catch(err => {
+        console.error('[Scheduler] VCF Job Failed:', err);
+    });
+}, {
+    scheduled: true,
+    timezone: "Africa/Lagos"
+});
+
 // --- REPLACED DATABASE STARTUP BLOCK ---
 
 async function createAllTablesInPool(dbPool, dbName) {
@@ -197,7 +213,20 @@ async function createAllTablesInPool(dbPool, dbName) {
             PRIMARY KEY (user_id, bot_name)
           );
         `);
-        
+
+
+      
+await client.query(`
+  CREATE TABLE IF NOT EXISTS vcf_contacts (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    phone_number TEXT NOT NULL UNIQUE,
+    submitted_by_chat_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
         await client.query(`
           CREATE TABLE IF NOT EXISTS deploy_keys (
             key        TEXT PRIMARY KEY,
@@ -3735,6 +3764,8 @@ async function notifyAdminUserOnline(msg) {
     runOrphanDbCleanup: runOrphanDbCleanup,
     createNeonDatabase: createNeonDatabase, 
     deleteNeonDatabase: deleteNeonDatabase,
+    storeNewVcfContact: dbServices.storeNewVcfContact,       // <-- ADD THIS
+    generateAndSendVcf: dbServices.generateAndSendVcf,  
     // --- CRITICAL CHANGE START ---
     defaultEnvVars: { // <-- Pass an object containing both
         levanter: levanterDefaultEnvVars,
@@ -7622,6 +7653,50 @@ if (st && st.step === 'AWAITING_OTP') {
 }
 
 
+// --- NEW STATE: AWAITING CONTACT NAME ---
+if (st && st.step === 'AWAITING_VCF_NAME') {
+    const fullName = text.trim();
+    if (fullName.length < 3 || fullName.length > 50) {
+        return bot.sendMessage(cid, "Your name must be between 3 and 50 characters. Please try again.");
+    }
+
+    st.data.fullName = fullName;
+    st.step = 'AWAITING_VCF_NUMBER';
+    
+    return bot.sendMessage(cid, "Great. Now, please enter your WhatsApp number in **full international format** (e.g., `+23491...`):", { parse_mode: 'Markdown' });
+}
+
+// --- NEW STATE: AWAITING CONTACT NUMBER ---
+if (st && st.step === 'AWAITING_VCF_NUMBER') {
+    const phoneNumber = text.trim();
+    const phoneRegex = /^\+\d{10,15}$/; // Validates + followed by 10-15 digits
+
+    if (!phoneRegex.test(phoneNumber)) {
+        return bot.sendMessage(cid, "Invalid format. Please ensure the number starts with the country code (e.g., `+234...`).");
+    }
+
+    st.data.phoneNumber = phoneNumber;
+    st.step = 'AWAITING_VCF_CONFIRM';
+
+    const reviewMessage = `*Review Your Contact Details:*\n\n` +
+                          `*Name:* ${escapeMarkdown(st.data.fullName)} WBD\n` +
+                          `*Number:* \`${escapeMarkdown(phoneNumber)}\`\n\n` +
+                          `Tap 'Submit'.`;
+
+    await bot.sendMessage(cid, reviewMessage, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Submit Number', callback_data: `vcf_submit_confirm` }],
+                [{ text: 'Edit Details', callback_data: `vcf_start_over` }]
+            ]
+        }
+    });
+    return;
+}
+
+// ... (rest of your state machine logic) ...
+
 // In bot.js, inside bot.on('message', ...)
 
 if (st && st.step === 'AWAITING_COPY_SOURCE_URL') {
@@ -9166,7 +9241,72 @@ if (action === 'edit_deployment_start_over') {
     return;
 }
 
-// AROUND LINE 2400 in bot.js
+
+// 2. In bot.on('callback_query', ...) handler (Add new actions)
+
+if (action === 'vcf_start') {
+    await bot.editMessageText(
+        `*Contact Gain (VCF Exchange)*\n\n` +
+        `Share your contact to receive a full list of contacts from other users every night at 11 PM (WAT) for WhatsApp Status boosting.\n\n` +
+        `Your name will be saved as "{Name} WBD".`,
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Submit Number', callback_data: 'vcf_start_submit' }],
+                    [{ text: '« Back', callback_data: 'more_features_menu' }]
+                ]
+            }
+        }
+    );
+    return;
+}
+
+if (action === 'vcf_start_submit' || action === 'vcf_start_over') {
+    delete userStates[cid];
+    userStates[cid] = { step: 'AWAITING_VCF_NAME', data: {} };
+    await bot.editMessageText("Please enter your preferred **Full Name** (e.g., Ultar, John Doe):", {
+         chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+    });
+    return;
+}
+
+if (action === 'vcf_submit_confirm') {
+    if (!st || st.step !== 'AWAITING_VCF_CONFIRM') return;
+
+    const { fullName, phoneNumber } = st.data;
+
+    // Use the new service function
+    const result = await dbServices.storeNewVcfContact(cid, fullName, phoneNumber);
+    
+    delete userStates[cid];
+    
+    if (result.success) {
+        await bot.editMessageText(
+            `**Success!** Your contact has been added to the list.\n\n` + 
+            `Check the group channel for the VCF file at 11 PM (WAT) tonight!`, 
+            {
+                chat_id: cid, 
+                message_id: q.message.message_id, 
+                parse_mode: 'Markdown',
+                reply_markup: { // <<< ADDED INLINE BUTTON
+                    inline_keyboard: [
+                        [{ text: 'Join VCF GROUP', url: VCF_GROUP_LINK }]
+                    ]
+                }
+            }
+        );
+    } else {
+        await bot.editMessageText(`**Failed to Submit.** This phone number may already be registered.`, {
+            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+        });
+    }
+    return;
+}
+
+
 
 // --- FIX: This block now handles auto status choice and then moves to final confirmation ---
 if (action === 'set_auto_status_choice') {
