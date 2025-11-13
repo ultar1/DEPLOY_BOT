@@ -5788,7 +5788,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+)(?:\s+(\d+))?)?$/i, async (msg, match) => {
         if (singleAccountId) {
             // SUB-CASE 1.1: /deldb <name> <id> (Only check specific Neon Account)
             source = `Neon Account ${singleAccountId}`;
-            result = await dbServices.deleteDatabaseFromNeon(singleDbName, singleAccountId);
+            result = await deleteDatabaseFromNeon(singleDbName, singleAccountId);
             
         } else {
             // SUB-CASE 1.2: /deldb <name> (Check AWS first, then search Neon)
@@ -5805,7 +5805,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+)(?:\s+(\d+))?)?$/i, async (msg, match) => {
             // B. Fallback to Neon Search if AWS failed/is not configured
             if (!result || !result.success) {
                 // We use the full Neon search logic, passing '1' as a default start ID
-                result = await dbServices.deleteDatabaseFromNeon(singleDbName, '1');
+                result = await deleteDatabaseFromNeon(singleDbName, '1');
             }
         }
         
