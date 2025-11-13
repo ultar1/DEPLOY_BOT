@@ -2610,12 +2610,12 @@ async function changeBotDatabase(appName) {
     `, [appName]);
     
     if (deploymentInfo.rows.length === 0) {
-        await bot.sendMessage(ADMIN_ID, `CRITICAL: Migration failed for \`${appName}\`. Deployment record not found.`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Migration failed for \`${appName}\`. Deployment record not found.`, { parse_mode: 'Markdown' });
         return { success: false, message: "Deployment record not found." };
     }
 
     const oldConfig = deploymentInfo.rows[0];
-    const targetUserId = oldConfig.user_id; // Get owner ID for notification
+    const targetUserId = oldConfig.user_id; // Get owner ID (preserved)
     const oldDbUrl = oldConfig.config_vars?.DATABASE_URL;
     
     // --- 1. Provision New Database ---
@@ -2623,7 +2623,6 @@ async function changeBotDatabase(appName) {
     const baseDbName = appName.replace(/-/g, '_');
     const newUniqueDbName = `${baseDbName}_${randomSuffix}`;
     
-    // Call the database provisioner (defined in bot.js)
     const creationResult = await createNeonDatabase(newUniqueDbName); 
 
     if (!creationResult.success) {
@@ -2633,28 +2632,31 @@ async function changeBotDatabase(appName) {
     }
 
     const newDbUrl = creationResult.connection_string;
-    const newAccountId = creationResult.provider_account_id; // e.g., 'AWS_MAIN' or '34'
+    const newAccountId = creationResult.provider_account_id;
 
-    // --- 2. DELETE OLD DATABASE ---
-    let deletionSuccess = false;
-    let oldDbNameForDeletion;
-    
-    if (oldDbUrl) {
-        const dbUrlMatch = oldDbUrl.match(/\/([\w-]+)\?/);
-        oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
+    // --- 2. UPDATE LOCAL DATABASE RECORD (MUST SUCCEED FIRST) ---
+    try {
+        // We set the newAccountId and the new DATABASE_URL
+        await pool.query(`
+            UPDATE user_deployments 
+            SET neon_account_id = $1,
+                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
+            WHERE app_name = $3
+        `, [newAccountId, newDbUrl, appName]);
+        
+    } catch (dbError) {
+        // If this fails, the Heroku update (restart) must NOT run.
+        console.error(`[ChangeDB] CRITICAL: Local DB record update failed for ${appName}:`, dbError);
+        const message = `MIGRATION CRITICAL FAIL for \`${appName}\` (Owner: ${targetUserId})\n\nLocal records failed to update. Deleting newly created DB: ${newUniqueDbName}.`;
+        
+        // Try to clean up the newly created database immediately to free resources
+        await deleteNeonDatabase(newUniqueDbName, newAccountId).catch(()=>{});
 
-        if (oldDbNameForDeletion) {
-            // Use the OLD account ID for Neon deletion, or null for AWS
-            const deleteTargetId = oldConfig.neon_account_id === 'AWS_MAIN' ? null : oldConfig.neon_account_id;
-            const deleteResult = await deleteNeonDatabase(oldDbNameForDeletion, deleteTargetId);
-            deletionSuccess = deleteResult.success;
-            if (!deletionSuccess) {
-                 console.warn(`[ChangeDB] Failed to delete old DB ${oldDbNameForDeletion}. It may be locked.`);
-            }
-        }
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: "Local DB update failed." };
     }
 
-    // --- 3. Update Heroku Config Var (Triggers Restart) ---
+    // --- 3. Update Heroku Config Var (Triggers Restart - NOW SAFE) ---
     try {
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { DATABASE_URL: newDbUrl },
@@ -2666,35 +2668,34 @@ async function changeBotDatabase(appName) {
         await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
         return { success: false, message: `Heroku update failed: ${err}` };
     }
+    
+    // --- 4. DELETE OLD DATABASE (LAST STEP) ---
+    let deletionSuccess = false;
+    let oldDbNameForDeletion;
+    
+    if (oldDbUrl) {
+        const dbUrlMatch = oldDbUrl.match(/\/([\w-]+)\?/);
+        oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
 
-    // --- 4. Update Local Database Record (The core fix is here) ---
-    try {
-        // We set the newAccountId and the new DATABASE_URL
-        await pool.query(`
-            UPDATE user_deployments 
-            SET neon_account_id = $1,
-                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
-            WHERE app_name = $3
-        `, [newAccountId, newDbUrl, appName]);
-        
-        // --- 5. Final Admin Success Notification ---
-        const successMessage = `**MIGRATION SUCCESS** for \`${appName}\` (Owner: ${targetUserId})\n` +
-                               `**New Location:** ${newAccountId}\n` +
-                               `**Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
-        
-        await bot.sendMessage(ADMIN_ID, successMessage, { parse_mode: 'Markdown' });
-
-        return { success: true, account: newAccountId };
-        
-    } catch (dbError) {
-        // This CATCH handles the DB commit failure.
-        console.error(`[ChangeDB] CRITICAL: Local DB record update failed for ${appName}:`, dbError);
-        const message = `MIGRATION HALF-SUCCESS for \`${appName}\` (Owner: ${targetUserId})\n\nBot is running on new DB *(${newAccountId})*, but internal records (DB ID) failed to update.`;
-        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
-        return { success: true, message: "Heroku updated, but local DB record failed." };
+        if (oldDbNameForDeletion) {
+            const deleteTargetId = oldConfig.neon_account_id;
+            const deleteResult = await deleteNeonDatabase(oldDbNameForDeletion, deleteTargetId);
+            deletionSuccess = deleteResult.success;
+            if (!deletionSuccess) {
+                 console.warn(`[ChangeDB] Failed to delete old DB ${oldDbNameForDeletion}. It may be locked.`);
+            }
+        }
     }
-}
 
+    // --- 5. Final Admin Success Notification ---
+    const successMessage = `**MIGRATION SUCCESS** for \`${appName}\` (Owner: ${targetUserId})\n` +
+                           `**New Location:** ${newAccountId}\n` +
+                           `**Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
+    
+    await bot.sendMessage(ADMIN_ID, successMessage, { parse_mode: 'Markdown' });
+
+    return { success: true, account: newAccountId };
+}
 
 
 
