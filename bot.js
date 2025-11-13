@@ -1829,7 +1829,7 @@ async function deleteDatabaseGlobally(dbName) {
     };
 }
 
-/// In bot_services.js (REPLACE the entire changeBotDatabase function)
+// In bot_services.js (REPLACE the entire changeBotDatabase function)
 
 /**
  * Migrates a bot to a new database (AWS or Neon), ensuring the old database 
@@ -1838,7 +1838,7 @@ async function deleteDatabaseGlobally(dbName) {
 async function changeBotDatabase(appName) {
     console.log(`[ChangeDB] Starting database swap for ${appName}...`);
     
-    // 0. Get current deployment details (needed for deletion and ID preservation)
+    // 0. Get current deployment details
     const deploymentInfo = await pool.query(`
         SELECT user_id, config_vars, neon_account_id
         FROM user_deployments 
@@ -1855,14 +1855,17 @@ async function changeBotDatabase(appName) {
     const oldDbUrl = oldConfig.config_vars?.DATABASE_URL;
     
     // --- 1. DELETE OLD DATABASE (FIRST STEP) ---
+    // If this fails, we still proceed to Step 2 (Create New) to fix the bot,
+    // but we track the failure for the final report.
     let deletionSuccess = true;
+    let oldDbNameForDeletion;
     
     if (oldDbUrl) {
         const dbUrlMatch = oldDbUrl.match(/\/([\w-]+)\?/);
-        const oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
+        oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
 
         if (oldDbNameForDeletion) {
-            // Find and delete the old DB using the global search method
+            // Find and delete the old DB using the global search method (AWS -> Neon)
             const deleteResult = await deleteDatabaseGlobally(oldDbNameForDeletion);
             
             if (!deleteResult.success) {
@@ -1873,12 +1876,11 @@ async function changeBotDatabase(appName) {
     }
 
     // --- 2. PROVISION NEW DATABASE (Clean Name) ---
-    // Use the CLEAN APP NAME as the database name.
     const newDbName = appName.replace(/-/g, '_'); 
     const creationResult = await createNeonDatabase(newDbName); 
 
     if (!creationResult.success) {
-        const message = `**MIGRATION FAILED for \`${appName}\`**\nReason: Database provisioning failed: ${creationResult.error}`;
+        const message = `❌ **MIGRATION FAILED for \`${appName}\`**\nReason: Database provisioning failed: ${creationResult.error}`;
         await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
         return { success: false, message: `Provisioning failed: ${creationResult.error}` };
     }
@@ -1896,10 +1898,11 @@ async function changeBotDatabase(appName) {
         `, [newAccountId, newDbUrl, appName]);
         
     } catch (dbError) {
-        // CRITICAL FAIL: Clean up the new DB before exiting with failure.
+        // CRITICAL FAIL: Local records are now wrong. Clean up the new DB before exiting.
         console.error(`[ChangeDB] CRITICAL: Local DB record update failed for ${appName}:`, dbError);
         const message = `⚠️ MIGRATION CRITICAL FAIL for \`${appName}\` (Owner: ${targetUserId})\n\nLocal records failed to update. Deleting newly created DB: ${newDbName}.`;
         
+        // Clean up the new database to prevent an orphan
         await deleteDatabaseGlobally(newDbName).catch(()=>{});
 
         await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
