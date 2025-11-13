@@ -2598,30 +2598,62 @@ async function sendPricingTiers(chatId, messageId) {
 }
 
 
-// In bot_services.js (REPLACE the changeBotDatabase function)
 
-/**
- * Migrates a bot to a new database (AWS or Neon) and updates records.
- */
 async function changeBotDatabase(appName) {
     console.log(`[ChangeDB] Starting database swap for ${appName}...`);
+    
+    // 0. Get current deployment details (needed for deletion and ID preservation)
+    const deploymentInfo = await pool.query(`
+        SELECT config_vars, neon_account_id
+        FROM user_deployments 
+        WHERE app_name = $1
+    `, [appName]);
+    
+    if (deploymentInfo.rows.length === 0) {
+        await bot.sendMessage(ADMIN_ID, `CRITICAL: Migration failed for \`${appName}\`. Deployment record not found.`, { parse_mode: 'Markdown' });
+        return { success: false, message: "Deployment record not found." };
+    }
 
-    // --- FIX: GENERATE A UNIQUE NAME WITH A RANDOM SUFFIX ---
+    const oldConfig = deploymentInfo.rows[0];
+    // We preserve the old account ID just in case
+    const oldAccountId = oldConfig.neon_account_id;
+    const oldDbUrl = oldConfig.config_vars?.DATABASE_URL;
+    
+    // --- 1. Provision New Database (Uses your Router: AWS First -> Neon Fallback) ---
     const randomSuffix = require('crypto').randomBytes(2).toString('hex');
     const baseDbName = appName.replace(/-/g, '_');
     const newUniqueDbName = `${baseDbName}_${randomSuffix}`;
     
-    // 1. Provision New Database (Uses your Router: AWS First -> Neon Fallback)
     const creationResult = await createNeonDatabase(newUniqueDbName); 
 
     if (!creationResult.success) {
+        const message = `**MIGRATION FAILED for \`${appName}\`**\nReason: Database provisioning failed: ${creationResult.error}`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
         return { success: false, message: `Provisioning failed: ${creationResult.error}` };
     }
 
     const newDbUrl = creationResult.connection_string;
-    const newAccountId = creationResult.provider_account_id;
+    const newAccountId = creationResult.provider_account_id; // Either AWS_MAIN or Neon ID
 
-    // 2. Update Heroku Config Var (This automatically restarts the bot)
+    // --- 2. DELETE OLD DATABASE ---
+    let deletionSuccess = false;
+    let oldDbNameForDeletion;
+    
+    if (oldDbUrl) {
+        // Extract the name from the old URL to delete the resource
+        const dbUrlMatch = oldDbUrl.match(/\/([\w-]+)\?/);
+        oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
+
+        if (oldDbNameForDeletion) {
+            const deleteResult = await deleteNeonDatabase(oldDbNameForDeletion, oldAccountId);
+            deletionSuccess = deleteResult.success;
+            if (!deletionSuccess) {
+                 console.warn(`[ChangeDB] Failed to delete old DB ${oldDbNameForDeletion}. It may be locked.`);
+            }
+        }
+    }
+
+    // --- 3. Update Heroku Config Var (Triggers Restart) ---
     try {
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { DATABASE_URL: newDbUrl },
@@ -2629,10 +2661,12 @@ async function changeBotDatabase(appName) {
         );
     } catch (e) {
         const err = e.response?.data?.message || e.message;
+        const message = `**MIGRATION FAILED for \`${appName}\`**\nReason: Heroku update failed (Bot is down): ${err}`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
         return { success: false, message: `Heroku update failed: ${err}` };
     }
 
-    // 3. Update Local Database Record
+    // --- 4. Update Local Database Record (Preserves Old ID) ---
     try {
         await pool.query(`
             UPDATE user_deployments 
@@ -2641,14 +2675,23 @@ async function changeBotDatabase(appName) {
             WHERE app_name = $3
         `, [newAccountId, newDbUrl, appName]);
         
-        console.log(`[ChangeDB] Success for ${appName}. Moved to Account: ${newAccountId}. New DB Name: ${newUniqueDbName}`);
+        // --- 5. Final Admin Success Notification ---
+        const successMessage = `**MIGRATION SUCCESS** for \`${appName}\`\n` +
+                               `**New Location:** ${newAccountId}\n` +
+                               `**Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
+        
+        await bot.sendMessage(ADMIN_ID, successMessage, { parse_mode: 'Markdown' });
+
         return { success: true, account: newAccountId };
 
     } catch (dbError) {
-        console.error(`[ChangeDB] Local DB update failed for ${appName}:`, dbError);
+        console.error(`[ChangeDB] CRITICAL: Local DB record update failed for ${appName}:`, dbError);
+        const message = `MIGRATION HALF-SUCCESS: Bot \`${appName}\` is running on new DB, but internal records (DB ID) failed to update.`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
         return { success: true, message: "Heroku updated, but local DB record failed." };
     }
 }
+
 
 
 // --- FIX: Corrected sendLatestKeyboard function for reliable database updates ---
