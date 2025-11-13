@@ -4914,7 +4914,7 @@ bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
 
     try {
         // Call the specific AWS function directly
-        const result = await dbServices.createSelfHostedDatabase(dbName);
+        const result = await createSelfHostedDatabase(dbName);
 
         if (result.success) {
             await bot.editMessageText(
@@ -4953,7 +4953,7 @@ bot.onText(/^\/deleteawsdb (.+)$/, async (msg, match) => {
 
     try {
         // Call the specific AWS function directly
-        const result = await dbServices.deleteSelfHostedDatabase(dbName);
+        const result = await deleteSelfHostedDatabase(dbName);
 
         if (result.success) {
             await bot.editMessageText(
