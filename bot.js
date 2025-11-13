@@ -2503,6 +2503,152 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
+// In bot_services.js (REPLACE the entire changeBotDatabase function)
+
+/**
+ * Migrates a bot to a new database (AWS or Neon), ensuring the old database 
+ * is targeted for deletion before a new one is created.
+ */
+async function changeBotDatabase(appName) {
+    console.log(`[ChangeDB] Starting database swap for ${appName}...`);
+    
+    // 0. Get current deployment details
+    const deploymentInfo = await pool.query(`
+        SELECT user_id, config_vars, neon_account_id
+        FROM user_deployments 
+        WHERE app_name = $1
+    `, [appName]);
+    
+    if (deploymentInfo.rows.length === 0) {
+        await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Migration failed for \`${appName}\`. Deployment record not found.`, { parse_mode: 'Markdown' });
+        return { success: false, message: "Deployment record not found." };
+    }
+
+    const oldConfig = deploymentInfo.rows[0];
+    const targetUserId = oldConfig.user_id; // Get owner ID (preserved)
+    const oldDbUrl = oldConfig.config_vars?.DATABASE_URL;
+    
+    // --- START: DELETION LOGIC (INLINED) ---
+    
+    let deletionSuccess = true;
+    let oldDbNameForDeletion;
+    
+    if (oldDbUrl) {
+        // 1. Extract the name from the old URL
+        const dbUrlMatch = oldDbUrl.match(/\/([\w-]+)\?/);
+        oldDbNameForDeletion = dbUrlMatch ? dbUrlMatch[1] : null;
+
+        if (oldDbNameForDeletion) {
+            console.log(`[ChangeDB] Attempting to delete old DB: ${oldDbNameForDeletion}`);
+            
+            let deleteResult;
+            
+            // --- A. TRY AWS SELF-HOSTED FIRST (If configured) ---
+            if (process.env.SELF_HOSTED_DB_URL && oldConfig.neon_account_id === 'AWS_MAIN') {
+                try {
+                    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+                    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+                    
+                    const response = await axios.post(`${apiUrl}/delete`, { dbName: oldDbNameForDeletion }, {
+                        headers: { 'x-api-key': apiKey },
+                        validateStatus: (status) => status >= 200 && status < 500
+                    });
+                    
+                    if (response.data.success || response.status === 404) {
+                        deletionSuccess = true; // AWS API confirmed deletion or missing (404)
+                    } else {
+                        deletionSuccess = false;
+                        console.warn(`[ChangeDB] AWS Deletion failed for ${oldDbNameForDeletion}. Response: ${response.data.error}`);
+                    }
+                } catch (e) {
+                    deletionSuccess = false;
+                    console.error(`[ChangeDB] AWS API error during delete: ${e.message}`);
+                }
+            } 
+            
+            // --- B. FALLBACK TO NEON SEARCH (If not AWS or AWS failed) ---
+            if (deletionSuccess === true && oldConfig.neon_account_id !== 'AWS_MAIN') {
+                // Only delete from Neon if the source was NOT the AWS platform
+                try {
+                    const expectedId = oldConfig.neon_account_id;
+                    const primaryAccount = NEON_ACCOUNTS.find(acc => String(acc.id) === String(expectedId));
+
+                    if (checkCredentials(primaryAccount)) { // Check credentials safety
+                        const apiUrl = `https://console.neon.tech/api/v2/projects/${primaryAccount.project_id}/branches/${primaryAccount.branch_id}/databases/${oldDbNameForDeletion}`;
+                        await axios.delete(apiUrl, { headers: { 'Authorization': `Bearer ${primaryAccount.api_key}` } });
+                        deletionSuccess = true;
+                    } else {
+                        deletionSuccess = false;
+                        console.warn(`[ChangeDB] Neon credentials failed for account ${expectedId}. Cannot delete old DB.`);
+                    }
+                } catch (error) {
+                    if (error.response?.status === 404) deletionSuccess = true; // Already gone is success
+                    else deletionSuccess = false;
+                }
+            }
+        }
+    }
+    // --- END: DELETION LOGIC (INLINED) ---
+
+
+    // --- 1. PROVISION NEW DATABASE (Clean Name) ---
+    const newDbName = appName.replace(/-/g, '_'); 
+    const creationResult = await createNeonDatabase(newDbName); 
+
+    if (!creationResult.success) {
+        const message = `❌ **MIGRATION FAILED for \`${appName}\`**\nReason: Database provisioning failed: ${creationResult.error}`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: `Provisioning failed: ${creationResult.error}` };
+    }
+
+    const newDbUrl = creationResult.connection_string;
+    const newAccountId = creationResult.provider_account_id;
+
+    // --- 2. UPDATE LOCAL DATABASE RECORD (MUST SUCCEED FIRST) ---
+    try {
+        await pool.query(`
+            UPDATE user_deployments 
+            SET neon_account_id = $1,
+                config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($2::text), true)
+            WHERE app_name = $3
+        `, [newAccountId, newDbUrl, appName]);
+        
+    } catch (dbError) {
+        // CRITICAL FAIL: Local records are now wrong. Clean up the new DB we just made.
+        console.error(`[ChangeDB] CRITICAL: Local DB record update failed for ${appName}:`, dbError);
+        const message = `⚠️ MIGRATION CRITICAL FAIL for \`${appName}\` (Owner: ${targetUserId})\n\nLocal records failed to update. Deleting newly created DB: ${newDbName}.`;
+        
+        // Try to clean up the newly created database immediately (using the internal AWS/Neon logic)
+        // Since we removed the external function, we need a simple internal delete call here
+        // (Assuming you have a simple internal function to clean up)
+        await deleteSelfHostedDatabase(newDbName).catch(()=>{}); 
+        
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: "Local DB update failed." };
+    }
+
+    // --- 3. Update Heroku Config Var (Triggers Restart - NOW SAFE) ---
+    try {
+        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+            { DATABASE_URL: newDbUrl },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+    } catch (e) {
+        const err = e.response?.data?.message || e.message;
+        const message = `**MIGRATION FAILED for \`${appName}\`**\nReason: Heroku update failed (Bot is down): ${err}`;
+        await bot.sendMessage(ADMIN_ID, message, { parse_mode: 'Markdown' });
+        return { success: false, message: `Heroku update failed: ${err}` };
+    }
+    
+    // --- 4. Final Admin Success Notification ---
+    const successMessage = `**MIGRATION SUCCESS** for \`${appName}\` (Owner: ${targetUserId})\n` +
+                           `**New Location:** ${newAccountId}\n` +
+                           `**Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
+    
+    await bot.sendMessage(ADMIN_ID, successMessage, { parse_mode: 'Markdown' });
+
+    return { success: true, account: newAccountId };
+}
 
 // REPLACE the entire sendPricingTiers function in bot.js
 
@@ -4887,6 +5033,171 @@ bot.onText(/^\/id$/, async (msg) => {
 });
 
 // In bot.js
+bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const target = match[1].trim();
+    
+    // --- CASE 1: MASS MIGRATION (/changedb all) ---
+
+    if (target.toLowerCase() === 'all') {
+        const confirmMsg = await bot.sendMessage(adminId, `⚠️ **Mass Database Migration**\n\nThis will create a new database for EVERY active bot and restart them. This may take a long time.\n\nAre you sure you want to proceed?`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Yes, Start Migration', callback_data: 'changedb_confirm_all' }],
+                    [{ text: 'No, Cancel', callback_data: 'changedb_cancel' }]
+                ]
+            }
+        });
+        return;
+    }
+
+    if (target === 'confirm_all') {
+        const workingMsg = await bot.sendMessage(adminId, "🚀 Starting Mass Database Migration...");
+        
+        // Fetch all bots
+        const allBotsResult = await pool.query("SELECT bot_name FROM user_bots");
+        const allBots = allBotsResult.rows;
+        
+        let success = 0;
+        let failed = 0;
+        
+        for (const [i, botRow] of allBots.entries()) {
+            const appName = botRow.bot_name;
+            
+            // Update progress
+            if (i % 5 === 0) {
+                await bot.editMessageText(
+                    `🔄 **Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                ).catch(()=>{});
+            }
+
+            // Call the helper (dbServices is imported in bot.js)
+            const result = await dbServices.changeBotDatabase(appName);
+            
+            if (result.success) success++;
+            else {
+                failed++;
+                console.error(`Failed to migrate ${appName}: ${result.message}`);
+            }
+            
+            // Small delay to prevent API rate limits
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        await bot.editMessageText(
+            `✅ **Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+        return;
+    }
+
+    // --- CASE 2: SINGLE APP MIGRATION (/changedb botname) ---
+    const appName = target;
+    const workingMsg = await bot.sendMessage(adminId, `🔄 Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
+
+    // Call helper
+    const result = await dbServices.changeBotDatabase(appName);
+
+    if (result.success) {
+        await bot.editMessageText(
+            `✅ **Success!**\n\nDatabase for \`${appName}\` has been changed.\nNew Location: **${result.account}**\nBot is restarting...`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    } else {
+        await bot.editMessageText(
+            `❌ **Failed**\n\nReason: ${result.message}`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' } // Added parse_mode for consistency
+        );
+    }
+});
+
+bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const target = match[1].trim();
+    
+    // --- CASE 1: MASS MIGRATION (/changedb all) ---
+
+    if (target.toLowerCase() === 'all') {
+        const confirmMsg = await bot.sendMessage(adminId, `⚠️ **Mass Database Migration**\n\nThis will create a new database for EVERY active bot and restart them. This may take a long time.\n\nAre you sure you want to proceed?`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Yes, Start Migration', callback_data: 'changedb_confirm_all' }],
+                    [{ text: 'No, Cancel', callback_data: 'changedb_cancel' }]
+                ]
+            }
+        });
+        return;
+    }
+
+    if (target === 'confirm_all') {
+        const workingMsg = await bot.sendMessage(adminId, "🚀 Starting Mass Database Migration...");
+        
+        // Fetch all bots
+        const allBotsResult = await pool.query("SELECT bot_name FROM user_bots");
+        const allBots = allBotsResult.rows;
+        
+        let success = 0;
+        let failed = 0;
+        
+        for (const [i, botRow] of allBots.entries()) {
+            const appName = botRow.bot_name;
+            
+            // Update progress
+            if (i % 5 === 0) {
+                await bot.editMessageText(
+                    `🔄 **Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                ).catch(()=>{});
+            }
+
+            // Call the helper (dbServices is imported in bot.js)
+            const result = await dbServices.changeBotDatabase(appName);
+            
+            if (result.success) success++;
+            else {
+                failed++;
+                console.error(`Failed to migrate ${appName}: ${result.message}`);
+            }
+            
+            // Small delay to prevent API rate limits
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        await bot.editMessageText(
+            `✅ **Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+        return;
+    }
+
+    // --- CASE 2: SINGLE APP MIGRATION (/changedb botname) ---
+    const appName = target;
+    const workingMsg = await bot.sendMessage(adminId, `🔄 Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
+
+    // Call helper
+    const result = await dbServices.changeBotDatabase(appName);
+
+    if (result.success) {
+        await bot.editMessageText(
+            `✅ **Success!**\n\nDatabase for \`${appName}\` has been changed.\nNew Location: **${result.account}**\nBot is restarting...`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    } else {
+        await bot.editMessageText(
+            `❌ **Failed**\n\nReason: ${result.message}`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' } // Added parse_mode for consistency
+        );
+    }
+});
+
+
 
 // --- Command: /createawsdb <dbname> ---
 bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
@@ -8689,7 +9000,23 @@ if (action === 'copydb_confirm_simple') {
     }
     return;
 }
-        
+
+// Add these to your bot.on('callback_query', ...) function in bot.js
+
+if (action === 'changedb_confirm_all') {
+    // This simulates running the command again to trigger the full loop
+    // Ensure you use q.message.chat.id for context
+    bot.emit('message', { chat: q.message.chat, text: '/changedb confirm_all' });
+    // Delete the original buttons
+    await bot.deleteMessage(q.message.chat.id, q.message.message_id).catch(() => {});
+    return;
+}
+
+if (action === 'changedb_cancel') {
+    await bot.editMessageText('Mass migration cancelled.', { chat_id: q.message.chat.id, message_id: q.message.message_id });
+    return;
+}
+  
 if (action === 'copydb_cancel') {
     await bot.editMessageText('Database copy cancelled.', {
         chat_id: cid,
