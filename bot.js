@@ -5033,87 +5033,7 @@ bot.onText(/^\/id$/, async (msg) => {
 });
 
 // In bot.js
-bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
 
-    const target = match[1].trim();
-    
-    // --- CASE 1: MASS MIGRATION (/changedb all) ---
-
-    if (target.toLowerCase() === 'all') {
-        const confirmMsg = await bot.sendMessage(adminId, `⚠️ **Mass Database Migration**\n\nThis will create a new database for EVERY active bot and restart them. This may take a long time.\n\nAre you sure you want to proceed?`, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Yes, Start Migration', callback_data: 'changedb_confirm_all' }],
-                    [{ text: 'No, Cancel', callback_data: 'changedb_cancel' }]
-                ]
-            }
-        });
-        return;
-    }
-
-    if (target === 'confirm_all') {
-        const workingMsg = await bot.sendMessage(adminId, "🚀 Starting Mass Database Migration...");
-        
-        // Fetch all bots
-        const allBotsResult = await pool.query("SELECT bot_name FROM user_bots");
-        const allBots = allBotsResult.rows;
-        
-        let success = 0;
-        let failed = 0;
-        
-        for (const [i, botRow] of allBots.entries()) {
-            const appName = botRow.bot_name;
-            
-            // Update progress
-            if (i % 5 === 0) {
-                await bot.editMessageText(
-                    `🔄 **Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
-                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-                ).catch(()=>{});
-            }
-
-            // Call the helper (dbServices is imported in bot.js)
-            const result = await dbServices.changeBotDatabase(appName);
-            
-            if (result.success) success++;
-            else {
-                failed++;
-                console.error(`Failed to migrate ${appName}: ${result.message}`);
-            }
-            
-            // Small delay to prevent API rate limits
-            await new Promise(r => setTimeout(r, 2000));
-        }
-
-        await bot.editMessageText(
-            `✅ **Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-        );
-        return;
-    }
-
-    // --- CASE 2: SINGLE APP MIGRATION (/changedb botname) ---
-    const appName = target;
-    const workingMsg = await bot.sendMessage(adminId, `🔄 Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
-
-    // Call helper
-    const result = await dbServices.changeBotDatabase(appName);
-
-    if (result.success) {
-        await bot.editMessageText(
-            `✅ **Success!**\n\nDatabase for \`${appName}\` has been changed.\nNew Location: **${result.account}**\nBot is restarting...`,
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-        );
-    } else {
-        await bot.editMessageText(
-            `❌ **Failed**\n\nReason: ${result.message}`,
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' } // Added parse_mode for consistency
-        );
-    }
-});
 
 bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -5137,7 +5057,7 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     }
 
     if (target === 'confirm_all') {
-        const workingMsg = await bot.sendMessage(adminId, "🚀 Starting Mass Database Migration...");
+        const workingMsg = await bot.sendMessage(adminId, "Starting Mass Database Migration...");
         
         // Fetch all bots
         const allBotsResult = await pool.query("SELECT bot_name FROM user_bots");
@@ -5152,13 +5072,13 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
             // Update progress
             if (i % 5 === 0) {
                 await bot.editMessageText(
-                    `🔄 **Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
+                    `**Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
                     { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
                 ).catch(()=>{});
             }
 
             // Call the helper (dbServices is imported in bot.js)
-            const result = await dbServices.changeBotDatabase(appName);
+            const result = await changeBotDatabase(appName);
             
             if (result.success) success++;
             else {
@@ -5171,7 +5091,7 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
         }
 
         await bot.editMessageText(
-            `✅ **Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
+            `**Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
         return;
@@ -5179,19 +5099,19 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
 
     // --- CASE 2: SINGLE APP MIGRATION (/changedb botname) ---
     const appName = target;
-    const workingMsg = await bot.sendMessage(adminId, `🔄 Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
+    const workingMsg = await bot.sendMessage(adminId, `Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
 
     // Call helper
-    const result = await dbServices.changeBotDatabase(appName);
+    const result = await changeBotDatabase(appName);
 
     if (result.success) {
         await bot.editMessageText(
-            `✅ **Success!**\n\nDatabase for \`${appName}\` has been changed.\nNew Location: **${result.account}**\nBot is restarting...`,
+            `**Success!**\n\nDatabase for \`${appName}\` has been changed.\nNew Location: **${result.account}**\nBot is restarting...`,
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
     } else {
         await bot.editMessageText(
-            `❌ **Failed**\n\nReason: ${result.message}`,
+            `**Failed**\n\nReason: ${result.message}`,
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' } // Added parse_mode for consistency
         );
     }
