@@ -5796,7 +5796,7 @@ bot.onText(/^\/deldb(?:\s+([\w-]+)(?:\s+(\d+))?)?$/i, async (msg, match) => {
             
             // A. Try AWS Self-Hosted First
             if (process.env.SELF_HOSTED_DB_URL) {
-                const awsResult = await dbServices.deleteSelfHostedDatabase(singleDbName);
+                const awsResult = await deleteSelfHostedDatabase(singleDbName);
                 if (awsResult.success) {
                     result = { success: true, accounts_checked: 'AWS' };
                 }
