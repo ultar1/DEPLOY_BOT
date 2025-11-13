@@ -13073,11 +13073,16 @@ bot.on('channel_post', async msg => {
         appName = match[1];
         status = match[2];
     } else {
-        match = text.match(/\[([^\]]+)\] connected/i);
+        // Updated regex to detect "Name connected" OR "[Name] connected"
+        // \[? matches an optional opening bracket.
+        // ([^\]\s]+) captures one or more characters that are NOT a closing bracket or space.
+        // \]? matches an optional closing bracket.
+        match = text.match(/\[?([^\]\s]+)\]?\s+connected/i);
         if (match) {
             appName = match[1];
             status = 'ONLINE';
         } else {
+            // Regex to detect "User Name has logged out" OR "User [Name] has logged out"
             match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
             if (match) {
                 appName = match[1];
