@@ -8366,21 +8366,7 @@ if (text === 'Referrals') {
 
 
 
-// --- FIX: Add this new handler for the 'Support' button ---
-  if (text === 'Support') {
-      await dbServices.updateUserActivity(cid);
-      if (cid === ADMIN_ID) {
-        return bot.sendMessage(cid, "You are the admin, you cannot ask yourself questions!");
-      }
-      delete userStates[cid]; // Clear user state
-      userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
-      await bot.sendMessage(cid, 'Please type your question for the admin:');
-      return;
-  }
-  // --- END OF FIX ---
-  // Add this block inside bot.on('message', ...)
-
-  if (text === 'More Features') {
+if (text === 'More Features') {
     await dbServices.updateUserActivity(cid);
     const moreFeaturesText = "Here are some additional features and services:";
 
@@ -8398,9 +8384,12 @@ if (text === 'Referrals') {
         allButtons.push({ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' });
     }
 
+    // --- 💡 ADD NEW CONTACT GAIN FEATURE 💡 ---
+    allButtons.push({ text: "Contact Gain (VCF Exchange)", callback_data: 'vcf_start' });
+    // --- 💡 END NEW FEATURE 💡 ---
+
     // Add all other standard buttons, including the new Referrals button
     allButtons.push(
-        { text: "Buy a WhatsApp Acc N200", callback_data: 'buy_whatsapp_account' },
         { text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }
     );
 
@@ -8423,6 +8412,7 @@ if (text === 'Referrals') {
     await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
     return;
 }
+
 
 
 
