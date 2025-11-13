@@ -5698,38 +5698,63 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching all active databases (AWS + Neon)...");
+    const workingMsg = await bot.sendMessage(adminId, "Fetching database lists (AWS + Neon)...");
+
+    // --- 0. PREPARE OWNER MAPPING ---
+    // We fetch the local DB once to map "app_name" -> "user_id" for both AWS and Neon
+    const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
+    const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
 
     // --- 1. AWS SELF-HOSTED REPORT ---
     let awsReport = "";
+    let awsDbCount = 0;
     
     if (process.env.SELF_HOSTED_DB_URL) {
         try {
-            // Ping the AWS API root to check health
-            // (We set a short timeout so it doesn't hang the whole command)
-            await axios.get(process.env.SELF_HOSTED_DB_URL, { timeout: 3000 });
+            const apiUrl = process.env.SELF_HOSTED_DB_URL;
+            const apiKey = process.env.SELF_HOSTED_DB_SECRET;
             
-            awsReport = `**AWS SELF-HOSTED PLATFORM**\n` + 
-                        `**Status:** Online\n` + 
-                        `**Capacity:** Unlimited (30GB Storage)\n` +
-                        `**Host:** \`${process.env.SELF_HOSTED_DB_URL}\`\n` +
-                        `----------------------------------------\n\n`;
+            // 💡 Call the /list endpoint we added to your AWS server
+            const res = await axios.get(`${apiUrl}/list`, {
+                headers: { 'x-api-key': apiKey },
+                timeout: 5000 // 5s timeout
+            });
+
+            if (res.data.success) {
+                const awsDbs = res.data.databases;
+                awsDbCount = awsDbs.length;
+                
+                awsReport += `**AWS SELF-HOSTED (${awsDbCount} DBs)**\n`;
+                awsReport += `**Status:** Online | **Capacity:** Unlimited\n\n`;
+                
+                if (awsDbs.length > 0) {
+                    awsDbs.forEach((db, index) => {
+                        const dbName = db.name;
+                        const size = db.size;
+                        // Map DB Name to Owner ID
+                        const owner = ownerMap.get(dbName) || 'Unknown';
+                        
+                        // Format: #1 dbname | size | ownerID
+                        awsReport += `▫️ #${index + 1} <code>${escapeHTML(dbName)}</code> | ${size} | <code>${owner}</code>\n`;
+                    });
+                } else {
+                    awsReport += `_No active databases found on AWS._\n`;
+                }
+                awsReport += `\n----------------------------------------\n\n`;
+            }
         } catch (e) {
-            awsReport = `**AWS SELF-HOSTED PLATFORM**\n` +
+            awsReport = `**AWS SELF-HOSTED**\n` +
                         `**Status:** Offline / Unreachable\n` + 
                         `**Error:** ${e.message}\n` +
                         `----------------------------------------\n\n`;
         }
     } else {
-        awsReport = `**AWS SELF-HOSTED PLATFORM**\n**Status:** Not Configured\n----------------------------------------\n\n`;
+        awsReport = `**AWS SELF-HOSTED**\n**Status:** Not Configured\n----------------------------------------\n\n`;
     }
 
     // --- 2. NEON ACCOUNTS REPORT ---
-    
-    // Helper function to fetch stats for one account
     async function getNeonAccountStats(accountConfig) {
         const accountId = accountConfig.id;
-        // --- 💡 USER LIMIT set to 1 as requested 💡 ---
         const USER_DB_LIMIT = 1; 
         
         const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}`;
@@ -5747,67 +5772,41 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             const logicalSizeMB = branchData.logical_size ? (branchData.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
             
             const userDBs = dbList.filter(db => db.name !== 'neondb');
-            const userDBCount = userDBs.length; 
             
-            const slotsLeft = USER_DB_LIMIT - userDBCount; 
-
             return {
-                success: true,
-                id: accountId,
-                totalDBCount: dbList.length, 
-                userDBCount: userDBCount,     
-                slotsLeft: slotsLeft,         
-                dbLimit: USER_DB_LIMIT,       
-                storageUsed: logicalSizeMB,
-                dbList: userDBs,              
-                error: null
+                success: true, id: accountId, totalDBCount: dbList.length, userDBCount: userDBs.length,     
+                slotsLeft: USER_DB_LIMIT - userDBs.length, dbLimit: USER_DB_LIMIT, storageUsed: logicalSizeMB,
+                dbList: userDBs, error: null
             };
         } catch (error) {
-            const errorMsg = error.response?.data?.message || error.message;
-            return {
-                success: false,
-                id: accountId,
-                error: errorMsg
-            };
+            return { success: false, id: accountId, error: error.response?.data?.message || error.message };
         }
     }
     
-    // Fetch Local Data for Owner Mapping
-    const allBots = (await pool.query('SELECT bot_name, user_id FROM user_bots')).rows;
-    const ownerMap = new Map(allBots.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
-
-    // Fetch Neon Data
     const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(accountConfig));
     const allResults = await Promise.all(resultsPromises);
     
-    // Accumulators
     let totalStorageUsedMB = 0;
     let totalUserDBs = 0; 
     let totalSlotsLeft = 0; 
-    const MAX_STORAGE_MB_PER_ACCOUNT = 512; 
-    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * 1; // Capacity = N * 1
+    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * 1; 
     let accountsWithCapacity = 0;
-    
     let dbCounter = 1;
     let consolidatedDBListMessage = ``; 
 
     for (const result of allResults) {
         const accountId = result.id ? String(result.id) : 'N/A';
-        
         if (result.success) {
             totalUserDBs += result.userDBCount; 
             totalSlotsLeft += Math.max(0, result.slotsLeft); 
             totalStorageUsedMB += parseFloat(result.storageUsed || 0); 
-
             if (result.slotsLeft > 0) accountsWithCapacity++;
             
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
                     const dbNameSanitized = db.name.replace(/-/g, '_'); 
                     const ownerUserId = ownerMap.get(dbNameSanitized) || 'Unknown';
-                    
-                    consolidatedDBListMessage += 
-                        `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerUserId}</code>\n`;
+                    consolidatedDBListMessage += `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerUserId}</code>\n`;
                 });
             }
         } else {
@@ -5815,23 +5814,19 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         }
     }
     
-    // --- 3. BUILD FINAL MESSAGE ---
-    
-    // Start with AWS Report
+    // --- 3. CONSTRUCT FINAL MESSAGE ---
     let combinedMessage = awsReport;
     
-    // Add Neon DB List
-    combinedMessage += `🦄 **NEON ACTIVE DATABASES (${totalUserDBs}):**\n\n`;
+    combinedMessage += `**NEON ACTIVE DATABASES (${totalUserDBs}):**\n\n`;
     combinedMessage += consolidatedDBListMessage;
 
-    // Add Global Summary
     combinedMessage += `\n========================================\n`;
     combinedMessage += `<b>NEON RESOURCE SUMMARY</b>\n`;
-    combinedMessage += `Neon Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b> (Capacity)\n`;
+    combinedMessage += `Neon Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b>\n`;
     combinedMessage += `Neon Active DBs: <b>${totalUserDBs}</b>\n`;
     combinedMessage += `Neon Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
     
-    const totalMaxStorage = NEON_ACCOUNTS.length * MAX_STORAGE_MB_PER_ACCOUNT; 
+    const totalMaxStorage = NEON_ACCOUNTS.length * 512; 
     const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
     combinedMessage += `Neon Storage Left: <b>${storageRemaining.toFixed(2)} MB</b>\n`;
     combinedMessage += `========================================\n`;
