@@ -1789,6 +1789,126 @@ async function runOrphanDbCleanup(adminId) {
     }
 }
 
+
+// In bot_services.js (Ensure this function is defined, it was created in response to previous steps)
+
+/**
+ * Deletes a database by routing the request to the correct host (AWS or Neon).
+ * This function is used by the /deldb command for both explicit and orphan cleanup.
+ */
+async function deleteDatabaseFromNeon(dbName, expectedAccountId) {
+    
+    // Step 1: Input Validation
+    if (!dbName) {
+        return { success: false, error: "Missing dbName provided.", accounts_checked: 0 };
+    }
+
+    const expectedIdInt = parseInt(expectedAccountId, 10) || 1;
+    const neonDbName = dbName.replace(/-/g, '_'); 
+
+    // --- Sub-function to safely check credentials ---
+    const checkCredentials = (account) => {
+        return account && account.api_key && account.project_id && account.branch_id;
+    }
+
+    // =================================================================
+    // 1. TRY AWS SELF-HOSTED FIRST (for Hybrid Cleanup / Orphan Search)
+    // =================================================================
+    
+    // We only try AWS if no explicit Neon ID was provided (i.e., it was /deldb name or /deldb)
+    if (!expectedAccountId || expectedAccountId === '1') {
+        if (process.env.SELF_HOSTED_DB_URL) {
+            console.log(`[Delete Router] Attempting deletion via AWS Self-Hosted...`);
+            
+            // Assuming deleteSelfHostedDatabase is defined/exported in bot_services.js
+            const awsResult = await deleteSelfHostedDatabase(dbName);
+            
+            if (awsResult.success) {
+                console.log(`[Delete Router] AWS deletion successful (or confirmed missing).`);
+                return { success: true, accounts_checked: 'AWS' };
+            }
+            console.warn(`[Delete Router] AWS deletion failed (${awsResult.error || 'Unknown'}). Starting Neon Search...`);
+        }
+    }
+
+
+    // =================================================================
+    // 2. NEON STRATEGY (EXPLICIT DELETE & ORPHAN FALLBACK)
+    // =================================================================
+
+    let accountsChecked = 0;
+    
+    // --- STEP A: PRIMARY DELETION ATTEMPT (Expected Account ID) ---
+    // We run this check explicitly first, regardless of the loop.
+    const primaryAccount = NEON_ACCOUNTS.find(acc => acc.id === expectedIdInt);
+
+    if (primaryAccount) {
+        accountsChecked++;
+        console.log(`[Neon Delete] Tier 1: Attempting deletion on Account ${expectedIdInt} (Expected).`);
+        
+        if (checkCredentials(primaryAccount)) {
+            try {
+                const apiUrl = `https://console.neon.tech/api/v2/projects/${primaryAccount.project_id}/branches/${primaryAccount.branch_id}/databases/${neonDbName}`;
+                const headers = { 'Authorization': `Bearer ${primaryAccount.api_key}`, 'Accept': 'application/json' };
+
+                await axios.delete(apiUrl, { headers });
+                
+                console.log(`[Neon Delete] SUCCESS on Account ${expectedIdInt}.`);
+                return { success: true, accounts_checked: expectedIdInt }; // Return success with the specific ID
+                
+            } catch (error) {
+                if (error.response?.status === 404) {
+                     console.log(`[Neon Delete] Account ${expectedIdInt} reported 404. Treating as success.`);
+                     return { success: true, accounts_checked: expectedIdInt };
+                }
+                const primaryErrorMsg = error.response?.data?.message || error.message;
+                console.warn(`[Neon Delete] Tier 1 FAIL (Account ${expectedIdInt}): ${primaryErrorMsg}.`);
+            }
+        } else {
+             console.warn(`[Neon Delete] Tier 1 FAIL: Account ${expectedIdInt} has missing/invalid credentials.`);
+        }
+    }
+
+    // --- STEP B: FALLBACK SEARCH (Only if we are doing a general search) ---
+    // If the admin provided an ID (Strategy A), we already checked it. 
+    // We only loop through *all* accounts if we hit this logic via Orphan Cleanup.
+    
+    if (!expectedAccountId || expectedAccountId === '1') { 
+        for (const fallbackAccount of NEON_ACCOUNTS) {
+            const fallbackAccountId = fallbackAccount.id;
+            
+            // Skip the primary account if already checked (and it failed)
+            if (fallbackAccountId === expectedIdInt) continue;
+            
+            accountsChecked++;
+            console.log(`[Neon Delete] Fallback Search: Checking Account ${fallbackAccountId}...`);
+
+            if (checkCredentials(fallbackAccount)) {
+                try {
+                    const apiUrl = `https://console.neon.tech/api/v2/projects/${fallbackAccount.project_id}/branches/${fallbackAccount.branch_id}/databases/${neonDbName}`;
+                    const headers = { 'Authorization': `Bearer ${fallbackAccount.api_key}`, 'Accept': 'application/json' };
+
+                    await axios.delete(apiUrl, { headers });
+                    
+                    console.log(`[Neon Delete] SUCCESS on Fallback Account ${fallbackAccountId}.`);
+                    return { success: true, accounts_checked: fallbackAccountId }; 
+                    
+                } catch (error) {
+                     if (error.response?.status === 404) continue; 
+                     const fallbackErrorMsg = error.response?.data?.message || error.message;
+                     console.warn(`[Neon Delete] Fallback FAIL on Account ${fallbackAccountId}: ${fallbackErrorMsg}.`);
+                }
+            }
+        }
+    }
+    
+    // --- Step 4: Final Failure ---
+    const finalErrorMsg = `Database not found in AWS or any configured Neon account.`;
+    console.error(`[Delete Router] FINAL FAILURE: ${finalErrorMsg}`);
+    return { success: false, error: finalErrorMsg, accounts_checked: accountsChecked };
+}
+
+
 // In bot_services.js (REPLACE the entire deleteNeonDatabase function)
 
 /**
