@@ -1370,6 +1370,19 @@ cron.schedule('0 0 * * *', async () => {
 });
 
 
+    
+    cron.schedule('0 12 * * *', async () => {
+        console.log('[Scheduler] Cron job triggered: Running daily FX rate update.');
+        await updateDollarRate();
+    }, {
+        scheduled: true,
+        timezone: "Africa/Lagos"
+    });
+
+    console.log(`[Scheduler] Daily USD/NGN rate update scheduled for 12:00 PM.`);
+    // ... rest of your scheduled tasks ...
+}
+
     // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
         console.log('[Scheduler] Cron job triggered: Running copydb task');
@@ -1379,7 +1392,6 @@ cron.schedule('0 0 * * *', async () => {
         scheduled: true,
         timezone: "Africa/Lagos"
     });
-}
 
 
 // A reusable function to format a more precise countdown for the single bot menu.
@@ -2662,6 +2674,60 @@ async function sendPricingTiers(chatId, messageId) {
 
 
 
+// In bot.js (Add this function)
+
+/**
+ * Fetches the latest USD to NGN rate and updates the DOLLAR_RATE variable on Render.
+ */
+async function updateDollarRate() {
+    console.log('[FX Rate] Starting daily USD/NGN rate check...');
+    
+    const fxApiKey = process.env.EXCHANGE_RATE_API_KEY;
+    if (!fxApiKey) {
+        console.error('[FX Rate] Aborted: EXCHANGE_RATE_API_KEY is missing.');
+        return;
+    }
+
+    const apiUrl = `https://v6.exchangerate-api.com/v6/${fxApiKey}/latest/USD`;
+
+    try {
+        const response = await axios.get(apiUrl);
+        const rate = response.data.conversion_rates.NGN;
+
+        if (rate && rate > 100) { // Basic sanity check
+            // Round up to the nearest whole Naira (e.g., 1452.34 -> 1453)
+            const newRate = Math.ceil(rate);
+            
+            console.log(`[FX Rate] Fetched rate: 1 USD = ${rate.toFixed(2)} NGN. Setting Render variable to: ${newRate}`);
+
+            // 1. Update the Render Environment Variable
+            const updateResult = await updateRenderVar('DOLLAR_RATE', newRate.toString());
+
+            if (updateResult.success) {
+                await bot.sendMessage(ADMIN_ID, 
+                    `**DOLLAR RATE UPDATED**\n\n` +
+                    `New Rate: 1 USD = **₦${newRate}**\n` +
+                    `Render variable \`DOLLAR_RATE\` updated successfully. Bot is restarting to apply changes.`,
+                    { parse_mode: 'Markdown' }
+                );
+            } else {
+                throw new Error(updateResult.message);
+            }
+
+        } else {
+            throw new Error('API returned an invalid or missing NGN rate.');
+        }
+
+    } catch (error) {
+        console.error('[FX Rate] CRITICAL FAILURE during rate update:', error.message);
+        await bot.sendMessage(ADMIN_ID, 
+            `**FATAL ERROR:** Failed to update dollar rate.\n\nReason: ${escapeMarkdown(error.message)}. Manual intervention required.`, 
+            { parse_mode: 'Markdown' }
+        );
+    }
+}
+
+
 
 
 
@@ -3823,6 +3889,7 @@ bot.on('left_chat_member', handleLeftMembers);
 
   startScheduledTasks();
   runOrphanDbCleanup();
+  startScheduledTasks();
   
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
