@@ -176,7 +176,7 @@ const backupPool = new Pool({
 
 // In bot.js (near your other constants)
 // ⚠️ IMPORTANT: Replace with your actual group ID where the VCF should be sent.
-const VCF_GROUP_ID = '-1001234567890'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
+const VCF_GROUP_ID = '--1003216504823'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
 
 // Schedule the VCF generation every day at 11:00 PM (Lagos Time)
 cron.schedule('0 23 * * *', () => {
