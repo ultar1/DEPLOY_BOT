@@ -1370,18 +1370,6 @@ cron.schedule('0 0 * * *', async () => {
 });
 
 
-    
-// In bot.js (inside startScheduledTasks function)
-
-// Schedule check to run every day at 12:00 AM (midnight, WAT)
-cron.schedule('0 0 * * *', async () => { 
-    console.log('[Scheduler] Cron job triggered: Running daily FX rate update.');
-    await updateDollarRate();
-}, {
-    scheduled: true,
-    timezone: "Africa/Lagos"
-});
-
 
     // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
