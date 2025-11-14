@@ -1952,9 +1952,9 @@ async function changeBotDatabase(appName) {
     }
     
     // --- 5. Final Admin Success Notification ---
-    const successMessage = `✅ **MIGRATION SUCCESS** for \`${appName}\` (Owner: ${targetUserId})\n` +
-                           `📍 **New Location:** ${newAccountId}\n` +
-                           `🗑️ **Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
+    const successMessage = `**MIGRATION SUCCESS** for \`${appName}\` (Owner: ${targetUserId})\n` +
+                           `**New Location:** ${newAccountId}\n` +
+                           `**Old DB Deleted?** ${deletionSuccess ? 'Yes' : 'No (Requires /deldb cleanup)'}`;
     
     await bot.sendMessage(ADMIN_ID, successMessage, { parse_mode: 'Markdown' });
 
@@ -5995,7 +5995,7 @@ bot.onText(/^\/deldb\s+([\w-]+)(?:\s+(\d+))?$/i, async (msg, match) => {
     // --- Final Response ---
     if (result.success) {
         await bot.editMessageText(
-            `**SUCCESS! Database Deleted.**\n\nDatabase \`${escapeMarkdown(singleDbName)}\` has been removed.\n📍 **Source:** ${location}`,
+            `**SUCCESS! Database Deleted.**\n\nDatabase \`${escapeMarkdown(singleDbName)}\` has been removed.\n**Source:** ${location}`,
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
     } else {
