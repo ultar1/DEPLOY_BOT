@@ -5967,7 +5967,7 @@ bot.onText(/^\/deldb\s+([\w-]+)(?:\s+(\d+))?$/i, async (msg, match) => {
         
         location = `Neon Account ${singleAccountId}`;
         // Use the explicit ID for the check (Strategy A in the deletion function)
-        result = await dbServices.deleteNeonDatabase(singleDbName, singleAccountId);
+        result = await deleteNeonDatabase(singleDbName, singleAccountId);
         
     } else {
         // CASE 2: /deldb <name> (Hybrid Search: AWS -> Neon Search)
@@ -5984,7 +5984,7 @@ bot.onText(/^\/deldb\s+([\w-]+)(?:\s+(\d+))?$/i, async (msg, match) => {
         // B. Fallback to Neon Search if AWS failed
         if (!result.success) {
             // Passing '1' tells the function to run the full Neon search logic (Strategy B)
-            const neonResult = await dbServices.deleteNeonDatabase(singleDbName, '1');
+            const neonResult = await deleteNeonDatabase(singleDbName, '1');
             if (neonResult.success) {
                  result = neonResult;
                  location = `Neon Account ${neonResult.accounts_checked}`;
