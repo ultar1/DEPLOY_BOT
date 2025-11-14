@@ -1371,6 +1371,9 @@ cron.schedule('0 0 * * *', async () => {
 
 
     
+    
+    // --- ADD THE NEW DAILY CRON JOB ---
+    // Schedule check to run every day at 12:00 PM (noon, WAT)
     cron.schedule('0 12 * * *', async () => {
         console.log('[Scheduler] Cron job triggered: Running daily FX rate update.');
         await updateDollarRate();
@@ -1382,6 +1385,7 @@ cron.schedule('0 0 * * *', async () => {
     console.log(`[Scheduler] Daily USD/NGN rate update scheduled for 12:00 PM.`);
     // ... rest of your scheduled tasks ...
 }
+
 
     // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
@@ -3889,7 +3893,6 @@ bot.on('left_chat_member', handleLeftMembers);
 
   startScheduledTasks();
   runOrphanDbCleanup();
-  startScheduledTasks();
   
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
