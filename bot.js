@@ -44,7 +44,7 @@ const STICKER_PACK_TITLE = 'Ultar';
 // Make sure ADMIN_ID and BOT_USERNAME are defined above this!
 const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 
-const VCF_GROUP_LINK = 'https://t.me/+R2JkDX9h0ng0MWU0'; 
+const VCF_GROUP_LINK = 'https://t.me/wbdvcf1'; 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
 const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
@@ -4718,7 +4718,7 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
             // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
+                [reference, userId, customer.email || pendingPayment.rows[0].email, amount_kobo]
             );
 
             // ❗️ FIX: Use the correct variables that are available in this scope.
