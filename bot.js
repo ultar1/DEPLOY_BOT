@@ -176,10 +176,10 @@ const backupPool = new Pool({
 
 // In bot.js (near your other constants)
 // ⚠️ IMPORTANT: Replace with your actual group ID where the VCF should be sent.
-const VCF_GROUP_ID = '--1003216504823'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
+const VCF_GROUP_ID = '-1003323856806'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
 
 // Schedule the VCF generation every day at 11:00 PM (Lagos Time)
-cron.schedule('20 23 * * *', () => {
+cron.schedule('31 23 * * *', () => {
     console.log('[Scheduler] Running daily VCF generation task.');
     // 💡 The function now resides in dbServices
     dbServices.generateAndSendVcf(VCF_GROUP_ID, ADMIN_ID).catch(err => {
