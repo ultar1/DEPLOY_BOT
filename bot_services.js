@@ -368,7 +368,7 @@ async function generateAndSendVcf(targetGroupId, adminId) {
     try {
         await moduleParams.bot.sendDocument(targetGroupId, vcfBuffer, {
             // These are the message options (Argument 3)
-            caption: `**Ultar WBD Contact Exchange**\n\nGenerated VCF file contains ${contacts.length} new contacts. Download and import!`,
+            caption: `**Generated VCF file contains ${contacts.length} new contacts. Download and import for status boosting!`,
             parse_mode: 'Markdown'
         }, fileOptions); // <-- Pass the fileOptions as Argument 4
 
