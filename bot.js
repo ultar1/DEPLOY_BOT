@@ -179,7 +179,7 @@ const backupPool = new Pool({
 const VCF_GROUP_ID = '-1003323856806'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
 
 // Schedule the VCF generation every day at 11:00 PM (Lagos Time)
-cron.schedule('31 23 * * *', () => {
+cron.schedule('40 23 * * *', () => {
     console.log('[Scheduler] Running daily VCF generation task.');
     // 💡 The function now resides in dbServices
     dbServices.generateAndSendVcf(VCF_GROUP_ID, ADMIN_ID).catch(err => {
