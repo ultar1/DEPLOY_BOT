@@ -4683,11 +4683,8 @@ app.post('/flutterwave/webhook', async (req, res) => {
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         
         const reference = payload.data.tx_ref;
-        const amount_ngn = payload.data.amount; // This is in Naira (e.g., 1500)
+        const amount = payload.data.amount;
         const customer = payload.data.customer;
-        
-        // --- 💡 FIX: Convert Naira to Kobo ---
-        const amount_kobo = Math.ceil(amount_ngn * 100);
         
         const pendingPayment = await pool.query(
             'SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', 
@@ -4699,35 +4696,42 @@ app.post('/flutterwave/webhook', async (req, res) => {
             return res.status(200).end(); 
         }
 
+        // The user ID is fetched as 'user_id' and renamed to 'userId' for the rest of this function.
         const { user_id: userId, bot_type, app_name, session_id } = pendingPayment.rows[0];
-        const isRenewal = (bot_type === 'renewal');
+
+        const isRenewal = app_name && app_name.startsWith('renewal_');
+        let finalAppName = app_name;
         
-        // Calculate days based on NGN amount
-        let days;
-        if (amount_ngn >= 8000) days = 365;
-        else if (amount_ngn >= 5000) days = 185;
-        else if (amount_ngn >= 3000) days = 92;
-        else if (amount_ngn >= 1500) days = 30;
-        else days = 10;
+    
+let days;
+if (amount >= 8000) days = 365;    // Annual: ₦10,000
+else if (amount >= 5000) days = 185; // Semi-Annual: ₦6,000
+else if (amount >= 3000) days = 92;  // Quarterly: ₦3,500
+else if (amount >= 1500) days = 30;  // Standard: ₦1,500
+else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
+
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) return res.status(200).end();
             
-            // --- 💡 FIX: Save amount_kobo ---
+            // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amount_kobo]
+                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
             );
 
-            await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, app_name || 'N/A', bot_type || 'N/A', session_id || 'N/A');
+            // ❗️ FIX: Use the correct variables that are available in this scope.
+            await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
 
             const userChat = await bot.getChat(userId);
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
 
             if (isRenewal) {
                 // RENEWAL LOGIC
-                const finalAppName = payment.app_name; // Get appName from pending payment
+                finalAppName = finalAppName.substring('renewal_'.length);
+                
+                // ❗️ FIX: Use the correct 'userId' variable here.
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -4738,15 +4742,21 @@ app.post('/flutterwave/webhook', async (req, res) => {
                      WHERE user_id = $2 AND app_name = $3`,
                     [days, userId, finalAppName]
                 );
+
+                // ❗️ FIX: Use the correct 'userId' variable here.
                 await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Amount:* ₦${amount_ngn}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
             
             } else { 
                 // NEW DEPLOYMENT LOGIC
+                
+                // ❗️ FIX: Use the correct 'userId' variable here.
                 await bot.sendMessage(userId, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days }; 
+                
+                // ❗️ FIX: Use the correct 'userId' variable here.
                 dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
-                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\`\n*Amount:* ₦${amount_ngn}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
             }
             
             await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
@@ -4758,7 +4768,6 @@ app.post('/flutterwave/webhook', async (req, res) => {
     }
     res.status(200).end();
 });
-
 
 
 
