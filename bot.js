@@ -5187,7 +5187,7 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
             }
 
             // Call the helper (dbServices is imported in bot.js)
-            const result = await dbServices.changeBotDatabase(appName);
+            const result = await changeBotDatabase(appName);
             
             if (result.success) success++;
             else {
@@ -5210,7 +5210,7 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     const workingMsg = await bot.sendMessage(adminId, `Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
 
     // Call helper
-    const result = await dbServices.changeBotDatabase(appName);
+    const result = await changeBotDatabase(appName);
 
     if (result.success) {
         await bot.editMessageText(
@@ -5478,45 +5478,22 @@ async function sendNumbersDashboard(chatId, page = 1, messageId = null) {
 
 // In bot.js (REPLACE the existing /expire handler)
 
-bot.onText(/^\/expire (\d+)(?:\s+(\d+))?$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
+bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
 
     const days = parseInt(match[1], 10);
-    const targetUserId = match[2] ? match[2].trim() : null; // Capture the optional User ID
-
     if (isNaN(days) || days <= 0) {
         return bot.sendMessage(cid, "Please provide a valid number of days (e.g., /expire 45).");
     }
 
-    // --- CASE 1: TARGETING A SPECIFIC USER ID (/expire 30 7302005705) ---
-    if (targetUserId) {
-        const workingMsg = await bot.sendMessage(adminId, `Setting expiration for *all* bots owned by \`${targetUserId}\` to *${days} days*...`, { parse_mode: 'Markdown' });
-        
-        // Call the new dedicated service function
-        const result = await setAllUserBotsExpiration(targetUserId, days);
-        
-        if (result.success) {
-             await bot.editMessageText(
-                `**Success!** Expiration date for **${result.count}** bots owned by \`${targetUserId}\` has been set to ${days} days from now.`,
-                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-            );
-        } else {
-            await bot.editMessageText(
-                `**Failed!** User \`${targetUserId}\` has no active deployments or an error occurred.`,
-                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-            );
-        }
-        return;
-    }
-
-    // --- CASE 2: SHOWING APP LIST (Original Logic) ---
     try {
         let allBots = await dbServices.getAllUserBots();
         if (allBots.length === 0) {
             return bot.sendMessage(cid, "There are no bots deployed to set an expiration for.");
         }
 
+        // --- START OF CHANGES ---
         // Sort the bots alphabetically by name
         allBots.sort((a, b) => a.bot_name.localeCompare(b.bot_name));
 
@@ -5530,7 +5507,9 @@ bot.onText(/^\/expire (\d+)(?:\s+(\d+))?$/, async (msg, match) => {
             callback_data: `set_expiration:${bot.bot_name}`
         }));
 
+        // Arrange the buttons in rows of 3
         const keyboard = chunkArray(appButtons, 3);
+        // --- END OF CHANGES ---
 
         await bot.sendMessage(cid, `Select an app to set its expiration to *${days} days* from now:`, {
             parse_mode: 'Markdown',
@@ -5543,7 +5522,6 @@ bot.onText(/^\/expire (\d+)(?:\s+(\d+))?$/, async (msg, match) => {
         await bot.sendMessage(cid, "An error occurred while fetching the bot list.");
     }
 });
-
 
 // In bot.js, with your other admin commands
 
