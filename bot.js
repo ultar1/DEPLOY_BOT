@@ -4437,6 +4437,8 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
 
 
 // --- 💡 NEW NOWPAYMENTS WEBHOOK HANDLER 💡 ---
+// In bot.js (REPLACE this handler)
+
 app.post('/nowpayments-webhook', express.json(), async (req, res) => {
     
     // 1. Verify the signature
@@ -4453,7 +4455,6 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
     const { payment_status, order_id, price_amount, pay_amount, pay_currency } = req.body;
     console.log(`[NOWPayments] Webhook received for order: ${order_id}, Status: ${payment_status}`);
 
-    // We only care if the payment is actually confirmed ('finished')
     if (payment_status === 'finished') {
         try {
             // 3. Find the pending payment
@@ -4464,7 +4465,7 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
 
             if (pendingPayment.rows.length === 0) {
                 console.warn(`[NOWPayments] Webhook for ${order_id} received, but no pending payment found.`);
-                return res.status(200).send('OK'); // Already processed or invalid
+                return res.status(200).send('OK');
             }
             
             const payment = pendingPayment.rows[0];
@@ -4473,35 +4474,36 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
             // 4. Check if it's a renewal or new deploy
             const isRenewal = payment.bot_type === 'renewal';
             
-            // 5. Calculate days based on USD amount (Thresholds adjusted for your new pricing)
-            // Prices: Basic($0.35), Standard($1.00), Quarterly($2.00), Semi($3.35), Annual($5.35)
+            // 5. Calculate days based on USD amount
             let days;
-            if (price_amount >= 5.0) {
-                days = 365; // Annual ($5.35)
-            } else if (price_amount >= 3.0) {
-                days = 185; // Semi-Annual ($3.35) -> Corrected threshold from 3.5
-            } else if (price_amount >= 1.5) {
-                days = 92;  // Quarterly ($2.00)
-            } else if (price_amount >= 0.8) {
-                days = 30;  // Standard ($1.00)
-            } else {
-                days = 10;  // Basic ($0.35) -> Catches anything smaller
-            }
+            if (price_amount >= 5.0) days = 365;
+            else if (price_amount >= 3.0) days = 185;
+            else if (price_amount >= 1.5) days = 92;
+            else if (price_amount >= 0.8) days = 30;
+            else days = 10;
+            
+            // --- 💡 FIX: Calculate Kobo for storage ---
+            const rate = parseInt(process.env.DOLLAR_RATE || '1500', 10);
+            const amount_kobo = Math.ceil(price_amount * rate * 100);
             
             const userChat = await bot.getChat(userId);
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
+            
+            // Check if already processed
+            const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [order_id]);
+            if (checkProcessed.rows.length > 0) return res.status(200).send('OK');
+
+            // --- 💡 FIX: Save amount_kobo ---
+            await pool.query(
+                `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, NOW())`,
+                [order_id, userId, payment.email, amount_kobo, pay_currency.toUpperCase()]
+            );
 
             if (isRenewal) {
                 // --- RENEWAL LOGIC ---
                 const appName = payment.app_name;
                 await pool.query(
-                    `UPDATE user_deployments 
-                     SET expiration_date = 
-                        CASE 
-                           WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
-                           ELSE expiration_date + ($1 * INTERVAL '1 day')
-                        END
-                     WHERE user_id = $2 AND app_name = $3`,
+                    `UPDATE user_deployments SET expiration_date = CASE WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day') ELSE expiration_date + ($1 * INTERVAL '1 day') END WHERE user_id = $2 AND app_name = $3`,
                     [days, userId, appName]
                 );
                 await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days** with ${pay_amount} ${pay_currency.toUpperCase()}.`, { parse_mode: 'Markdown' });
@@ -4510,20 +4512,12 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
             } else { 
                 // --- NEW DEPLOYMENT LOGIC ---
                 await bot.sendMessage(userId, `Crypto payment confirmed! Your bot *${payment.app_name}* deployment has started.`, { parse_mode: 'Markdown' });
-                
-                const deployVars = { 
-                    SESSION_ID: payment.session_id, 
-                    APP_NAME: payment.app_name, 
-                    DAYS: days 
-                }; 
-                
-                // Trigger the build process
+                const deployVars = { SESSION_ID: payment.session_id, APP_NAME: payment.app_name, DAYS: days }; 
                 dbServices.buildWithProgress(userId, deployVars, false, false, payment.bot_type);
-                
                 await bot.sendMessage(ADMIN_ID, `*New App Deployed (Crypto)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${payment.app_name}\`\n*Amount:* $${price_amount} USD`, { parse_mode: 'Markdown' });
             }
             
-            // 6. Clean up pending payment so we don't process it twice
+            // 6. Clean up pending payment
             await pool.query('DELETE FROM pending_payments WHERE reference = $1', [order_id]);
             
         } catch (dbError) {
@@ -4532,9 +4526,9 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
         }
     }
     
-    // 7. Acknowledge the webhook to NOWPayments
     res.status(200).send('OK');
 });
+
 
 // POST /api/bots/delete - Deletes a bot from Heroku and the database
 app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
@@ -4674,9 +4668,8 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
 
-// bot.js (REPLACE the entire app.post('/flutterwave/webhook', ...) block)
+// In bot.js (REPLACE this handler)
 
-// In bot.js, replace your entire Flutterwave webhook handler with this:
 app.post('/flutterwave/webhook', async (req, res) => {
     const signature = req.headers['verif-hash'];
     if (!signature || (signature !== process.env.FLUTTERWAVE_SECRET_HASH)) {
@@ -4689,8 +4682,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         
         const reference = payload.data.tx_ref;
-        const amount = payload.data.amount;
+        const amount_ngn = payload.data.amount; // This is in Naira (e.g., 1500)
         const customer = payload.data.customer;
+        
+        // --- 💡 FIX: Convert Naira to Kobo ---
+        const amount_kobo = Math.ceil(amount_ngn * 100);
         
         const pendingPayment = await pool.query(
             'SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', 
@@ -4702,42 +4698,35 @@ app.post('/flutterwave/webhook', async (req, res) => {
             return res.status(200).end(); 
         }
 
-        // The user ID is fetched as 'user_id' and renamed to 'userId' for the rest of this function.
         const { user_id: userId, bot_type, app_name, session_id } = pendingPayment.rows[0];
-
-        const isRenewal = app_name && app_name.startsWith('renewal_');
-        let finalAppName = app_name;
+        const isRenewal = (bot_type === 'renewal');
         
-    
-let days;
-if (amount >= 8000) days = 365;    // Annual: ₦10,000
-else if (amount >= 5000) days = 185; // Semi-Annual: ₦6,000
-else if (amount >= 3000) days = 92;  // Quarterly: ₦3,500
-else if (amount >= 1500) days = 30;  // Standard: ₦1,500
-else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
-
+        // Calculate days based on NGN amount
+        let days;
+        if (amount_ngn >= 8000) days = 365;
+        else if (amount_ngn >= 5000) days = 185;
+        else if (amount_ngn >= 3000) days = 92;
+        else if (amount_ngn >= 1500) days = 30;
+        else days = 10;
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) return res.status(200).end();
             
-            // Log the completed payment
+            // --- 💡 FIX: Save amount_kobo ---
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
+                [reference, userId, customer.email || pendingPayment.rows[0].email, amount_kobo]
             );
 
-            // ❗️ FIX: Use the correct variables that are available in this scope.
-            await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
+            await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, app_name || 'N/A', bot_type || 'N/A', session_id || 'N/A');
 
             const userChat = await bot.getChat(userId);
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
 
             if (isRenewal) {
                 // RENEWAL LOGIC
-                finalAppName = finalAppName.substring('renewal_'.length);
-                
-                // ❗️ FIX: Use the correct 'userId' variable here.
+                const finalAppName = payment.app_name; // Get appName from pending payment
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -4748,21 +4737,15 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
                      WHERE user_id = $2 AND app_name = $3`,
                     [days, userId, finalAppName]
                 );
-
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Amount:* ₦${amount_ngn}`, { parse_mode: 'Markdown' });
             
             } else { 
                 // NEW DEPLOYMENT LOGIC
-                
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 await bot.sendMessage(userId, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days }; 
-                
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
-                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\`\n*Amount:* ₦${amount_ngn}`, { parse_mode: 'Markdown' });
             }
             
             await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
@@ -4774,6 +4757,7 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
     }
     res.status(200).end();
 });
+
 
 
 
@@ -5153,6 +5137,8 @@ bot.onText(/^\/id$/, async (msg) => {
 
 
 
+// In bot.js (REPLACE this handler)
+
 bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -5160,13 +5146,12 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     const target = match[1].trim();
     
     // --- CASE 1: MASS MIGRATION (/changedb all) ---
-
     if (target.toLowerCase() === 'all') {
-        const confirmMsg = await bot.sendMessage(adminId, `⚠️ **Mass Database Migration**\n\nThis will create a new database for EVERY active bot and restart them. This may take a long time.\n\nAre you sure you want to proceed?`, {
+        const confirmMsg = await bot.sendMessage(adminId, `⚠️ **Mass Database Migration (AWS Only)**\n\nThis will create a new database for EVERY bot currently on the **AWS Self-Hosted** platform and restart them.\n\nBots on Neon will *not* be affected. Proceed?`, {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Yes, Start Migration', callback_data: 'changedb_confirm_all' }],
+                    [{ text: 'Yes, Migrate AWS Bots', callback_data: 'changedb_confirm_all' }],
                     [{ text: 'No, Cancel', callback_data: 'changedb_cancel' }]
                 ]
             }
@@ -5175,22 +5160,27 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     }
 
     if (target === 'confirm_all') {
-        const workingMsg = await bot.sendMessage(adminId, "Starting Mass Database Migration...");
+        const workingMsg = await bot.sendMessage(adminId, "Starting Mass Database Migration (AWS Bots Only)...");
         
-        // Fetch all bots
-        const allBotsResult = await pool.query("SELECT bot_name FROM user_bots");
+        // --- 💡 FIX: Query for AWS bots only ---
+        const allBotsResult = await pool.query(
+            "SELECT app_name as bot_name FROM user_deployments WHERE neon_account_id = 'AWS_MAIN'"
+        );
         const allBots = allBotsResult.rows;
         
+        if (allBots.length === 0) {
+            return bot.editMessageText("No bots found on the AWS platform to migrate.", { chat_id: adminId, message_id: workingMsg.message_id });
+        }
+
         let success = 0;
         let failed = 0;
         
         for (const [i, botRow] of allBots.entries()) {
             const appName = botRow.bot_name;
             
-            // Update progress
             if (i % 5 === 0) {
                 await bot.editMessageText(
-                    `**Migrating Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
+                    `**Migrating AWS Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
                     { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
                 ).catch(()=>{});
             }
@@ -5204,12 +5194,11 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
                 console.error(`Failed to migrate ${appName}: ${result.message}`);
             }
             
-            // Small delay to prevent API rate limits
             await new Promise(r => setTimeout(r, 2000));
         }
 
         await bot.editMessageText(
-            `**Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
+            `**AWS Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
         return;
@@ -5230,7 +5219,7 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
     } else {
         await bot.editMessageText(
             `**Failed**\n\nReason: ${result.message}`,
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' } // Added parse_mode for consistency
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
     }
 });
@@ -6912,6 +6901,8 @@ bot.onText(/^\/send (\d+)\s*([\s\S]*)$/, async (msg, match) => {
 
 
 
+// In bot.js (REPLACE this handler)
+
 bot.onText(/^\/revenue$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
@@ -6921,7 +6912,7 @@ bot.onText(/^\/revenue$/, async (msg) => {
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()).toISOString();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).toISOString(); // Added for 3-month total
+        const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).toISOString(); 
 
         const todayResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [todayStart]);
         const weekResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [weekStart]);
@@ -6930,9 +6921,10 @@ bot.onText(/^\/revenue$/, async (msg) => {
         const allTimeResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments");
 
         const formatRevenue = (result) => {
-            const total = result.rows[0].total || 0;
+            const total = result.rows[0].total || 0; // This is in Kobo
             const count = result.rows[0].count || 0;
-            return `₦${(total / 100).toLocaleString()} (${count} keys)`;
+            // --- 💡 FIX: Divide by 100, remove decimals, and format ---
+            return `₦${(total / 100).toFixed(0).toLocaleString()} (${count} sales)`;
         };
 
         const revenueMessage = `
