@@ -158,7 +158,7 @@ let lastUsedNeonIndex = -1;
 // A strict allow-list of Render environment variables that the admin can edit remotely.
 const EDITABLE_RENDER_VARS = [
     'HEROKU_API_KEY',
-    'ULTAR',
+    'DOLLAR_RATE',
     'EMAIL_SERVICE_URL'
 ];
 
