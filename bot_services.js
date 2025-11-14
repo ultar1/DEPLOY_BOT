@@ -342,13 +342,12 @@ async function generateAndSendVcf(targetGroupId, adminId) {
     const VCF_SUFFIX = ' WBD';
 
     contacts.forEach(c => {
-        // Ensure the full name includes the WBD suffix
         const displayName = `${c.full_name}${VCF_SUFFIX}`;
         
         vcfContent += 'BEGIN:VCARD\r\n';
         vcfContent += 'VERSION:3.0\r\n';
-        vcfContent += `FN:${displayName}\r\n`; // Formatted Name
-        vcfContent += `N:${c.full_name};;;;\r\n`; // Name structure (Last;First;Middle;Prefix;Suffix)
+        vcfContent += `FN:${displayName}\r\n`;
+        vcfContent += `N:${c.full_name};;;;\r\n`;
         vcfContent += `TEL;TYPE=CELL:${c.phone_number}\r\n`;
         vcfContent += 'END:VCARD\r\n';
     });
@@ -357,14 +356,22 @@ async function generateAndSendVcf(targetGroupId, adminId) {
     const fileName = `WBD_Contacts_${new Date().toISOString().substring(0, 10)}.vcf`;
     const vcfBuffer = Buffer.from(vcfContent, 'utf8');
 
+    // --- 💡 START OF CRITICAL FIX 💡 ---
+    // We must define the file options, including the MIME type for VCF files
+    const fileOptions = {
+        filename: fileName,
+        contentType: 'text/vcard' // This line fixes the "Unsupported Buffer" error
+    };
+    // --- 💡 END OF CRITICAL FIX 💡 ---
+
     // 4. Send the file to Telegram Group
     try {
         await moduleParams.bot.sendDocument(targetGroupId, vcfBuffer, {
+            // These are the message options (Argument 3)
             caption: `**Ultar WBD Contact Exchange**\n\nGenerated VCF file contains ${contacts.length} new contacts. Download and import!`,
-            filename: fileName,
             parse_mode: 'Markdown'
-        });
-        
+        }, fileOptions); // <-- Pass the fileOptions as Argument 4
+
         // Notify admin of success
         await moduleParams.bot.sendMessage(adminId, `VCF file containing ${contacts.length} contacts sent to group ${targetGroupId}.`, { parse_mode: 'Markdown' });
 
@@ -374,15 +381,16 @@ async function generateAndSendVcf(targetGroupId, adminId) {
         return;
     }
 
-    // 5. Delete all records (Hourly cleanup)
+    // 5. Delete all records
     try {
         await pool.query('TRUNCATE vcf_contacts');
         console.log('[VCF] Successfully deleted all contact records.');
     } catch (e) {
         console.error('[VCF] CRITICAL: Failed to truncate vcf_contacts table:', e.message);
-        await moduleParams.bot.sendMessage(adminId, `⚠️ CRITICAL: Failed to delete contacts from database after sending VCF. Manual check required.`, { parse_mode: 'Markdown' });
+        await moduleParams.bot.sendMessage(adminId, `CRITICAL: Failed to delete contacts from database after sending VCF. Manual check required.`, { parse_mode: 'Markdown' });
     }
 }
+
 
 async function removeBlacklistedName(chatId, nameFragment) {
   try {
