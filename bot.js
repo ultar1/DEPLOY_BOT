@@ -4718,7 +4718,7 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
             // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amount_kobo]
+                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
             );
 
             // ❗️ FIX: Use the correct variables that are available in this scope.
