@@ -442,6 +442,7 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
         await client.query(`ALTER TABLE free_trial_numbers ADD COLUMN IF NOT EXISTS ip_address TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS email TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referred_by TEXT;`);
+      await client.query(`ALTER TABLE temp_deploys ADD COLUMN IF NOT EXISTS ip_address TEXT;`);
         await client.query(`ALTER TABLE heroku_api_keys ADD COLUMN IF NOT EXISTS added_by TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;`);
