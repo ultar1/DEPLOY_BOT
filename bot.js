@@ -12113,7 +12113,7 @@ if (action === 'paystack_switch' || action === 'flutterwave_switch') {
             // Calculate days left (round up so they don't lose the partial day)
             remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             
-            // If expired, set to 0 (or 1 to prevent errors)
+            // If expired (negative), set to 0
             if (remainingDays < 0) remainingDays = 0;
         }
     } catch (e) {
@@ -12127,6 +12127,22 @@ if (action === 'paystack_switch' || action === 'flutterwave_switch') {
     // 2. Define a special botType so the webhook knows this is a MIGRATION
     const switchBotType = `switch-${st.data.targetType}`; 
 
+    // --- PAYSTACK LOGIC ---
+    if (provider === 'paystack') {
+        // We pass the calculated remainingDays
+        await initiatePaystackPayment(cid, q.message.message_id, {
+            isRenewal: false, 
+            priceNgn: price, 
+            days: remainingDays, 
+            appName: appName,
+            botType: switchBotType, 
+            APP_NAME: appName,
+            SESSION_ID: st.data.sessionId
+        });
+        // Note: initiatePaystackPayment handles state internally if email is missing.
+        // If email exists, it sends link. You can optionally delete state here if you trust it won't conflict.
+    } 
+
     // --- FLUTTERWAVE LOGIC ---
     if (provider === 'flutterwave') {
         const reference = `flw_sw_${crypto.randomBytes(8).toString('hex')}`;
@@ -12136,9 +12152,9 @@ if (action === 'paystack_switch' || action === 'flutterwave_switch') {
             user_id: cid,
             product: 'Bot Switch',
             days: remainingDays, // <--- NOW USES CALCULATED DAYS
-            appName: appName,     // The Old Bot Name
-            botType: switchBotType,       // e.g. 'switch-raganork'
-            SESSION_ID: st.data.sessionId, // The New Session ID
+            appName: appName,    
+            botType: switchBotType,
+            SESSION_ID: st.data.sessionId,
             price: price
         };
 
@@ -12169,11 +12185,17 @@ if (action === 'paystack_switch' || action === 'flutterwave_switch') {
                     }
                 }
             );
+
+            // --- 💡 FIX: TERMINATE STATE IMMEDIATELY ---
+            // Since the link is generated, we don't need to wait for a key anymore.
+            delete userStates[cid];
+            // ------------------------------------------
         }
     }
     
     return;
 }
+
 
 
   
