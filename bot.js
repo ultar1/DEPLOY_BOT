@@ -1421,6 +1421,65 @@ function formatPreciseCountdown(expirationDateStr) {
     return `${days}d ${hours}h ${minutes}m ${seconds}s`;
 }
 
+
+// In bot_services.js
+
+const COUNTRY_DATA = {
+    'nigeria': { code: '234', len: 10, starts: ['70', '80', '81', '90', '91'] },
+    'usa': { code: '1', len: 10, starts: ['201', '310', '212', '415', '718', '305'] },
+    'uk': { code: '44', len: 10, starts: ['71', '72', '73', '74', '75', '77', '78', '79'] },
+    'india': { code: '91', len: 10, starts: ['6', '7', '8', '9'] },
+    'russia': { code: '7', len: 10, starts: ['9'] },
+    'pakistan': { code: '92', len: 10, starts: ['3'] },
+    'indonesia': { code: '62', len: 11, starts: ['8'] },
+    'brazil': { code: '55', len: 11, starts: ['119', '219'] },
+    'south africa': { code: '27', len: 9, starts: ['6', '7', '8'] },
+    'ghana': { code: '233', len: 9, starts: ['2', '5'] },
+    'kenya': { code: '254', len: 9, starts: ['7', '1'] },
+    'germany': { code: '49', len: 10, starts: ['15', '16', '17'] }
+};
+
+/**
+ * Generates a VCF buffer with 100 random numbers for a specific country.
+ */
+async function generateCountryVcf(countryInput) {
+    const countryKey = countryInput.toLowerCase().trim();
+    const data = COUNTRY_DATA[countryKey];
+
+    if (!data) {
+        return { success: false, message: "Country not supported. Try: Nigeria, USA, UK, India, Russia, etc." };
+    }
+
+    let vcfContent = '';
+    // Capitalize first letter for the name (e.g., "russia" -> "Russia")
+    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1);
+
+    for (let i = 1; i <= 100; i++) {
+        // 1. Generate Random Number
+        const prefix = data.starts[Math.floor(Math.random() * data.starts.length)];
+        const remainingLength = data.len - prefix.length;
+        
+        let randomDigits = '';
+        for (let d = 0; d < remainingLength; d++) {
+            randomDigits += Math.floor(Math.random() * 10);
+        }
+        
+        const fullNumber = `+${data.code}${prefix}${randomDigits}`;
+        const contactName = `${countryName}${i} plus data`; // The format you requested
+
+        // 2. Append to VCF
+        vcfContent += 'BEGIN:VCARD\r\n';
+        vcfContent += 'VERSION:3.0\r\n';
+        vcfContent += `FN:${contactName}\r\n`;
+        vcfContent += `TEL;TYPE=CELL:${fullNumber}\r\n`;
+        vcfContent += 'END:VCARD\r\n';
+    }
+
+    const buffer = Buffer.from(vcfContent, 'utf8');
+    return { success: true, buffer: buffer, fileName: `${countryName}_100_Contacts.vcf` };
+}
+
+
 /**
  * Fetches a user's verified email from the database.
  * @param {string} userId The user's Telegram ID.
@@ -5236,6 +5295,45 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
 });
 
 
+// In bot.js
+
+bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    // Note: Remove this check if you want regular users to use it too.
+    if (cid !== ADMIN_ID) return; 
+
+    const countryName = match[1].trim();
+
+    const workingMsg = await bot.sendMessage(cid, `Generating 100 random contacts for *${escapeMarkdown(countryName)}*...`, { parse_mode: 'Markdown' });
+
+    try {
+        // Call the service function
+        const result = await generateCountryVcf(countryName);
+
+        if (result.success) {
+            await bot.deleteMessage(cid, workingMsg.message_id); // Remove "Generating..." msg
+            
+            await bot.sendDocument(cid, result.buffer, {
+                caption: `**Generated Successfully!**\n\n100 Random ${countryName} Numbers.\n📝 Name Format: ${countryName}1 plus data`,
+                parse_mode: 'Markdown'
+            }, {
+                filename: result.fileName,
+                contentType: 'text/vcard'
+            });
+        } else {
+            await bot.editMessageText(`**Error:** ${result.message}`, {
+                chat_id: cid,
+                message_id: workingMsg.message_id
+            });
+        }
+    } catch (error) {
+        console.error("Error generating VCF:", error);
+        await bot.editMessageText("An error occurred while generating the file.", {
+            chat_id: cid,
+            message_id: workingMsg.message_id
+        });
+    }
+});
 
 
 // --- Command: /createawsdb <dbname> ---
