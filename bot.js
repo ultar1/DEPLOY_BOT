@@ -5371,7 +5371,7 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
 
     const countryName = match[1].trim();
 
-    const workingMsg = await bot.sendMessage(cid, `Generating 100 random contacts for *${escapeMarkdown(countryName)}*...`, { parse_mode: 'Markdown' });
+    const workingMsg = await bot.sendMessage(cid, `Generating 500 random contacts for *${escapeMarkdown(countryName)}*...`, { parse_mode: 'Markdown' });
 
     try {
         // Call the service function
@@ -5381,7 +5381,7 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
             await bot.deleteMessage(cid, workingMsg.message_id); // Remove "Generating..." msg
             
             await bot.sendDocument(cid, result.buffer, {
-                caption: `**Generated Successfully!**\n\n100 Random ${countryName} Numbers.\n📝 Name Format: ${countryName}1 plus data`,
+                caption: `**Generated Successfully!**\n\n500 Random ${countryName} Numbers.\n📝 Name Format: ${countryName}1 plus data`,
                 parse_mode: 'Markdown'
             }, {
                 filename: result.fileName,
