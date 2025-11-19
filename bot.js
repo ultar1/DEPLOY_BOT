@@ -5002,40 +5002,60 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
     });
 
     // This is your separate API endpoint for getting a key
-    app.get('/api/get-key', async (req, res) => {
-        const providedApiKey = req.headers['x-api-key'];
-        const secretApiKey = process.env.INTER_BOT_API_KEY;
+    // In bot.js (REPLACE the '/api/get-key' endpoint)
 
-        if (!secretApiKey || providedApiKey !== secretApiKey) {
-            console.warn('[API] Unauthorized attempt to get a key.');
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+app.get('/api/get-key', async (req, res) => {
+    const providedApiKey = req.headers['x-api-key'];
+    const secretApiKey = process.env.INTER_BOT_API_KEY;
+
+    if (!secretApiKey || providedApiKey !== secretApiKey) {
+        console.warn('[API] Unauthorized attempt to get a key.');
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    // Check if a specific number of uses was requested via URL (e.g. ?uses=5)
+    const requestedUses = parseInt(req.query.uses);
+
+    try {
+        // --- CASE 1: Admin requested specific uses (Force Create New Key) ---
+        if (!isNaN(requestedUses) && requestedUses > 0) {
+            const newKey = generateKey();
+            // Create specific key with the requested amount
+            await pool.query(
+                'INSERT INTO deploy_keys (key, uses_left, created_by) VALUES ($1, $2, $3)',
+                [newKey, requestedUses, 'WhatsApp API']
+            );
+            console.log(`[API] Created custom key ${newKey} with ${requestedUses} uses.`);
+            return res.json({ success: true, key: newKey, uses: requestedUses });
         }
 
-        try {
-            const result = await pool.query(
-    'SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1'
-);
+        // --- CASE 2: Default (Get existing key OR create 1-use key) ---
+        // Try to get an existing general key (user_id IS NULL)
+        const result = await pool.query(
+            'SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1'
+        );
 
-if (result.rows.length > 0) {
-    const key = result.rows[0].key;
-                console.log(`[API] Provided existing key ${key} to authorized request.`);
-                return res.json({ success: true, key: key });
-            } else {
-                console.log('[API] No active key found. Creating a new one...');
-                const newKey = generateKey(); // Using your existing key generator
-                const newKeyResult = await pool.query(
-                    'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
-                    [newKey]
-                );
-                const createdKey = newKeyResult.rows[0].key;
-                console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
-                return res.json({ success: true, key: createdKey });
-            }
-        } catch (error) {
-            console.error('[API] Database error while fetching/creating key:', error);
-            return res.status(500).json({ success: false, message: 'Internal server error.' });
+        if (result.rows.length > 0) {
+            const key = result.rows[0].key;
+            console.log(`[API] Provided existing key ${key}.`);
+            return res.json({ success: true, key: key, uses: 'existing' });
+        } else {
+            // Create a new standard 1-use key
+            const newKey = generateKey();
+            await pool.query(
+                'INSERT INTO deploy_keys (key, uses_left, created_by) VALUES ($1, 1, $2)',
+                [newKey, 'WhatsApp API Auto']
+            );
+            console.log(`[API] Created new standard key ${newKey}.`);
+            return res.json({ success: true, key: newKey, uses: 1 });
         }
-    });
+
+    } catch (error) {
+        console.error('[API] Database error:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
 
     // The command to start the server listening for requests
     app.listen(PORT, () => {
