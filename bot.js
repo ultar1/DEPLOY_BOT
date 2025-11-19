@@ -1485,7 +1485,7 @@ async function generateCountryVcf(countryInput) {
 
     // 4. Generation Loop (Find 100 unique numbers)
     // We loop until we have 100 numbers OR we hit 1000 attempts (to prevent infinite loops if DB is full)
-    while (uniqueNumbers.length < 100 && attempts < 1000) {
+    while (uniqueNumbers.length < 500 && attempts < 1000) {
         attempts++;
         
         // A. Generate Random Number
