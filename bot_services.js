@@ -279,6 +279,68 @@ async function getLoggedOutBots() {
     }
 }
 
+
+// In bot_services.js
+
+/**
+ * Handles switching a bot from one type to another while preserving the DB.
+ */
+async function processBotSwitch(userId, appName, targetType, newSessionId) {
+    console.log(`[Switch] Starting switch for ${appName} to ${targetType}...`);
+    
+    try {
+        // 1. Get current config (WE NEED THE DATABASE_URL)
+        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, {
+             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        const currentConfig = configRes.data;
+        const databaseUrl = currentConfig.DATABASE_URL; // <--- CRITICAL: SAVE THIS!
+        
+        // 2. Delete the OLD App from Heroku
+        // We do NOT delete the Neon/AWS database. We just delete the container code.
+        await herokuApi.delete(`/apps/${appName}`, {
+             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        console.log(`[Switch] Deleted old Heroku app: ${appName}`);
+
+        // 3. Prepare New Config
+        // We mix the OLD Database URL with the NEW Session ID and Type defaults
+        const targetDefaults = defaultEnvVars[targetType] || {};
+        
+        const newVars = {
+            ...targetDefaults,          // Defaults for new bot type
+            DATABASE_URL: databaseUrl,  // PRESERVE THE DATABASE
+            SESSION_ID: newSessionId,   // New Session
+            APP_NAME: appName           // Keep same name
+        };
+
+        // 4. Re-Deploy (Using buildWithProgress logic)
+        // We pass 'isRestore=true' logic effectively because we are reusing the DB
+        // But technically we are building a fresh code base.
+        
+        // We update the local DB record to reflect the new type BEFORE building
+        await pool.query(
+            `UPDATE user_bots SET bot_type = $1, session_id = $2 WHERE bot_name = $3`,
+            [targetType, newSessionId, appName]
+        );
+        
+        await pool.query(
+            `UPDATE user_deployments SET bot_type = $1, session_id = $2 WHERE app_name = $3`,
+            [targetType, newSessionId, appName]
+        );
+
+        // 5. Trigger Build
+        // We use buildWithProgress. 
+        // Important: We pass 'true' for isRestore to prevent it from trying to create a NEW database.
+        // It will see the DATABASE_URL in 'newVars' and use it.
+        await buildWithProgress(userId, newVars, false, true, targetType);
+        
+    } catch (error) {
+        console.error(`[Switch] Error switching bot ${appName}:`, error);
+        moduleParams.bot.sendMessage(userId, `Switch failed: ${error.message}. Please contact support.`);
+    }
+}
+
 // In bot_services.js
 
 async function addBlacklistedName(chatId, nameFragment, adminId) {
@@ -2637,6 +2699,7 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
+    processBotSwitch,
     generateAndSendVcf,
     storeNewVcfContact,
     permanentlyDeleteBotRecord,
