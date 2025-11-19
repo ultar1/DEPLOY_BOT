@@ -281,58 +281,77 @@ async function getLoggedOutBots() {
 
 
 // In bot_services.js
+// In bot_services.js (REPLACE the processBotSwitch function)
 
 /**
- * Handles switching a bot from one type to another while preserving the DB.
+ * Handles switching a bot from one type to another.
+ * Deletes old app, Renames the bot (to avoid conflicts), and Redeploys.
  */
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
     console.log(`[Switch] Starting switch for ${appName} to ${targetType}...`);
     
     try {
         // 1. Get current config (WE NEED THE DATABASE_URL)
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, {
-             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        const currentConfig = configRes.data;
-        const databaseUrl = currentConfig.DATABASE_URL; // <--- CRITICAL: SAVE THIS!
+        // We try to get it from Heroku first.
+        let databaseUrl;
+        try {
+            const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, {
+                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            databaseUrl = configRes.data.DATABASE_URL;
+        } catch (e) {
+            console.warn(`[Switch] Could not fetch vars from Heroku for ${appName} (maybe suspended). Trying local DB.`);
+            // Fallback: Try to get DB URL from local records if Heroku fails
+            const localRecord = await pool.query('SELECT config_vars FROM user_deployments WHERE app_name = $1', [appName]);
+            if (localRecord.rows.length > 0) {
+                databaseUrl = localRecord.rows[0].config_vars.DATABASE_URL;
+            }
+        }
         
         // 2. Delete the OLD App from Heroku
-        // We do NOT delete the Neon/AWS database. We just delete the container code.
-        await herokuApi.delete(`/apps/${appName}`, {
-             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        console.log(`[Switch] Deleted old Heroku app: ${appName}`);
+        try {
+            await herokuApi.delete(`/apps/${appName}`, {
+                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            console.log(`[Switch] Deleted old Heroku app: ${appName}`);
+        } catch (e) {
+            if (e.response && e.response.status === 404) {
+                console.log(`[Switch] Old app ${appName} was already deleted.`);
+            } else {
+                console.warn(`[Switch] Warning: Failed to delete old app ${appName}:`, e.message);
+            }
+        }
 
-        // 3. Prepare New Config
-        // We mix the OLD Database URL with the NEW Session ID and Type defaults
+        // --- 💡 FIX: GENERATE NEW UNIQUE NAME ---
+        // This prevents "Name already taken" errors
+        const randomSuffix = require('crypto').randomBytes(2).toString('hex');
+        const newAppName = `${appName}-${randomSuffix}`;
+        
+        console.log(`[Switch] Renaming bot from ${appName} -> ${newAppName}`);
+
+        // 3. Update Local DB Records (Rename the bot in your database)
+        await pool.query(
+            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3 WHERE bot_name = $4 AND user_id = $5`,
+            [newAppName, targetType, newSessionId, appName, userId]
+        );
+        
+        await pool.query(
+            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3 WHERE app_name = $4 AND user_id = $5`,
+            [newAppName, targetType, newSessionId, appName, userId]
+        );
+
+        // 4. Prepare New Config
         const targetDefaults = defaultEnvVars[targetType] || {};
         
         const newVars = {
             ...targetDefaults,          // Defaults for new bot type
             DATABASE_URL: databaseUrl,  // PRESERVE THE DATABASE
             SESSION_ID: newSessionId,   // New Session
-            APP_NAME: appName           // Keep same name
+            APP_NAME: newAppName        // <--- USE NEW NAME
         };
 
-        // 4. Re-Deploy (Using buildWithProgress logic)
-        // We pass 'isRestore=true' logic effectively because we are reusing the DB
-        // But technically we are building a fresh code base.
-        
-        // We update the local DB record to reflect the new type BEFORE building
-        await pool.query(
-            `UPDATE user_bots SET bot_type = $1, session_id = $2 WHERE bot_name = $3`,
-            [targetType, newSessionId, appName]
-        );
-        
-        await pool.query(
-            `UPDATE user_deployments SET bot_type = $1, session_id = $2 WHERE app_name = $3`,
-            [targetType, newSessionId, appName]
-        );
-
         // 5. Trigger Build
-        // We use buildWithProgress. 
-        // Important: We pass 'true' for isRestore to prevent it from trying to create a NEW database.
-        // It will see the DATABASE_URL in 'newVars' and use it.
+        // We pass 'true' for isRestore so it doesn't try to create a NEW database
         await buildWithProgress(userId, newVars, false, true, targetType);
         
     } catch (error) {
@@ -341,24 +360,6 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
     }
 }
 
-// In bot_services.js
-
-async function addBlacklistedName(chatId, nameFragment, adminId) {
-  try {
-    // We store the name in lowercase to make checks case-insensitive
-    await pool.query(
-      `INSERT INTO group_blacklist(chat_id, name_fragment, added_by) 
-       VALUES($1, $2, $3) 
-       ON CONFLICT (chat_id, name_fragment) DO NOTHING`,
-      [chatId, nameFragment.toLowerCase(), adminId]
-    );
-    return { success: true };
-  } catch (error) {
-    console.error(`[DB] Failed to add blacklist name ${nameFragment} for chat ${chatId}:`, error.message);
-    return { success: false, error: error.message };
-  }
-}
-// In bot_services.js (Add these functions)
 
 /**
  * Stores a new contact entry for VCF generation.
