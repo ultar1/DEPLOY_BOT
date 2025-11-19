@@ -26,7 +26,10 @@ const express = require('express');
 // In bot.js (near the top)
 
 const { sendPaymentConfirmation, sendVerificationEmail, sendExpirationReminder, sendLoggedOutReminder } = require('./email_service');
-
+const vcfPool = new Pool({
+  connectionString: process.env.DATABASE_URLVCF,
+  ssl: { rejectUnauthorized: false }
+});
 
 const crypto = require('crypto');
 
@@ -159,6 +162,7 @@ let lastUsedNeonIndex = -1;
 const EDITABLE_RENDER_VARS = [
     'HEROKU_API_KEY',
     'DOLLAR_RATE',
+    'DATABASE_URLVCF',
     'EMAIL_SERVICE_URL'
 ];
 
@@ -1439,23 +1443,52 @@ const COUNTRY_DATA = {
     'germany': { code: '49', len: 10, starts: ['15', '16', '17'] }
 };
 
+// In bot_services.js (REPLACE the generateCountryVcf function)
+
 /**
- * Generates a VCF buffer with 100 random numbers for a specific country.
+ * Generates a VCF buffer with 100 UNIQUE random numbers for a specific country.
+ * Uses the separate VCF database to ensure numbers are never repeated across files.
  */
 async function generateCountryVcf(countryInput) {
+    // 1. Validate Country
     const countryKey = countryInput.toLowerCase().trim();
     const data = COUNTRY_DATA[countryKey];
 
     if (!data) {
-        return { success: false, message: "Country not supported. Try: Nigeria, USA, UK, India, Russia, etc." };
+        return { success: false, message: "Country not supported. Try: Nigeria, USA, UK, India, Russia, Pakistan, etc." };
     }
 
-    let vcfContent = '';
-    // Capitalize first letter for the name (e.g., "russia" -> "Russia")
-    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1);
+    // 2. Prepare Name Formatting (Date & Time)
+    // Format: DD/MM HH:MM (e.g., 14/11 09:30)
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', timeZone: 'Africa/Lagos' });
+    const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Lagos' });
+    const dateTimeSuffix = `${dateStr} ${timeStr}`;
+    
+    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1); // Capitalize
 
-    for (let i = 1; i <= 100; i++) {
-        // 1. Generate Random Number
+    // 3. Ensure the tracking table exists in the VCF Database
+    try {
+        await vcfPool.query(`
+            CREATE TABLE IF NOT EXISTS generated_vcf_numbers (
+                phone_number TEXT PRIMARY KEY,
+                country TEXT,
+                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+    } catch (e) {
+        console.error("[VCF Gen] Failed to init tracking table:", e.message);
+    }
+
+    const uniqueNumbers = [];
+    let attempts = 0;
+
+    // 4. Generation Loop (Find 100 unique numbers)
+    // We loop until we have 100 numbers OR we hit 1000 attempts (to prevent infinite loops if DB is full)
+    while (uniqueNumbers.length < 100 && attempts < 1000) {
+        attempts++;
+        
+        // A. Generate Random Number
         const prefix = data.starts[Math.floor(Math.random() * data.starts.length)];
         const remainingLength = data.len - prefix.length;
         
@@ -1463,21 +1496,55 @@ async function generateCountryVcf(countryInput) {
         for (let d = 0; d < remainingLength; d++) {
             randomDigits += Math.floor(Math.random() * 10);
         }
-        
         const fullNumber = `+${data.code}${prefix}${randomDigits}`;
-        const contactName = `${countryName}${i} plus data`; // The format you requested
 
-        // 2. Append to VCF
+        // B. Check Database for Uniqueness
+        try {
+            // Attempt to insert. If it exists, 'ON CONFLICT DO NOTHING' returns 0 rows.
+            const result = await vcfPool.query(
+                `INSERT INTO generated_vcf_numbers (phone_number, country) 
+                 VALUES ($1, $2) 
+                 ON CONFLICT (phone_number) DO NOTHING 
+                 RETURNING phone_number`,
+                [fullNumber, countryName]
+            );
+
+            // If a row was returned, it means the number was NEW and inserted successfully.
+            if (result.rows.length > 0) {
+                uniqueNumbers.push(fullNumber);
+            }
+        } catch (e) {
+            console.error("[VCF Gen] DB Check Error:", e.message);
+        }
+    }
+
+    if (uniqueNumbers.length === 0) {
+        return { success: false, message: "Failed to generate numbers. Database connection might be down." };
+    }
+
+    // 5. Build VCF File Content
+    let vcfContent = '';
+    
+    uniqueNumbers.forEach((num, index) => {
+        // Format: Russia1 14/11 09:30
+        const contactName = `${countryName}${index + 1} ${dateTimeSuffix}`;
+
         vcfContent += 'BEGIN:VCARD\r\n';
         vcfContent += 'VERSION:3.0\r\n';
         vcfContent += `FN:${contactName}\r\n`;
-        vcfContent += `TEL;TYPE=CELL:${fullNumber}\r\n`;
+        vcfContent += `TEL;TYPE=CELL:${num}\r\n`;
         vcfContent += 'END:VCARD\r\n';
-    }
+    });
 
     const buffer = Buffer.from(vcfContent, 'utf8');
-    return { success: true, buffer: buffer, fileName: `${countryName}_100_Contacts.vcf` };
+    const safeFileName = `${countryName}_${dateStr.replace(/\//g, '-')}_${timeStr.replace(/:/g, '')}.vcf`;
+
+    return { success: true, buffer: buffer, fileName: safeFileName };
 }
+
+
+// ... (storeNewVcfContact and generateAndSendVcf should also be updated to use vcfPool) ...
+
 
 
 /**
