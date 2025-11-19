@@ -7737,8 +7737,63 @@ if (st && st.step === 'AWAITING_EMAIL_FOR_AUTO_REG') {
 }
 
 
-// ... existing code ...
+// In bot.js (bot.on('message'))
 
+// 1. HANDLE SESSION ID INPUT
+if (st && st.step === 'AWAITING_SWITCH_SESSION') {
+    const sessionId = text.trim();
+    const targetType = st.data.targetType;
+    
+    // Validate Session ID based on type
+    let isValid = false;
+    if (targetType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX)) isValid = true;
+    else if (targetType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX)) isValid = true;
+    else if (targetType === 'hermit' && sessionId.startsWith(HERMIT_SESSION_PREFIX)) isValid = true;
+    
+    if (!isValid) {
+        return bot.sendMessage(cid, `Invalid Session ID for ${targetType}. Please try again.`);
+    }
+    
+    // Save and Show Review
+    st.data.sessionId = sessionId;
+    st.step = 'AWAITING_SWITCH_CONFIRM';
+    
+    const reviewMsg = 
+        `**Review Migration**\n\n` +
+        `Bot: \`${st.data.appName}\`\n` +
+        `New Type: **${targetType.toUpperCase()}**\n` +
+        `Session: \`${sessionId}\`\n\n` +
+        `*Your old bot will be migrated.*`;
+
+    await bot.sendMessage(cid, reviewMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Confirm & Pay (₦500)', callback_data: 'confirm_switch_pay' }],
+                [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}` }]
+            ]
+        }
+    });
+    return;
+}
+
+// 2. HANDLE KEY INPUT FOR SWITCH
+if (st && st.step === 'AWAITING_KEY_FOR_SWITCH') {
+    const keyAttempt = text.toUpperCase().trim();
+    
+    const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
+    if (usesLeft === null) {
+        return bot.sendMessage(cid, "Invalid or expired key.");
+    }
+    
+    await bot.sendMessage(cid, "Key verified! Starting migration...");
+    
+    // CALL THE SERVICE FUNCTION
+    await dbServices.processBotSwitch(cid, st.data.appName, st.data.targetType, st.data.sessionId);
+    
+    delete userStates[cid];
+    return;
+}
 
 // In bot.js, inside bot.on('message', ...)
 
@@ -11900,7 +11955,7 @@ if (action === 'selectapp' || action === 'selectbot') {
         }
         
         keyboard.push(mainRow);
-        keyboard.push(
+                keyboard.push(
             [
                 { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
                 { text: 'Delete', callback_data: `userdelete:${appName}` },
@@ -11908,9 +11963,11 @@ if (action === 'selectapp' || action === 'selectbot') {
             ],
             [
                 { text: 'Backup', callback_data: `backup_app:${appName}` },
+                { text: 'Switch To Another Bot', callback_data: `switch_bot_start:${appName}` }, // <--- NEW BUTTON
                 { text: 'Turn Bot Off (Pause)', callback_data: `toggle_dyno:off:${appName}` }
             ]
         );
+
 
     } else { 
         // --- Bot is OFF (but not paused, e.g., crashed) ---
@@ -11945,12 +12002,181 @@ if (action === 'selectapp' || action === 'selectbot') {
 
 
 
+// In bot.js (inside bot.on('callback_query'))
+
+// 1. START SWITCH: Show available types
+if (action === 'switch_bot_start') {
+    const appName = payload;
+    
+    // Fetch current bot type to exclude it
+    const botResult = await pool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1', [appName]);
+    const currentType = botResult.rows[0]?.bot_type || 'levanter';
+    
+    const options = [];
+    if (currentType !== 'levanter') options.push({ text: 'Switch to Levanter', callback_data: `switch_select_type:levanter:${appName}` });
+    if (currentType !== 'raganork') options.push({ text: 'Switch to Raganork', callback_data: `switch_select_type:raganork:${appName}` });
+    if (currentType !== 'hermit') options.push({ text: 'Switch to Hermit', callback_data: `switch_select_type:hermit:${appName}` });
+    
+    options.push({ text: '« Cancel', callback_data: `selectapp:${appName}` });
+
+    await bot.editMessageText(`**Switch Bot Type**\n\nCurrent Type: *${currentType.toUpperCase()}*\n\nSelect the new bot type you want to migrate to.`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: chunkArray(options, 1) }
+    });
+    return;
+}
+
+// 2. TYPE SELECTED: Ask for Session ID
+if (action === 'switch_select_type') {
+    const targetType = payload;
+    const appName = extra;
+    
+    // Set State
+    userStates[cid] = {
+        step: 'AWAITING_SWITCH_SESSION',
+        data: {
+            appName: appName,
+            targetType: targetType
+        }
+    };
+    
+    let guideUrl = LEVANTER_SESSION_SITE_URL;
+    if (targetType === 'raganork') guideUrl = RAGANORK_SESSION_SITE_URL;
+    if (targetType === 'hermit') guideUrl = HERMIT_SESSION_SITE_URL;
+
+    await bot.editMessageText(`You are switching to *${targetType.toUpperCase()}*.\n\nPlease enter your **New Session ID** for ${targetType}:`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: 'Get Session ID', url: guideUrl }]]
+        }
+    });
+    return;
+}
+
+// 3. CONFIRM SWITCH: Verify Key/Payment
+if (action === 'confirm_switch_pay') {
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_SWITCH_CONFIRM') return;
+    
+    // Move to Key/Payment State
+    st.step = 'AWAITING_KEY_FOR_SWITCH';
+    
+    // 500 NGN Price
+    const price = 500;
+    
+    await bot.editMessageText(
+        `**Complete Migration**\n\nCost: **₦${price}** (or 1 Key)\n\nPlease enter your **Deploy Key** or make a payment to proceed.`, 
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}` }],
+                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}` }]
+                ]
+            }
+        }
+    );
+    return;
+}
+
+// 4. PAYMENT HANDLERS (Paystack/Flutterwave for Switch)
+if (action === 'paystack_switch' || action === 'flutterwave_switch') {
+    const price = parseInt(payload);
+    const provider = action.split('_')[0]; 
+    const st = userStates[cid];
+    
+    // 1. Safety Check
+    if (!st || st.step !== 'AWAITING_KEY_FOR_SWITCH') {
+        return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start over.", show_alert: true });
+    }
+
+    const appName = st.data.appName;
+
+    // --- 💡 START OF FIX: GET REMAINING DAYS FROM DB 💡 ---
+    let remainingDays = 0;
+    try {
+        const result = await pool.query(
+            `SELECT expiration_date FROM user_deployments WHERE app_name = $1 AND user_id = $2`,
+            [appName, cid]
+        );
+        
+        if (result.rows.length > 0 && result.rows[0].expiration_date) {
+            const expDate = new Date(result.rows[0].expiration_date);
+            const now = new Date();
+            const diffTime = expDate - now;
+            // Calculate days left (round up so they don't lose the partial day)
+            remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            // If expired, set to 0 (or 1 to prevent errors)
+            if (remainingDays < 0) remainingDays = 0;
+        }
+    } catch (e) {
+        console.error(`Error calculating remaining days for ${appName}:`, e);
+        // Fallback to 0 if DB fails, but proceed with switch
+    }
+    
+    console.log(`[Switch] User ${cid} switching ${appName}. Remaining Days: ${remainingDays}`);
+    // --- 💡 END OF FIX 💡 ---
+    
+    // 2. Define a special botType so the webhook knows this is a MIGRATION
+    const switchBotType = `switch-${st.data.targetType}`; 
+
+    // --- FLUTTERWAVE LOGIC ---
+    if (provider === 'flutterwave') {
+        const reference = `flw_sw_${crypto.randomBytes(8).toString('hex')}`;
+        
+        // Define metadata specific to the switch
+        const metadata = {
+            user_id: cid,
+            product: 'Bot Switch',
+            days: remainingDays, // <--- NOW USES CALCULATED DAYS
+            appName: appName,     // The Old Bot Name
+            botType: switchBotType,       // e.g. 'switch-raganork'
+            SESSION_ID: st.data.sessionId, // The New Session ID
+            price: price
+        };
+
+        // 3. Call initiateFlutterwavePayment
+        const paymentUrl = await initiateFlutterwavePayment(
+            cid, 
+            null, // Forces email check/prompt
+            price, 
+            reference, 
+            metadata
+        );
+        
+        // 4. If we got a URL back, it means the user HAS an email and we can proceed.
+        if (paymentUrl) {
+            const userEmail = await getUserEmail(cid);
+            
+            // Save to Pending Payments
+            await pool.query(
+                'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+                [reference, cid, userEmail, switchBotType, appName, st.data.sessionId]
+            );
+
+            await bot.editMessageText(
+                `Click the button below to complete your migration payment (₦${price}).`, {
+                    chat_id: cid, message_id: q.message.message_id,
+                    reply_markup: {
+                        inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
+                    }
+                }
+            );
+        }
+    }
+    
+    return;
+}
 
 
-// In bot.js, add this new handler inside the callback_query function
-
-// ❗️ REPLACE this entire block in bot.on('callback_query', ...)
-
+  
 if (action === 'toggle_dyno') {
     const desiredState = payload; // 'on' or 'off'
     const appName = extra;
