@@ -1,4 +1,4 @@
-import { 
+const { 
     makeWASocket, 
     DisconnectReason, 
     fetchLatestBaileysVersion, 
@@ -6,40 +6,42 @@ import {
     jidNormalizedUser,
     initAuthCreds,
     BufferJSON,
-    // REMOVED 'internal' here
-} from '@whiskeysockets/baileys';
-import pino from 'pino';
-import { Boom } from '@hapi/boom';
-// Import the entire Baileys package to access the internal namespace correctly
-import * as BaileysPkg from '@whiskeysockets/baileys'; 
-import * as dbServices from './bot_services.js'; 
+    // Note: 'internal' is accessed below via the required package object
+} = require('@whiskeysockets/baileys');
 
-// --- CRITICAL FIX: Access internal Baileys utilities via BaileysPkg ---
-const { internal } = BaileysPkg;
+const pino = require('pino');
+const { Boom } = require('@hapi/boom');
+
+// Import bot_services to gain access to dbServices.pool
+const dbServices = require('./bot_services.js'); 
+const BaileysPkg = require('@whiskeysockets/baileys'); // Load the full package for internal access
+const { internal } = BaileysPkg; // Access internal utilities correctly
 
 
 // --- EXPORTED GLOBALS ---
-export const waClients = {};
-export const waTelegramMap = {}; 
+export const waClients = {}; // Maps phoneNumber -> sock
+export const waTelegramMap = {}; // Maps sessionId -> chatId 
 
 // --- AUTH STORE IMPLEMENTATION (Custom Database Backed) ---
 
+// Helper function to load Baileys session data from the main database
 async function loadClientCreds(sessionId) {
-    // This assumes your bot_services.js has access to the main pool
+    // Access pool via dbServices
     const res = await dbServices.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
     if (res.rows.length === 0) return null;
     
     const row = res.rows[0];
     return {
-        // Use BaileysPkg.internal.BufferJSON
-        creds: row.creds ? JSON.parse(row.creds, BaileysPkg.internal.BufferJSON.reviver) : null,
-        keys: row.keys ? JSON.parse(row.keys, BaileysPkg.internal.BufferJSON.reviver) : {}
+        // Use BaileysPkg.internal.BufferJSON for parsing/reviving
+        creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
+        keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
     };
 }
 
+// Helper function to save Baileys session data to the main database
 async function saveClientCreds(sessionId, creds, keys) {
-    // Use BaileysPkg.internal.BufferJSON
-    const credsJSON = JSON.stringify(creds, BaileysPkg.internal.BufferJSON.replacer);
+    // Use BaileysPkg.internal.BufferJSON for replacing/JSONifying
+    const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
 
     await dbServices.pool.query(
@@ -142,9 +144,8 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                         console.log(`[WA-PAIRING] Requesting code for ${fullTargetNumber}...`);
                         const code = await sock.requestPairingCode(fullTargetNumber);
                         
-                        // Notify admin (The bot instance must be passed correctly from bot.js)
                         if (chatId && botInstance) {
-                            const codeMessage = `**Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
+                            const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
                             
                             if (waitingMsg && waitingMsg.message_id) {
                                 await botInstance.editMessageText(codeMessage, {
@@ -158,7 +159,7 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                             }
                         }
                     } catch (e) {
-                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[ERROR] Failed to get code: ${e.message}`);
+                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[WA-ERROR] Failed to get code: ${e.message}`);
                     }
                 }
             }, 3000);
@@ -190,3 +191,13 @@ export async function loadAllClients(botInstance) {
         startClient(session.session_id, session.phone_number, session.telegram_chat_id, botInstance);
     }
 }
+
+// Set up the exports for CommonJS compatibility when imported using require()
+// Note: This relies on the main file reverting to CommonJS mode.
+
+module.exports = {
+    startClient, 
+    makeSessionId, 
+    loadAllClients,
+    waClients // Export the clients map
+};
