@@ -6,35 +6,43 @@ import {
     jidNormalizedUser,
     initAuthCreds,
     BufferJSON,
-    internal
+    // REMOVED 'internal' here
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
-const db = require('./bot_services.js'); // Assuming bot_services is available for DB pool access
+// Import the entire Baileys package to access the internal namespace correctly
+import * as BaileysPkg from '@whiskeysockets/baileys'; 
+import * as dbServices from './bot_services.js'; 
+
+// --- CRITICAL FIX: Access internal Baileys utilities via BaileysPkg ---
+const { internal } = BaileysPkg;
+
 
 // --- EXPORTED GLOBALS ---
-export const waClients = {}; // Maps phoneNumber -> sock
-export const waTelegramMap = {}; // Maps sessionId -> chatId 
+export const waClients = {};
+export const waTelegramMap = {}; 
 
 // --- AUTH STORE IMPLEMENTATION (Custom Database Backed) ---
 
 async function loadClientCreds(sessionId) {
     // This assumes your bot_services.js has access to the main pool
-    const res = await db.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
+    const res = await dbServices.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
     if (res.rows.length === 0) return null;
     
     const row = res.rows[0];
     return {
-        creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
-        keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
+        // Use BaileysPkg.internal.BufferJSON
+        creds: row.creds ? JSON.parse(row.creds, BaileysPkg.internal.BufferJSON.reviver) : null,
+        keys: row.keys ? JSON.parse(row.keys, BaileysPkg.internal.BufferJSON.reviver) : {}
     };
 }
 
 async function saveClientCreds(sessionId, creds, keys) {
-    const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
+    // Use BaileysPkg.internal.BufferJSON
+    const credsJSON = JSON.stringify(creds, BaileysPkg.internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
 
-    await db.pool.query(
+    await dbServices.pool.query(
         `INSERT INTO wa_sessions (session_id, creds, keys) VALUES ($1, $2, $3)
          ON CONFLICT (session_id) DO UPDATE SET creds = EXCLUDED.creds, keys = EXCLUDED.keys`,
         [sessionId, credsJSON, keysJSON]
@@ -74,7 +82,6 @@ async function useDatabaseAuthState(sessionId) {
 
 
 // --- WHATSAPP CLIENT LOGIC ---
-// 💡 NOTE: Changed signature to accept waitingMsg 💡
 export async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null, waitingMsg = null) {
     if(chatId) waTelegramMap[sessionId] = chatId; 
 
@@ -135,10 +142,10 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                         console.log(`[WA-PAIRING] Requesting code for ${fullTargetNumber}...`);
                         const code = await sock.requestPairingCode(fullTargetNumber);
                         
+                        // Notify admin (The bot instance must be passed correctly from bot.js)
                         if (chatId && botInstance) {
                             const codeMessage = `**Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
                             
-                            // 💡 FIX: Check for waitingMsg object and edit it 💡
                             if (waitingMsg && waitingMsg.message_id) {
                                 await botInstance.editMessageText(codeMessage, {
                                     chat_id: chatId,
@@ -177,7 +184,6 @@ export function getRandomBrowser() {
 }
 
 export async function loadAllClients(botInstance) {
-    // We assume dbServices.pool is now available after bot.js runs servicesInit
     const sessions = await dbServices.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
     console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
     for (const session of sessions.rows) {
