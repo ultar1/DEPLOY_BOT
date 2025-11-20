@@ -1,3 +1,5 @@
+// wa_core.cjs
+
 const { 
     makeWASocket, 
     DisconnectReason, 
@@ -11,33 +13,45 @@ const {
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 
-// 💡 CRITICAL FIX: We need to import dbServices (which holds the pool)
-const dbServices = require('./bot_services.js'); 
 const BaileysPkg = require('@whiskeysockets/baileys'); 
 const { internal } = BaileysPkg; 
 
 
-// --- EXPORTED GLOBALS ---
-const waClients = {}; // Maps phoneNumber -> sock
-const waTelegramMap = {}; // Maps sessionId -> chatId 
+// --- GLOBALS ---
+const waClients = {}; 
+const waTelegramMap = {}; 
+
+// This variable will hold the database services passed from bot.js
+let dbServices = null; 
 
 
-// --- AUTH STORE IMPLEMENTATION (Custom Database Backed) ---
+// --- 💡 THE MISSING INIT FUNCTION 💡 ---
+function init(services) {
+    console.log('[WA Core] Initializing with DB Services...');
+    dbServices = services;
+    
+    if (!dbServices || !dbServices.pool) {
+        console.error('[WA Core] CRITICAL: dbServices.pool is undefined during init.');
+    }
+}
+// ---------------------------------------
 
-// 💡 FIX 1: loadClientCreds now uses dbServices.pool directly (no 'pool' argument needed)
+
+// --- AUTH STORE IMPLEMENTATION ---
+
 async function loadClientCreds(sessionId) {
+    if (!dbServices || !dbServices.pool) throw new Error("WA Core not initialized with DB pool");
+    
     const res = await dbServices.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
     if (res.rows.length === 0) return null;
     
     const row = res.rows[0];
-    
     return {
         creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
         keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
     };
 }
 
-// 💡 FIX 2: saveClientCreds now uses dbServices.pool directly (no 'pool' argument needed)
 async function saveClientCreds(sessionId, creds, keys) {
     const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
@@ -49,11 +63,9 @@ async function saveClientCreds(sessionId, creds, keys) {
     );
 }
 
-// 💡 FIX 3: useDatabaseAuthState now uses dbServices.pool internally (no 'pool' argument needed)
 async function useDatabaseAuthState(sessionId) {
     let creds;
     let keys = {};
-    // Call loadClientCreds without the pool argument
     const authData = await loadClientCreds(sessionId);
 
     if (authData && authData.creds) {
@@ -71,13 +83,13 @@ async function useDatabaseAuthState(sessionId) {
         },
         set: async (data) => {
             Object.assign(keys, data);
-            await saveClientCreds(sessionId, creds, keys); // Call saveCreds without pool arg
+            await saveClientCreds(sessionId, creds, keys);
         }
     };
 
     return {
         state: { creds, keys: saveKeys },
-        saveCreds: async () => await saveClientCreds(sessionId, creds, keys), // Call saveCreds without pool arg
+        saveCreds: async () => await saveClientCreds(sessionId, creds, keys),
     };
 }
 
@@ -87,8 +99,7 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
     if(chatId) waTelegramMap[sessionId] = chatId; 
 
     try {
-        // 💡 FIX: Removed pool argument from useDatabaseAuthState
-        const { state, saveCreds } = await useDatabaseAuthState(sessionId); 
+        const { state, saveCreds } = await useDatabaseAuthState(sessionId);
         const { version } = await fetchLatestBaileysVersion();
 
         const sock = makeWASocket({
@@ -114,7 +125,6 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                 console.log(`[WA-SUCCESS] Connected: +${phoneNumber} (ID: ${sessionId})`);
                 waClients[phoneNumber] = sock;
                 
-                // CRITICAL: Update phone number and chat ID to DB
                 await dbServices.pool.query(
                     `UPDATE wa_sessions SET phone_number = $1, telegram_chat_id = $2, last_login = NOW() WHERE session_id = $3`,
                     [phoneNumber, chatId, sessionId]
@@ -126,11 +136,11 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
             if (connection === 'close') {
                 const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 if (reason === DisconnectReason.loggedOut) {
-                    await dbServices.pool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); // DELETE FROM DATABASE
+                    await dbServices.pool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); 
                     delete waClients[sock.phoneNumber];
                 } else {
                     const savedChatId = waTelegramMap[sessionId];
-                    startClient(sessionId, targetNumber, savedChatId, botInstance); // Attempt reconnect
+                    startClient(sessionId, targetNumber, savedChatId, botInstance); 
                 }
             }
         });
@@ -144,7 +154,6 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                         console.log(`[WA-PAIRING] Requesting code for ${fullTargetNumber}...`);
                         const code = await sock.requestPairingCode(fullTargetNumber);
                         
-                        // Notify admin (The bot instance must be passed correctly from bot.js)
                         if (chatId && botInstance) {
                             const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
                             
@@ -155,7 +164,6 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                                     parse_mode: 'Markdown'
                                 });
                             } else {
-                                // Fallback: Send a new message if the initial one was lost
                                 botInstance.sendMessage(chatId, codeMessage, { parse_mode: 'Markdown' });
                             }
                         }
@@ -185,17 +193,19 @@ function getRandomBrowser() {
     return browsers[Math.floor(Math.random() * browsers.length)];
 }
 
-// This function is used by /listpair
 async function getConnectedClients() {
-    const sessions = await dbServices.pool.query(
-        `SELECT session_id, phone_number, telegram_chat_id 
+    if (!dbServices || !dbServices.pool) return [];
+    const result = await dbServices.pool.query(
+        `SELECT phone_number, telegram_chat_id 
          FROM wa_sessions 
          WHERE phone_number IS NOT NULL`
     );
-    return sessions.rows;
+    return result.rows;
 }
 
 async function loadAllClients(botInstance) {
+    if (!dbServices || !dbServices.pool) return;
+    
     const sessions = await dbServices.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
     console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
     for (const session of sessions.rows) {
@@ -203,11 +213,12 @@ async function loadAllClients(botInstance) {
     }
 }
 
-// --- FINAL EXPORT: Use module.exports for CommonJS compatibility ---
+// --- FINAL EXPORTS ---
 module.exports = {
+    init, // <--- The critical function bot.js is looking for!
     startClient, 
     makeSessionId, 
     loadAllClients,
-    waClients, // Export the clients map
-    getConnectedClients, // This function is used by /listpair
+    waClients, 
+    getConnectedClients,
 };
