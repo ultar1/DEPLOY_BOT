@@ -1,4 +1,3 @@
-const BaileysPkg = require('@whiskeysockets/baileys');
 const { 
     makeWASocket, 
     DisconnectReason, 
@@ -7,14 +6,16 @@ const {
     jidNormalizedUser,
     initAuthCreds,
     BufferJSON,
-    // Note: Internal utilities are now accessed via BaileysPkg.internal
-} = BaileysPkg;
+} = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 
 // Import bot_services to gain access to dbServices.pool
 const dbServices = require('./bot_services.js'); 
+const BaileysPkg = require('@whiskeysockets/baileys'); 
+const { internal } = BaileysPkg; 
+
 
 // --- EXPORTED GLOBALS ---
 const waClients = {}; // Maps phoneNumber -> sock
@@ -28,21 +29,13 @@ async function loadClientCreds(sessionId) {
     
     const row = res.rows[0];
     
-    // Access Baileys internal utilities via BaileysPkg
-    const { internal } = BaileysPkg;
-    
     return {
-        // Use BaileysPkg.internal.BufferJSON for parsing/reviving
         creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
         keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
     };
 }
 
-// Helper function to save Baileys session data to the main database
 async function saveClientCreds(sessionId, creds, keys) {
-    const { internal } = BaileysPkg;
-    
-    // Use BaileysPkg.internal.BufferJSON for replacing/JSONifying
     const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
 
@@ -53,7 +46,6 @@ async function saveClientCreds(sessionId, creds, keys) {
     );
 }
 
-// Function to get Baileys-compatible state object
 async function useDatabaseAuthState(sessionId) {
     let creds;
     let keys = {};
@@ -86,7 +78,7 @@ async function useDatabaseAuthState(sessionId) {
 
 
 // --- WHATSAPP CLIENT LOGIC ---
-export async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null, waitingMsg = null) {
+async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null, waitingMsg = null) {
     if(chatId) waTelegramMap[sessionId] = chatId; 
 
     try {
@@ -162,7 +154,7 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                             }
                         }
                     } catch (e) {
-                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[WA-ERROR] Failed to get code: ${e.message}`);
+                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[ERROR] Failed to get code: ${e.message}`);
                     }
                 }
             }, 3000);
@@ -173,7 +165,7 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
 }
 
 // --- EXPORTED WA HELPERS ---
-export function makeSessionId() {
+function makeSessionId() {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0]; 
     let randomStr = '';
@@ -182,12 +174,12 @@ export function makeSessionId() {
     return `Ultarbot_${dateStr}_${randomStr}`;
 }
 
-export function getRandomBrowser() {
+function getRandomBrowser() {
     const browsers = [Browsers.macOS('Safari'), Browsers.macOS('Chrome'), Browsers.windows('Firefox'), Browsers.ubuntu('Chrome'), Browsers.windows('Edge')];
     return browsers[Math.floor(Math.random() * browsers.length)];
 }
 
-export async function loadAllClients(botInstance) {
+async function loadAllClients(botInstance) {
     const sessions = await dbServices.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
     console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
     for (const session of sessions.rows) {
@@ -195,7 +187,6 @@ export async function loadAllClients(botInstance) {
     }
 }
 
-// Set up the exports for CommonJS compatibility when imported using require()
 module.exports = {
     startClient, 
     makeSessionId, 
