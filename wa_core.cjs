@@ -5,31 +5,30 @@ const {
     Browsers,
     jidNormalizedUser,
     initAuthCreds,
-    // Remove BufferJSON from here if it fails
+    BufferJSON,
 } = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 
-// Import the full package to access internals
-const BaileysPkg = require('@whiskeysockets/baileys');
-
-// 💡 FIX: Access BufferJSON correctly for CommonJS
-// It is often located directly on the package object or inside 'proto' depending on version
-const BufferJSON = BaileysPkg.BufferJSON; 
+const BaileysPkg = require('@whiskeysockets/baileys'); 
+const { internal } = BaileysPkg; 
 
 // --- GLOBALS ---
 const waClients = {}; 
 const waTelegramMap = {}; 
 
-// This will hold the database connection
+// This will hold the database connection passed from bot.js
 let dbPool = null; 
 
 // --- INIT FUNCTION ---
 function init(pool) {
     console.log('[WA Core] Initializing with Database Pool...');
     dbPool = pool;
-    if (!dbPool) console.error('[WA Core] CRITICAL ERROR: Pool is undefined during init.');
+    
+    if (!dbPool) {
+        console.error('[WA Core] CRITICAL ERROR: Pool is undefined during init.');
+    }
 }
 
 // --- AUTH STORE IMPLEMENTATION ---
@@ -37,21 +36,23 @@ function init(pool) {
 async function loadClientCreds(sessionId) {
     if (!dbPool) throw new Error("WA Core not initialized with DB pool");
     
+    // 💡 FIX: Use dbPool
     const res = await dbPool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
     if (res.rows.length === 0) return null;
     
     const row = res.rows[0];
+    
     return {
-        creds: row.creds ? JSON.parse(row.creds, BufferJSON.reviver) : null,
-        keys: row.keys ? JSON.parse(row.keys, BufferJSON.reviver) : {}
+        creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
+        keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
     };
 }
 
 async function saveClientCreds(sessionId, creds, keys) {
-    // 💡 FIX: Ensure BufferJSON is defined before usage
-    const credsJSON = JSON.stringify(creds, BufferJSON.replacer, 2);
-    const keysJSON = JSON.stringify(keys, BufferJSON.replacer, 2);
+    const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
+    const keysJSON = JSON.stringify(keys);
 
+    // 💡 FIX: Use dbPool
     await dbPool.query(
         `INSERT INTO wa_sessions (session_id, creds, keys) VALUES ($1, $2, $3)
          ON CONFLICT (session_id) DO UPDATE SET creds = EXCLUDED.creds, keys = EXCLUDED.keys`,
@@ -110,6 +111,7 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
 
         sock.ev.on('creds.update', saveCreds);
 
+        // --- CONNECTION HANDLER ---
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
 
@@ -120,6 +122,7 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                 console.log(`[WA-SUCCESS] Connected: +${phoneNumber} (ID: ${sessionId})`);
                 waClients[phoneNumber] = sock;
                 
+                // 💡 FIX: Use dbPool
                 await dbPool.query(
                     `UPDATE wa_sessions SET phone_number = $1, telegram_chat_id = $2, last_login = NOW() WHERE session_id = $3`,
                     [phoneNumber, chatId, sessionId]
@@ -131,15 +134,17 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
             if (connection === 'close') {
                 const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 if (reason === DisconnectReason.loggedOut) {
-                    await dbPool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); 
+                    // 💡 FIX: Use dbPool
+                    await dbPool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); // DELETE FROM DATABASE
                     delete waClients[sock.phoneNumber];
                 } else {
                     const savedChatId = waTelegramMap[sessionId];
-                    startClient(sessionId, targetNumber, savedChatId, botInstance); 
+                    startClient(sessionId, targetNumber, savedChatId, botInstance); // Attempt reconnect
                 }
             }
         });
 
+        // --- PAIRING (Code Request) ---
         if (targetNumber && !sock.authState.creds.registered) {
             const fullTargetNumber = `+${targetNumber}`; 
             setTimeout(async () => {
@@ -150,9 +155,12 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                         
                         if (chatId && botInstance) {
                             const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
+                            
                             if (waitingMsg && waitingMsg.message_id) {
                                 await botInstance.editMessageText(codeMessage, {
-                                    chat_id: chatId, message_id: waitingMsg.message_id, parse_mode: 'Markdown'
+                                    chat_id: chatId,
+                                    message_id: waitingMsg.message_id, 
+                                    parse_mode: 'Markdown'
                                 });
                             } else {
                                 botInstance.sendMessage(chatId, codeMessage, { parse_mode: 'Markdown' });
@@ -186,8 +194,11 @@ function getRandomBrowser() {
 
 async function getConnectedClients() {
     if (!dbPool) return [];
+    // 💡 FIX: Use dbPool
     const result = await dbPool.query(
-        `SELECT phone_number, telegram_chat_id FROM wa_sessions WHERE phone_number IS NOT NULL`
+        `SELECT phone_number, telegram_chat_id 
+         FROM wa_sessions 
+         WHERE phone_number IS NOT NULL`
     );
     return result.rows;
 }
@@ -197,6 +208,7 @@ async function loadAllClients(botInstance) {
         console.error('[WA-SYSTEM] Cannot load clients: DB Pool not initialized.');
         return;
     }
+    // 💡 FIX: Use dbPool
     const sessions = await dbPool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
     console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
     for (const session of sessions.rows) {
