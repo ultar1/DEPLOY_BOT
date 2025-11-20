@@ -4010,7 +4010,7 @@ bot.on('left_chat_member', handleLeftMembers);
     await loadMaintenanceStatus(); // Load initial maintenance status
 // In bot.js, inside the main (async () => { ... })(); startup block
 
-
+waCore.init(pool); 
   startScheduledTasks();
   runOrphanDbCleanup();
 
