@@ -11,22 +11,22 @@ const {
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 
-// 💡 CRITICAL FIX: Direct access to the exported 'pool' object from bot.js
-const botModule = require('./bot.js'); 
+// Import bot_services to gain access to dbServices.pool (your main DB)
+const dbServices = require('./bot_services.js'); 
 const BaileysPkg = require('@whiskeysockets/baileys'); 
 const { internal } = BaileysPkg; 
 
 
-// --- EXPORTED GLOBALS ---
-const waClients = {}; // Maps phoneNumber -> sock
-const waTelegramMap = {}; // Maps sessionId -> chatId 
+// --- GLOBALS ---
+const waClients = {}; // Maps phoneNumber -> sock (for direct sending)
+const waTelegramMap = {}; // Maps sessionId -> chatId (for notifications) 
 
 
 // --- AUTH STORE IMPLEMENTATION (Custom Database Backed) ---
+// Note: This logic uses dbServices.pool which is passed via bot.js startup
 
 async function loadClientCreds(sessionId) {
-    // 💡 FIX: Use botModule.pool 💡
-    const res = await botModule.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
+    const res = await dbServices.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
     if (res.rows.length === 0) return null;
     
     const row = res.rows[0];
@@ -41,8 +41,7 @@ async function saveClientCreds(sessionId, creds, keys) {
     const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
 
-    // 💡 FIX: Use botModule.pool 💡
-    await botModule.pool.query(
+    await dbServices.pool.query(
         `INSERT INTO wa_sessions (session_id, creds, keys) VALUES ($1, $2, $3)
          ON CONFLICT (session_id) DO UPDATE SET creds = EXCLUDED.creds, keys = EXCLUDED.keys`,
         [sessionId, credsJSON, keysJSON]
@@ -80,7 +79,8 @@ async function useDatabaseAuthState(sessionId) {
 }
 
 
-// --- WHATSAPP CLIENT LOGIC ---
+// --- WHATSAPP CLIENT LOGIC (Connection and Messaging) ---
+
 async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null, waitingMsg = null) {
     if(chatId) waTelegramMap[sessionId] = chatId; 
 
@@ -111,20 +111,19 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                 console.log(`[WA-SUCCESS] Connected: +${phoneNumber} (ID: ${sessionId})`);
                 waClients[phoneNumber] = sock;
                 
-                // 💡 FIX: Use botModule.pool 💡
-                await botModule.pool.query(
+                // CRITICAL: Update phone number and chat ID to DB
+                await dbServices.pool.query(
                     `UPDATE wa_sessions SET phone_number = $1, telegram_chat_id = $2, last_login = NOW() WHERE session_id = $3`,
                     [phoneNumber, chatId, sessionId]
                 );
 
-                if(chatId && botInstance) botInstance.sendMessage(chatId, `[SUCCESS] Connected: +${phoneNumber}\nSession ID: ${sessionId}`);
+                if(chatId && botInstance) botInstance.sendMessage(chatId, `[SUCCESS] Connected: +${phoneNumber}`);
             }
 
             if (connection === 'close') {
                 const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 if (reason === DisconnectReason.loggedOut) {
-                    // 💡 FIX: Use botModule.pool 💡
-                    await botModule.pool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); // DELETE FROM DATABASE
+                    await dbServices.pool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); // DELETE FROM DATABASE
                     delete waClients[sock.phoneNumber];
                 } else {
                     const savedChatId = waTelegramMap[sessionId];
@@ -184,17 +183,32 @@ function getRandomBrowser() {
 }
 
 async function loadAllClients(botInstance) {
-    const sessions = await botModule.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
+    const sessions = await dbServices.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
     console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
     for (const session of sessions.rows) {
         startClient(session.session_id, session.phone_number, session.telegram_chat_id, botInstance);
     }
 }
 
+/**
+ * Fetches the status of all active WhatsApp clients from the database. (for /listpair)
+ */
+async function getConnectedClients() {
+    // Only return sessions that have an associated phone number (i.e., successfully connected)
+    const result = await dbServices.pool.query(
+        `SELECT phone_number, telegram_chat_id 
+         FROM wa_sessions 
+         WHERE phone_number IS NOT NULL`
+    );
+    return result.rows;
+}
+
+
 // --- FINAL EXPORT: Use module.exports for CommonJS compatibility ---
 module.exports = {
     startClient, 
     makeSessionId, 
     loadAllClients,
-    waClients // Export the clients map
+    waClients, // Export the clients map (used for /send)
+    getConnectedClients, // Export the clients list (used for /listpair)
 };
