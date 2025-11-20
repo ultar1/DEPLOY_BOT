@@ -20,7 +20,7 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
-import { startClient, makeSessionId, loadAllClients } from './wa_core.js'; // <-- NEW IMPORT
+const { startClient, makeSessionId, loadAllClients, waClients } = require('./wa_core.cjs'); // <-- CRITICAL FIX: Changed to .cjs
 const express = require('express');
 
 
