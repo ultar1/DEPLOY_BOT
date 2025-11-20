@@ -745,23 +745,7 @@ async function getUserBots(u) {
   }
 }
 
-// === Backup Expiration and Warning Functions ===
-
-async function getExpiringBackups() {
-    try {
-        const result = await pool.query(
-            `SELECT user_id, app_name, expiration_date 
-             FROM user_deployments 
-             WHERE warning_sent_at IS NULL 
-               AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
-               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
-        );
-        return result.rows;
-    } catch (error) {
-        console.error(`[DB] Failed to get expiring backups:`, error.message);
-        return [];
-    }
-}
+// === Backup Expiration and Warning Functions ==
 
 
 async function setBackupWarningSent(userId, appName) {
@@ -2672,7 +2656,6 @@ module.exports = {
     silentRestoreBuild,
     getUserIdByBotName,
     getAllUserBots,
-    getExpiringBots,
     getUserBotCount,
     pruneLoggedOutBot,
     getBotNameBySessionId,
