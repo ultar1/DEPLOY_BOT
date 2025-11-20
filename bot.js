@@ -6203,27 +6203,23 @@ You can now use /stats or /bapp to see the updated count of all your bots.
 
 // In bot.js (REPLACE the existing /pair handler)
 
+// In bot.js (REPLACE the existing /pair handler)
+
 bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     const targetNumber = match[1]; // Number without '+'
     
-    // 1. Security Check
-    if (chatId !== ADMIN_ID) {
-        return bot.sendMessage(chatId, "You are not authorized to use this command.");
-    }
-
-    // 2. Initial Validation
+    if (chatId !== ADMIN_ID) return; 
+    
     if (!targetNumber || targetNumber.length < 10) {
         return bot.sendMessage(chatId, 'Usage: /pair 2349012345678 (Provide full international number, no + sign)');
     }
     
-    // 3. Prepare Data
-    const sessionId = dbServices.makeSessionId();
+    // 1. Prepare Data
+    // FIX: Call makeSessionId() directly, as it is imported above.
+    const sessionId = makeSessionId(); 
 
-    // 4. Send Waiting Message
-    const waitingMsg = await bot.sendMessage(chatId, `Generating your pairing code for +${targetNumber}...`);
-    
-    // 5. Insert initial session record into DB (CRITICAL STEP)
+    // 2. Insert initial session record into DB
     try {
         await pool.query(
             `INSERT INTO wa_sessions (session_id, telegram_chat_id) VALUES ($1, $2)`,
@@ -6233,11 +6229,13 @@ bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
         return bot.sendMessage(chatId, `Error: Session setup failed in database. Check logs.`);
     }
 
-    // 6. Start the WhatsApp client process
-    // The startClient function will generate the code and send it back, editing the waitingMsg.
-    await startClient(sessionId, targetNumber, chatId, bot, waitingMsg); // Pass the Telegram bot instance and the waiting message
+    // 3. Send Waiting Message
+    const waitingMsg = await bot.sendMessage(chatId, `Generating your pairing code for +${targetNumber}...`);
+    
+    // 4. Start the WhatsApp client process
+    await startClient(sessionId, targetNumber, chatId, bot, waitingMsg);
 
-    // No need to send success message here, startClient will handle the final message edit.
+    // No need to send success message here, startClient handles the final message edit.
 });
 
 
