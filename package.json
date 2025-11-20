@@ -4,7 +4,6 @@
   "description": "Ultar Telegram bot with Heroku, PostgreSQL, Gemini AI, and WhatsApp integration",
   "main": "bot.js",
   "license": "ISC",
-  "type": "module",
   "scripts": {
     "start": "node bot.js"
   },
