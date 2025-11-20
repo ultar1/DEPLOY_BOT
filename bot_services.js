@@ -2722,7 +2722,6 @@ module.exports = {
     getExpiredBackups,
     getBlacklistedNames,
     removeBlacklistedName,
-    addBlacklistedName,
     setGroupWelcomeMessage,
     setGroupWelcome,
     getGroupSettings,
