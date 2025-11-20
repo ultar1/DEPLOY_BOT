@@ -3987,6 +3987,8 @@ async function notifyAdminUserOnline(msg) {
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
 
+    waCore.init(dbServices);
+
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
