@@ -5,14 +5,18 @@ const {
     Browsers,
     jidNormalizedUser,
     initAuthCreds,
-    BufferJSON,
+    // Remove BufferJSON from here if it fails
 } = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 
-const BaileysPkg = require('@whiskeysockets/baileys'); 
-const { internal } = BaileysPkg; 
+// Import the full package to access internals
+const BaileysPkg = require('@whiskeysockets/baileys');
+
+// 💡 FIX: Access BufferJSON correctly for CommonJS
+// It is often located directly on the package object or inside 'proto' depending on version
+const BufferJSON = BaileysPkg.BufferJSON; 
 
 // --- GLOBALS ---
 const waClients = {}; 
@@ -21,16 +25,12 @@ const waTelegramMap = {};
 // This will hold the database connection
 let dbPool = null; 
 
-// --- 💡 SIMPLIFIED INIT FUNCTION 💡 ---
+// --- INIT FUNCTION ---
 function init(pool) {
     console.log('[WA Core] Initializing with Database Pool...');
     dbPool = pool;
-    
-    if (!dbPool) {
-        console.error('[WA Core] CRITICAL ERROR: Pool is undefined during init.');
-    }
+    if (!dbPool) console.error('[WA Core] CRITICAL ERROR: Pool is undefined during init.');
 }
-// -------------------------------------
 
 // --- AUTH STORE IMPLEMENTATION ---
 
@@ -42,14 +42,15 @@ async function loadClientCreds(sessionId) {
     
     const row = res.rows[0];
     return {
-        creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
-        keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
+        creds: row.creds ? JSON.parse(row.creds, BufferJSON.reviver) : null,
+        keys: row.keys ? JSON.parse(row.keys, BufferJSON.reviver) : {}
     };
 }
 
 async function saveClientCreds(sessionId, creds, keys) {
-    const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
-    const keysJSON = JSON.stringify(keys);
+    // 💡 FIX: Ensure BufferJSON is defined before usage
+    const credsJSON = JSON.stringify(creds, BufferJSON.replacer, 2);
+    const keysJSON = JSON.stringify(keys, BufferJSON.replacer, 2);
 
     await dbPool.query(
         `INSERT INTO wa_sessions (session_id, creds, keys) VALUES ($1, $2, $3)
@@ -168,6 +169,7 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
     }
 }
 
+// --- EXPORTED WA HELPERS ---
 function makeSessionId() {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0]; 
@@ -203,7 +205,7 @@ async function loadAllClients(botInstance) {
 }
 
 module.exports = {
-    init, // <--- Export the init function
+    init, 
     startClient, 
     makeSessionId, 
     loadAllClients,
