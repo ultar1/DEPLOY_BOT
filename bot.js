@@ -4001,6 +4001,8 @@ bot.on('left_chat_member', handleLeftMembers);
 
   startScheduledTasks();
   runOrphanDbCleanup();
+
+  await loadAllClients(bot); // <-- Pass the Telegram bot instance
   
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
