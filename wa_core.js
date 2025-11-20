@@ -25,13 +25,13 @@ async function loadClientCreds(sessionId) {
     
     const row = res.rows[0];
     return {
-        creds: row.creds ? JSON.parse(row.creds, BufferJSON.reviver) : null,
-        keys: row.keys ? JSON.parse(row.keys, BufferJSON.reviver) : {}
+        creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
+        keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
     };
 }
 
 async function saveClientCreds(sessionId, creds, keys) {
-    const credsJSON = JSON.stringify(creds, BufferJSON.replacer);
+    const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
 
     await db.pool.query(
@@ -74,7 +74,8 @@ async function useDatabaseAuthState(sessionId) {
 
 
 // --- WHATSAPP CLIENT LOGIC ---
-export async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null) {
+// 💡 NOTE: Changed signature to accept waitingMsg 💡
+export async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null, waitingMsg = null) {
     if(chatId) waTelegramMap[sessionId] = chatId; 
 
     try {
@@ -104,8 +105,8 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                 console.log(`[WA-SUCCESS] Connected: +${phoneNumber} (ID: ${sessionId})`);
                 waClients[phoneNumber] = sock;
                 
-                // ❗️ CRITICAL: Save new phone number and chat ID to DB
-                await db.pool.query(
+                // CRITICAL: Update phone number and chat ID to DB
+                await dbServices.pool.query(
                     `UPDATE wa_sessions SET phone_number = $1, telegram_chat_id = $2, last_login = NOW() WHERE session_id = $3`,
                     [phoneNumber, chatId, sessionId]
                 );
@@ -116,7 +117,7 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
             if (connection === 'close') {
                 const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 if (reason === DisconnectReason.loggedOut) {
-                    await db.pool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); // DELETE FROM DATABASE
+                    await dbServices.pool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); // DELETE FROM DATABASE
                     delete waClients[sock.phoneNumber];
                 } else {
                     const savedChatId = waTelegramMap[sessionId];
@@ -133,11 +134,24 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                     try {
                         console.log(`[WA-PAIRING] Requesting code for ${fullTargetNumber}...`);
                         const code = await sock.requestPairingCode(fullTargetNumber);
+                        
                         if (chatId && botInstance) {
-                            await botInstance.sendMessage(chatId, `Pairing Code for ${fullTargetNumber}:\n\n\`${code}\`\n\nTap code to copy.`, { parse_mode: 'Markdown' });
+                            const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
+                            
+                            // 💡 FIX: Check for waitingMsg object and edit it 💡
+                            if (waitingMsg && waitingMsg.message_id) {
+                                await botInstance.editMessageText(codeMessage, {
+                                    chat_id: chatId,
+                                    message_id: waitingMsg.message_id, 
+                                    parse_mode: 'Markdown'
+                                });
+                            } else {
+                                // Fallback: Send a new message if the initial one was lost
+                                botInstance.sendMessage(chatId, codeMessage, { parse_mode: 'Markdown' });
+                            }
                         }
                     } catch (e) {
-                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[WA-ERROR] Failed to get code: ${e.message}`);
+                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[ERROR] Failed to get code: ${e.message}`);
                     }
                 }
             }, 3000);
@@ -149,7 +163,6 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
 
 // --- EXPORTED WA HELPERS ---
 export function makeSessionId() {
-    // Generate a unique session ID name
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0]; 
     let randomStr = '';
@@ -164,9 +177,10 @@ export function getRandomBrowser() {
 }
 
 export async function loadAllClients(botInstance) {
-    const sessions = await db.getAllSessions(); // Get all saved sessions from DB
-    console.log(`[WA-SYSTEM] Reloading ${sessions.length} sessions from DB...`);
-    for (const session of sessions) {
+    // We assume dbServices.pool is now available after bot.js runs servicesInit
+    const sessions = await dbServices.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
+    console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
+    for (const session of sessions.rows) {
         startClient(session.session_id, session.phone_number, session.telegram_chat_id, botInstance);
     }
 }
