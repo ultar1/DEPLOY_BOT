@@ -3810,22 +3810,7 @@ async function sendKeyDeletionList(chatId, messageId = null) {
     }
 }
 
-async function restartBot(appName) {
-    console.log(`[Auto-Restart] Memory error detected. Attempting to restart bot: ${appName}`);
-    try {
-        await axios.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
-            headers: { 
-                Authorization: `Bearer ${HEROKU_API_KEY}`, 
-                Accept: 'application/vnd.heroku+json; version=3' 
-            }
-        });
-        console.log(`[Auto-Restart] Successfully initiated restart for ${appName}.`);
-        return true;
-    } catch (e) {
-        console.error(`[Auto-Restart] Failed to restart bot ${appName}: ${e.message}`);
-        return false;
-    }
-}
+
 
 
 function getNeonAccount(accountId) {
