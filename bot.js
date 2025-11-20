@@ -3978,6 +3978,8 @@ async function notifyAdminUserOnline(msg) {
      getAllUserBots: dbServices.getAllUserBots, 
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
+
+  module.exports.pool = pool; 
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
@@ -4003,6 +4005,17 @@ bot.on('left_chat_member', handleLeftMembers);
   runOrphanDbCleanup();
 
   await loadAllClients(bot); // <-- Pass the Telegram bot instance
+
+  setTimeout(async () => {
+      try {
+          // This must run AFTER the pool is exported and available
+          await loadAllClients(bot); 
+          console.log('[WA-SYSTEM] Finished loading persistent WhatsApp sessions.');
+      } catch (e) {
+          console.error('[WA-SYSTEM] CRITICAL FAILURE loading clients after timeout:', e);
+      }
+  }, 5000); // Wait 5 seconds
+  //
   
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
