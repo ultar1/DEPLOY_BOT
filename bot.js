@@ -20,6 +20,7 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+module.exports.pool = pool; 
 const { startClient, makeSessionId, loadAllClients, waClients } = require('./wa_core.cjs'); // <-- CRITICAL FIX: Changed to .cjs
 const express = require('express');
 
@@ -3979,7 +3980,6 @@ async function notifyAdminUserOnline(msg) {
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
 
-  module.exports.pool = pool; 
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
