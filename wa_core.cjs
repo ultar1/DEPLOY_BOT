@@ -180,6 +180,23 @@ function getRandomBrowser() {
     return browsers[Math.floor(Math.random() * browsers.length)];
 }
 
+// In wa_core.cjs (Add this function definition)
+
+/**
+ * Fetches the status of all active WhatsApp clients from the database. (for /listpair)
+ * @returns {Promise<Array<{phone_number: string, telegram_chat_id: string}>>}
+ */
+async function getConnectedClients() {
+    // Only return sessions that have an associated phone number (i.e., successfully connected)
+    const result = await dbServices.pool.query(
+        `SELECT phone_number, telegram_chat_id 
+         FROM wa_sessions 
+         WHERE phone_number IS NOT NULL`
+    );
+    return result.rows;
+}
+
+
 async function loadAllClients(botInstance) {
     // 💡 FIX: Use dbServices.pool 💡
     const sessions = await dbServices.pool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
