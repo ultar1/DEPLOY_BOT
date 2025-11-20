@@ -136,7 +136,7 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                         const code = await sock.requestPairingCode(fullTargetNumber);
                         
                         if (chatId && botInstance) {
-                            const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
+                            const codeMessage = `**Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
                             
                             // 💡 FIX: Check for waitingMsg object and edit it 💡
                             if (waitingMsg && waitingMsg.message_id) {
