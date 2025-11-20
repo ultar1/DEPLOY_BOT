@@ -5,11 +5,14 @@ const {
     Browsers,
     jidNormalizedUser,
     initAuthCreds,
-    BufferJSON, // 💡 FIX: Import BufferJSON directly from here
+    BufferJSON,
 } = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
+
+const BaileysPkg = require('@whiskeysockets/baileys'); 
+const { internal } = BaileysPkg; 
 
 // --- GLOBALS ---
 const waClients = {}; 
@@ -39,16 +42,14 @@ async function loadClientCreds(sessionId) {
     const row = res.rows[0];
     
     return {
-        // 💡 FIX: Use BufferJSON directly (removed 'internal.')
-        creds: row.creds ? JSON.parse(row.creds, BufferJSON.reviver) : null,
-        keys: row.keys ? JSON.parse(row.keys, BufferJSON.reviver) : {}
+        creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
+        keys: row.keys ? JSON.parse(row.keys, internal.BufferJSON.reviver) : {}
     };
 }
 
 async function saveClientCreds(sessionId, creds, keys) {
-    // 💡 FIX: Use BufferJSON directly (removed 'internal.')
-    const credsJSON = JSON.stringify(creds, BufferJSON.replacer, 2);
-    const keysJSON = JSON.stringify(keys, BufferJSON.replacer, 2);
+    const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
+    const keysJSON = JSON.stringify(keys);
 
     await dbPool.query(
         `INSERT INTO wa_sessions (session_id, creds, keys) VALUES ($1, $2, $3)
@@ -90,7 +91,11 @@ async function useDatabaseAuthState(sessionId) {
 
 // --- WHATSAPP CLIENT LOGIC ---
 async function startClient(sessionId, targetNumber = null, chatId = null, botInstance = null, waitingMsg = null) {
+    // 1. Register Chat ID immediately so logs/errors know where to go
     if(chatId) waTelegramMap[sessionId] = chatId; 
+    
+    // Retrieve from map if not provided (reconnect scenario)
+    const currentChatId = chatId || waTelegramMap[sessionId];
 
     try {
         const { state, saveCreds } = await useDatabaseAuthState(sessionId);
@@ -103,6 +108,8 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
             browser: getRandomBrowser(), 
             version,
             markOnlineOnConnect: true,
+            connectTimeoutMs: 60000,
+            retryRequestDelayMs: 250,
             emitOwnEvents: true 
         });
 
@@ -121,10 +128,12 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                 
                 await dbPool.query(
                     `UPDATE wa_sessions SET phone_number = $1, telegram_chat_id = $2, last_login = NOW() WHERE session_id = $3`,
-                    [phoneNumber, chatId, sessionId]
+                    [phoneNumber, currentChatId, sessionId]
                 );
 
-                if(chatId && botInstance) botInstance.sendMessage(chatId, `✅ **Connected Successfully!**\n\n📞 Number: +${phoneNumber}\n🆔 Session: \`${sessionId}\``, { parse_mode: 'Markdown' });
+                if(currentChatId && botInstance) {
+                    botInstance.sendMessage(currentChatId, `✅ **Connected Successfully!**\n\n📞 Number: +${phoneNumber}\n🆔 Session: \`${sessionId}\``, { parse_mode: 'Markdown' });
+                }
             }
 
             if (connection === 'close') {
@@ -132,43 +141,54 @@ async function startClient(sessionId, targetNumber = null, chatId = null, botIns
                 if (reason === DisconnectReason.loggedOut) {
                     await dbPool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]); 
                     delete waClients[sock.phoneNumber];
+                    if(currentChatId && botInstance) botInstance.sendMessage(currentChatId, `⚠️ Session ${sessionId} logged out/disconnected.`);
                 } else {
-                    const savedChatId = waTelegramMap[sessionId];
-                    startClient(sessionId, targetNumber, savedChatId, botInstance); 
+                    console.log(`[WA] Reconnecting ${sessionId}...`);
+                    startClient(sessionId, null, currentChatId, botInstance); 
                 }
             }
         });
 
         // --- PAIRING (Code Request) ---
+        // 💡 FIX: Wait 3s, check if registered, then request code
         if (targetNumber && !sock.authState.creds.registered) {
-            const fullTargetNumber = `+${targetNumber}`; 
+            
             setTimeout(async () => {
+                // Double check registration status inside timeout
                 if (!sock.authState.creds.registered) {
                     try {
+                        const fullTargetNumber = `+${targetNumber}`; 
                         console.log(`[WA-PAIRING] Requesting code for ${fullTargetNumber}...`);
-                        const code = await sock.requestPairingCode(fullTargetNumber);
                         
-                        if (chatId && botInstance) {
-                            const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
+                        const code = await sock.requestPairingCode(targetNumber); // NOTE: Baileys usually takes number without '+' for this function, but sometimes with. Trying raw number first based on your base code.
+                        
+                        if (currentChatId && botInstance) {
+                            const codeMessage = `✅ **Pairing Code Generated**\n\nCode for +${targetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
                             
                             if (waitingMsg && waitingMsg.message_id) {
                                 await botInstance.editMessageText(codeMessage, {
-                                    chat_id: chatId,
+                                    chat_id: currentChatId,
                                     message_id: waitingMsg.message_id, 
                                     parse_mode: 'Markdown'
-                                });
+                                }).catch(() => botInstance.sendMessage(currentChatId, codeMessage, { parse_mode: 'Markdown' }));
                             } else {
-                                botInstance.sendMessage(chatId, codeMessage, { parse_mode: 'Markdown' });
+                                botInstance.sendMessage(currentChatId, codeMessage, { parse_mode: 'Markdown' });
                             }
                         }
                     } catch (e) {
-                        if (chatId && botInstance) botInstance.sendMessage(chatId, `[ERROR] Failed to get code: ${e.message}`);
+                        console.error("[WA-PAIRING ERROR]", e);
+                        if (currentChatId && botInstance) {
+                            botInstance.sendMessage(currentChatId, `❌ **Failed to get code:** ${e.message}\n\nMake sure the number is valid and not banned.`);
+                        }
+                        // If pairing fails, maybe clean up the session? 
+                        // await dbPool.query('DELETE FROM wa_sessions WHERE session_id = $1', [sessionId]);
                     }
                 }
             }, 3000);
         }
     } catch (error) {
         console.error(`[WA-CLIENT ERROR] ${sessionId}:`, error);
+        if (chatId && botInstance) botInstance.sendMessage(chatId, `[System Error] Could not start client: ${error.message}`);
     }
 }
 
@@ -205,7 +225,8 @@ async function loadAllClients(botInstance) {
     const sessions = await dbPool.query('SELECT session_id, phone_number, telegram_chat_id FROM wa_sessions');
     console.log(`[WA-SYSTEM] Reloading ${sessions.rows.length} sessions from DB...`);
     for (const session of sessions.rows) {
-        startClient(session.session_id, session.phone_number, session.telegram_chat_id, botInstance);
+        // Pass botInstance so reloaded sessions can send messages
+        startClient(session.session_id, null, session.telegram_chat_id, botInstance);
     }
 }
 
