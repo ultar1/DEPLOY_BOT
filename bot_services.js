@@ -1894,12 +1894,13 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
 async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
     // 1. Get all the tools from the 'init' function
-    const { 
-        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
+        const { 
+        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, GITHUB_HERMIT_REPO_URL,
         ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool, 
         MUST_JOIN_CHANNEL_ID, createNeonDatabase, appDeploymentPromises, getAnimatedEmoji,
-        getUserBotCount, hasReceivedReward, addDeployKey, recordReward, grantReferralRewards
+        hasReceivedReward, addDeployKey, recordReward, grantReferralRewards
     } = moduleParams;
+
     
     let appName = vars.APP_NAME;
     const originalAppName = appName;
