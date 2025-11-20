@@ -20,6 +20,7 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+const waCore = require('./wa_core.cjs'); 
 const express = require('express');
 
 // In bot.js (around line 30-50)
