@@ -6750,6 +6750,57 @@ bot.onText(/^\/users$/, async (msg) => {
 });
 
 
+// In bot.js (Add this handler)
+
+bot.onText(/^\/listpair$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const workingMsg = await bot.sendMessage(adminId, "Fetching active WhatsApp sessions...");
+
+    try {
+        // Use the new helper function from wa_core.cjs
+        const clientsData = await getConnectedClients();
+
+        if (clientsData.length === 0) {
+            return bot.editMessageText("No WhatsApp clients are currently connected to the system.", {
+                chat_id: adminId, message_id: workingMsg.message_id
+            });
+        }
+
+        let message = "*Active WhatsApp Clients:*\n\n";
+        
+        for (const [index, client] of clientsData.entries()) {
+            let ownerDetails = `Owner ID: \`${client.telegram_chat_id}\``;
+            
+            // Attempt to get user's username/name for better identification
+            try {
+                const ownerChat = await bot.getChat(client.telegram_chat_id);
+                if (ownerChat.username) {
+                    ownerDetails = `@${escapeMarkdown(ownerChat.username)}`;
+                } else {
+                    ownerDetails = escapeMarkdown(ownerChat.first_name || 'User');
+                }
+            } catch (e) {
+                // If fetching fails, stick to the ID
+            }
+
+            message += `**${index + 1}. +${client.phone_number}**\n`;
+            message += `   - Owned by: ${ownerDetails}\n\n`;
+        }
+        message += `_Total Clients: ${clientsData.length}_`;
+
+        await bot.editMessageText(message, {
+            chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown'
+        });
+
+    } catch (e) {
+        console.error("[/listpair] Error fetching clients:", e);
+        await bot.editMessageText("Failed to fetch client list. Check DB connection.", {
+            chat_id: adminId, message_id: workingMsg.message_id
+        });
+    }
+});
 
 
 
