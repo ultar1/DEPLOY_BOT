@@ -1,3 +1,4 @@
+const BaileysPkg = require('@whiskeysockets/baileys');
 const { 
     makeWASocket, 
     DisconnectReason, 
@@ -6,31 +7,30 @@ const {
     jidNormalizedUser,
     initAuthCreds,
     BufferJSON,
-    // Note: 'internal' is accessed below via the required package object
-} = require('@whiskeysockets/baileys');
+    // Note: Internal utilities are now accessed via BaileysPkg.internal
+} = BaileysPkg;
 
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 
 // Import bot_services to gain access to dbServices.pool
 const dbServices = require('./bot_services.js'); 
-const BaileysPkg = require('@whiskeysockets/baileys'); // Load the full package for internal access
-const { internal } = BaileysPkg; // Access internal utilities correctly
-
 
 // --- EXPORTED GLOBALS ---
-export const waClients = {}; // Maps phoneNumber -> sock
-export const waTelegramMap = {}; // Maps sessionId -> chatId 
+const waClients = {}; // Maps phoneNumber -> sock
+const waTelegramMap = {}; // Maps sessionId -> chatId 
 
 // --- AUTH STORE IMPLEMENTATION (Custom Database Backed) ---
 
-// Helper function to load Baileys session data from the main database
 async function loadClientCreds(sessionId) {
-    // Access pool via dbServices
     const res = await dbServices.pool.query('SELECT creds, keys FROM wa_sessions WHERE session_id = $1', [sessionId]);
     if (res.rows.length === 0) return null;
     
     const row = res.rows[0];
+    
+    // Access Baileys internal utilities via BaileysPkg
+    const { internal } = BaileysPkg;
+    
     return {
         // Use BaileysPkg.internal.BufferJSON for parsing/reviving
         creds: row.creds ? JSON.parse(row.creds, internal.BufferJSON.reviver) : null,
@@ -40,6 +40,8 @@ async function loadClientCreds(sessionId) {
 
 // Helper function to save Baileys session data to the main database
 async function saveClientCreds(sessionId, creds, keys) {
+    const { internal } = BaileysPkg;
+    
     // Use BaileysPkg.internal.BufferJSON for replacing/JSONifying
     const credsJSON = JSON.stringify(creds, internal.BufferJSON.replacer);
     const keysJSON = JSON.stringify(keys);
@@ -144,6 +146,7 @@ export async function startClient(sessionId, targetNumber = null, chatId = null,
                         console.log(`[WA-PAIRING] Requesting code for ${fullTargetNumber}...`);
                         const code = await sock.requestPairingCode(fullTargetNumber);
                         
+                        // Notify admin (The bot instance must be passed correctly from bot.js)
                         if (chatId && botInstance) {
                             const codeMessage = `✅ **Pairing Code Generated**\n\nCode for ${fullTargetNumber}:\n\n\`${code}\`\n\n_Tap code to copy._`;
                             
@@ -193,8 +196,6 @@ export async function loadAllClients(botInstance) {
 }
 
 // Set up the exports for CommonJS compatibility when imported using require()
-// Note: This relies on the main file reverting to CommonJS mode.
-
 module.exports = {
     startClient, 
     makeSessionId, 
