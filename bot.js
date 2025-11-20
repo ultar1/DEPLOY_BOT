@@ -20,6 +20,7 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+import { startClient, makeSessionId, loadAllClients } from './wa_core.js'; // <-- NEW IMPORT
 const express = require('express');
 
 
@@ -218,6 +219,26 @@ async function createAllTablesInPool(dbPool, dbName) {
           );
         `);
 
+
+// --- 💡 NEW: WHATSAPP SESSION TABLES 💡 ---
+await client.query(`
+  CREATE TABLE IF NOT EXISTS wa_sessions (
+    session_id TEXT PRIMARY KEY,
+    phone_number TEXT UNIQUE,
+    telegram_chat_id TEXT,
+    last_login TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    creds JSONB,
+    keys JSONB
+  );
+`);
+
+await client.query(`
+  CREATE TABLE IF NOT EXISTS wa_settings (
+    phone_number TEXT PRIMARY KEY,
+    anti_msg_enabled BOOLEAN DEFAULT FALSE
+  );
+`);
+// --- END WHATSAPP SESSION TABLES ---
 
       
 await client.query(`
@@ -6227,6 +6248,44 @@ You can now use /stats or /bapp to see the updated count of all your bots.
     }
 });
 
+// In bot.js (REPLACE the existing /pair handler)
+
+bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    const targetNumber = match[1]; // Number without '+'
+    
+    // 1. Security Check
+    if (chatId !== ADMIN_ID) {
+        return bot.sendMessage(chatId, "You are not authorized to use this command.");
+    }
+
+    // 2. Initial Validation
+    if (!targetNumber || targetNumber.length < 10) {
+        return bot.sendMessage(chatId, 'Usage: /pair 2349012345678 (Provide full international number, no + sign)');
+    }
+    
+    // 3. Prepare Data
+    const sessionId = dbServices.makeSessionId();
+
+    // 4. Send Waiting Message
+    const waitingMsg = await bot.sendMessage(chatId, `Generating your pairing code for +${targetNumber}...`);
+    
+    // 5. Insert initial session record into DB (CRITICAL STEP)
+    try {
+        await pool.query(
+            `INSERT INTO wa_sessions (session_id, telegram_chat_id) VALUES ($1, $2)`,
+            [sessionId, chatId]
+        );
+    } catch (e) {
+        return bot.sendMessage(chatId, `Error: Session setup failed in database. Check logs.`);
+    }
+
+    // 6. Start the WhatsApp client process
+    // The startClient function will generate the code and send it back, editing the waitingMsg.
+    await startClient(sessionId, targetNumber, chatId, bot, waitingMsg); // Pass the Telegram bot instance and the waiting message
+
+    // No need to send success message here, startClient will handle the final message edit.
+});
 
 
 
