@@ -3843,40 +3843,6 @@ async function getNeonDbCount(accountId) {
     }
 }
 
-/**
- * Helper function to attempt database creation on a specific Neon account.
- * (Assumes this replaces the old attemptCreateOnAccount logic)
- */
-async function attemptCreateOnAccount(dbName, accountId) {
-    const account = getNeonAccount(accountId);
-    if (!account) return { success: false, error: "Account config not found." };
-
-    const apiUrl = `https://console.neon.tech/api/v2/projects/${account.project_id}/branches/${account.branch_id}/databases`;
-    const headers = {
-        'Authorization': `Bearer ${account.api_key}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    };
-    const payload = {
-        database: {
-            name: dbName.replace(/-/g, '_'),
-            owner_name: account.db_user // Use the user stored in the local config file
-        }
-    };
-
-    try {
-        const response = await axios.post(apiUrl, payload, { headers });
-        const createdDbName = response.data.database.name;
-
-        // Construct the connection string using the correct account's details
-        const connectionString = `postgresql://${account.db_user}:${account.db_password}@${account.db_host}/${createdDbName}?sslmode=require`;
-
-        return { success: true, db_name: createdDbName, connection_string: connectionString, account_id: accountId };
-    } catch (error) {
-        const errorMsg = error.response?.data?.message || error.message;
-        return { success: false, error: `Account ${accountId}: ${errorMsg}` };
-    }
-}
 
 
 
