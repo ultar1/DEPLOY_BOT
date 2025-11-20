@@ -20,12 +20,18 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
-module.exports.pool = pool; 
-const { startClient, makeSessionId, loadAllClients, waClients } = require('./wa_core.cjs'); // <-- CRITICAL FIX: Changed to .cjs
 const express = require('express');
 
+// In bot.js (around line 30-50)
 
-// In bot.js (near the top)
+// Use const and require for CommonJS compatibility
+const { 
+    startClient, 
+    makeSessionId, 
+    loadAllClients, 
+    waClients 
+} = require('./wa_core.cjs'); // <<< Ensure this require is correct
+
 
 const { sendPaymentConfirmation, sendVerificationEmail, sendExpirationReminder, sendLoggedOutReminder } = require('./email_service');
 const vcfPool = new Pool({
@@ -180,6 +186,7 @@ const backupPool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+module.exports.pool = pool; 
 // In bot.js (near your other constants)
 // ⚠️ IMPORTANT: Replace with your actual group ID where the VCF should be sent.
 const VCF_GROUP_ID = '-1003323856806'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
