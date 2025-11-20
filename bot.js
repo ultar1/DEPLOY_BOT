@@ -1429,6 +1429,7 @@ function formatPreciseCountdown(expirationDateStr) {
 // In bot_services.js
 
 const COUNTRY_DATA = {
+    // === EXISTING COUNTRIES ===
     'nigeria': { code: '234', len: 10, starts: ['70', '80', '81', '90', '91'] },
     'usa': { code: '1', len: 10, starts: ['201', '310', '212', '415', '718', '305'] },
     'uk': { code: '44', len: 10, starts: ['71', '72', '73', '74', '75', '77', '78', '79'] },
@@ -1440,8 +1441,16 @@ const COUNTRY_DATA = {
     'south africa': { code: '27', len: 9, starts: ['6', '7', '8'] },
     'ghana': { code: '233', len: 9, starts: ['2', '5'] },
     'kenya': { code: '254', len: 9, starts: ['7', '1'] },
-    'germany': { code: '49', len: 10, starts: ['15', '16', '17'] }
+    'germany': { code: '49', len: 10, starts: ['15', '16', '17'] },
+
+    // === NEW COUNTRIES ===
+    'kuwait': { code: '965', len: 8, starts: ['6', '9'] }, // Mobile numbers are 8 digits after code
+    'panama': { code: '507', len: 8, starts: ['6', '8'] }, // Mobile numbers are 8 digits after code
+    'saudi arabia': { code: '966', len: 9, starts: ['5'] }, // Mobile numbers are 9 digits after code
+    'egypt': { code: '20', len: 10, starts: ['10', '11', '12'] }, // Mobile numbers are 10 digits after code
+    'mexico': { code: '52', len: 10, starts: ['55', '66'] } // Mobile numbers are 10 digits after code
 };
+
 
 // In bot_services.js (REPLACE the generateCountryVcf function)
 
