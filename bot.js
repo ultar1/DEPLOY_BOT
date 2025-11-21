@@ -6783,41 +6783,50 @@ bot.onText(/^\/list$/, async (msg) => {
 });
 
 
-// In bot.js (REPLACE the existing /pair handler)
-
 bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     const targetNumber = match[1]; // Number without '+'
-    
-    // 1. Security & Validation
-    if (chatId !== ADMIN_ID) return; 
+
+    // 1. Security Check
+    if (chatId !== ADMIN_ID) return;
+
+    // 2. Get Credentials from Environment
+    const messageBotUrl = process.env.MESSAGE_BOT_URL;
+    const messageBotApiKey = process.env.MESSAGE_BOT_API_KEY;
+
+    if (!messageBotUrl || !messageBotApiKey) {
+        return bot.sendMessage(chatId, "**Configuration Error:** `MESSAGE_BOT_URL` or `MESSAGE_BOT_API_KEY` is missing from environment variables.", { parse_mode: 'Markdown' });
+    }
     
     if (!targetNumber || targetNumber.length < 10) {
         return bot.sendMessage(chatId, 'Usage: /pair 2349012345678 (Provide full international number)');
     }
     
-    const waitingMsg = await bot.sendMessage(chatId, `Connecting to external server to pair +${targetNumber}...`);
+    const waitingMsg = await bot.sendMessage(chatId, `🤖 Connecting to external server to pair +${targetNumber}...`);
 
     try {
-        // 2. Call External API
+        // 3. Call External API using Env Vars
+        // Ensure no trailing slash in URL
+        const baseUrl = messageBotUrl.replace(/\/$/, '');
+        
         const response = await axios.post(
-            `${MESSAGE_BOT_URL}/pair`, 
+            `${baseUrl}/pair`, 
             { number: targetNumber },
             { 
                 headers: { 
-                    'x-api-key': MESSAGE_BOT_API_KEY,
+                    'x-api-key': messageBotApiKey,
                     'Content-Type': 'application/json' 
                 },
-                timeout: 60000 // 60s timeout (Pairing can take time)
+                timeout: 120000 // 120s timeout (Pairing can take time)
             }
         );
 
         const data = response.data;
 
         if (data.success) {
-            const code = data.code; // Assuming API returns { success: true, code: "ABC-123" }
+            const code = data.code; 
             
-            // 3. Send Success Message
+            // 4. Send Success Message
             await bot.editMessageText(
                 `**Pairing Code Generated!**\n\n` +
                 `Number: \`+${targetNumber}\`\n\n` +
@@ -6836,13 +6845,14 @@ bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
         console.error("[Pairing] External API Error:", errorMsg);
-        await bot.editMessageText(`**Pairing Failed.**\n\nReason: ${escapeMarkdown(errorMsg)}`, {
+        await bot.editMessageText(`❌ **Pairing Failed.**\n\nReason: ${escapeMarkdown(errorMsg)}`, {
             chat_id: chatId,
             message_id: waitingMsg.message_id,
             parse_mode: 'Markdown'
         });
     }
 });
+
 
 
 // --- REPLACE your old /bapp command with this one ---
