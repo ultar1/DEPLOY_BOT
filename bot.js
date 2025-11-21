@@ -6792,6 +6792,8 @@ bot.onText(/^\/list$/, async (msg) => {
 });
 
 
+// In bot.js (REPLACE the existing /pair handler)
+
 bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     const targetNumber = match[1]; // Number without '+'
@@ -6801,7 +6803,7 @@ bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
 
     // 2. Get Credentials from Environment
     const messageBotUrl = process.env.MESSAGE_BOT_URL;
-    const messageBotApiKey = process.env.MESSAGE_BOT_API_KEY;
+    const messageBotApiKey = process.env.MESSAGE_BOT_API_KEY; // This is the 'secret' parameter
 
     if (!messageBotUrl || !messageBotApiKey) {
         return bot.sendMessage(chatId, "**Configuration Error:** `MESSAGE_BOT_URL` or `MESSAGE_BOT_API_KEY` is missing from environment variables.", { parse_mode: 'Markdown' });
@@ -6811,31 +6813,30 @@ bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
         return bot.sendMessage(chatId, 'Usage: /pair 2349012345678 (Provide full international number)');
     }
     
-    const waitingMsg = await bot.sendMessage(chatId, `🤖 Connecting to external server to pair +${targetNumber}...`);
+    const waitingMsg = await bot.sendMessage(chatId, `Connecting to external server to pair +${targetNumber}...`);
 
     try {
-        // 3. Call External API using Env Vars
-        // Ensure no trailing slash in URL
-        const baseUrl = messageBotUrl.replace(/\/$/, '');
+        // 3. Call External API using GET with Query Parameters
+        // Format: URL/pair?number=...&secret=...
         
-        const response = await axios.post(
-            `${baseUrl}/pair`, 
-            { number: targetNumber },
-            { 
-                headers: { 
-                    'x-api-key': messageBotApiKey,
-                    'Content-Type': 'application/json' 
-                },
-                timeout: 120000 // 120s timeout (Pairing can take time)
-            }
-        );
+        const baseUrl = messageBotUrl.replace(/\/$/, ''); // Ensure no trailing slash
+        
+        // We use 'secret' as the parameter name based on your request
+        const requestUrl = `${baseUrl}/pair?number=${targetNumber}&secret=${messageBotApiKey}`;
+        
+        // console.log(`[Pairing] Requesting: ${requestUrl}`); // Uncomment for debugging (Be careful with logs!)
+
+        const response = await axios.get(requestUrl, { 
+            timeout: 120000 // 120s timeout
+        });
 
         const data = response.data;
 
-        if (data.success) {
-            const code = data.code; 
+        // 4. Check Response
+        if (data.status === 'success' || data.success === true) {
+            const code = data.pairing_code || data.code; 
             
-            // 4. Send Success Message
+            // 5. Send Success Message
             await bot.editMessageText(
                 `**Pairing Code Generated!**\n\n` +
                 `Number: \`+${targetNumber}\`\n\n` +
@@ -6854,7 +6855,7 @@ bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
         console.error("[Pairing] External API Error:", errorMsg);
-        await bot.editMessageText(`❌ **Pairing Failed.**\n\nReason: ${escapeMarkdown(errorMsg)}`, {
+        await bot.editMessageText(`**Pairing Failed.**\n\nReason: ${escapeMarkdown(errorMsg)}`, {
             chat_id: chatId,
             message_id: waitingMsg.message_id,
             parse_mode: 'Markdown'
