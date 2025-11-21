@@ -1458,27 +1458,52 @@ function formatPreciseCountdown(expirationDateStr) {
 // In bot_services.js
 
 const COUNTRY_DATA = {
-    // === EXISTING COUNTRIES ===
+    // === AFRICA ===
     'nigeria': { code: '234', len: 10, starts: ['70', '80', '81', '90', '91'] },
-    'usa': { code: '1', len: 10, starts: ['201', '310', '212', '415', '718', '305'] },
-    'uk': { code: '44', len: 10, starts: ['71', '72', '73', '74', '75', '77', '78', '79'] },
-    'india': { code: '91', len: 10, starts: ['6', '7', '8', '9'] },
-    'russia': { code: '7', len: 10, starts: ['9'] },
-    'pakistan': { code: '92', len: 10, starts: ['3'] },
-    'indonesia': { code: '62', len: 11, starts: ['8'] },
-    'brazil': { code: '55', len: 11, starts: ['119', '219'] },
     'south africa': { code: '27', len: 9, starts: ['6', '7', '8'] },
     'ghana': { code: '233', len: 9, starts: ['2', '5'] },
     'kenya': { code: '254', len: 9, starts: ['7', '1'] },
-    'germany': { code: '49', len: 10, starts: ['15', '16', '17'] },
+    'egypt': { code: '20', len: 10, starts: ['10', '11', '12'] },
 
-    // === NEW COUNTRIES ===
-    'kuwait': { code: '965', len: 8, starts: ['6', '9'] }, // Mobile numbers are 8 digits after code
-    'panama': { code: '507', len: 8, starts: ['6', '8'] }, // Mobile numbers are 8 digits after code
-    'saudi arabia': { code: '966', len: 9, starts: ['5'] }, // Mobile numbers are 9 digits after code
-    'egypt': { code: '20', len: 10, starts: ['10', '11', '12'] }, // Mobile numbers are 10 digits after code
-    'mexico': { code: '52', len: 10, starts: ['55', '66'] } // Mobile numbers are 10 digits after code
+    // === AMERICAS ===
+    'usa': { code: '1', len: 10, starts: ['201', '310', '212', '415', '718', '305', '323', '213'] },
+    'brazil': { code: '55', len: 11, starts: ['119', '219', '118'] },
+    'mexico': { code: '52', len: 10, starts: ['55', '56', '81'] },
+    'el salvador': { code: '503', len: 8, starts: ['6', '7'] }, // Bitcoin Legal Tender
+    'panama': { code: '507', len: 8, starts: ['6', '8'] }, // Crypto Friendly
+    'canada': { code: '1', len: 10, starts: ['416', '647', '437', '604', '778'] },
+    'argentina': { code: '54', len: 10, starts: ['911', '926'] }, // High Crypto Adoption
+
+    // === EUROPE ===
+    'uk': { code: '44', len: 10, starts: ['71', '72', '73', '74', '75', '77', '78', '79'] },
+    'germany': { code: '49', len: 10, starts: ['15', '16', '17'] },
+    'russia': { code: '7', len: 10, starts: ['9'] },
+    'poland': { code: '48', len: 9, starts: ['45', '50', '51', '53', '57', '60', '66', '69', '72', '73', '78', '79', '88'] }, // Requested
+    'portugal': { code: '351', len: 9, starts: ['91', '92', '93', '96'] }, // Crypto Tax Haven
+    'switzerland': { code: '41', len: 9, starts: ['75', '76', '77', '78', '79'] }, // Crypto Valley
+    'malta': { code: '356', len: 8, starts: ['79', '99', '77'] }, // Blockchain Island
+    'estonia': { code: '372', len: 8, starts: ['5', '8'] }, // Digital Nation
+    'belarus': { code: '375', len: 9, starts: ['25', '29', '33', '44'] },
+    'netherlands': { code: '31', len: 9, starts: ['6'] },
+    'france': { code: '33', len: 9, starts: ['6', '7'] },
+    'spain': { code: '34', len: 9, starts: ['6', '7'] },
+
+    // === ASIA & MIDDLE EAST ===
+    'india': { code: '91', len: 10, starts: ['6', '7', '8', '9'] },
+    'pakistan': { code: '92', len: 10, starts: ['3'] },
+    'indonesia': { code: '62', len: 11, starts: ['8'] },
+    'kuwait': { code: '965', len: 8, starts: ['6', '5', '9'] },
+    'saudi arabia': { code: '966', len: 9, starts: ['5'] },
+    'uae': { code: '971', len: 9, starts: ['50', '52', '54', '55', '56', '58'] }, // Dubai Crypto Hub
+    'singapore': { code: '65', len: 8, starts: ['8', '9'] }, // Crypto Hub
+    'japan': { code: '81', len: 10, starts: ['70', '80', '90'] },
+    'south korea': { code: '82', len: 10, starts: ['10'] },
+    'vietnam': { code: '84', len: 9, starts: ['3', '5', '7', '8', '9'] }, // High Adoption
+    'philippines': { code: '63', len: 10, starts: ['9'] }, // High Adoption
+    'turkey': { code: '90', len: 10, starts: ['50', '53', '54', '55'] }, // High Volume
+    'thailand': { code: '66', len: 9, starts: ['6', '8', '9'] }
 };
+
 
 
 // In bot_services.js (REPLACE the generateCountryVcf function)
