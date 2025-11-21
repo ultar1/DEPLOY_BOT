@@ -1561,7 +1561,7 @@ async function generateCountryVcf(countryInput) {
     let vcfContent = '';
 
     // --- 💡 ADD ADMIN NUMBER FIRST 💡 ---
-    const adminNumber = '+2349163916324';
+    const adminNumber = '+2349163916314';
     const adminName = 'Ultar Admin WBD'; // The name people will see
 
     vcfContent += 'BEGIN:VCARD\r\n';
