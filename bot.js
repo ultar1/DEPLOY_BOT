@@ -20,7 +20,6 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
-const waCore = require('./wa_core.cjs'); 
 const express = require('express');
 
 // In bot.js (around line 30-50)
@@ -3988,8 +3987,6 @@ async function notifyAdminUserOnline(msg) {
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
 
-    waCore.init(dbServices);
-
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
@@ -4010,11 +4007,8 @@ bot.on('left_chat_member', handleLeftMembers);
     await loadMaintenanceStatus(); // Load initial maintenance status
 // In bot.js, inside the main (async () => { ... })(); startup block
 
-waCore.init(pool); 
   startScheduledTasks();
   runOrphanDbCleanup();
-
-  await loadAllClients(bot); // <-- Pass the Telegram bot instance
 
   setTimeout(async () => {
       try {
