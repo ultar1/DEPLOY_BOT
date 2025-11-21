@@ -6224,44 +6224,6 @@ You can now use /stats or /bapp to see the updated count of all your bots.
     }
 });
 
-// In bot.js (REPLACE the existing /pair handler)
-
-// In bot.js (REPLACE the existing /pair handler)
-
-bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
-    const chatId = msg.chat.id.toString();
-    const targetNumber = match[1]; // Number without '+'
-    
-    if (chatId !== ADMIN_ID) return; 
-    
-    if (!targetNumber || targetNumber.length < 10) {
-        return bot.sendMessage(chatId, 'Usage: /pair 2349012345678 (Provide full international number, no + sign)');
-    }
-    
-    // 1. Prepare Data
-    // FIX: Call makeSessionId() directly, as it is imported above.
-    const sessionId = makeSessionId(); 
-
-    // 2. Insert initial session record into DB
-    try {
-        await pool.query(
-            `INSERT INTO wa_sessions (session_id, telegram_chat_id) VALUES ($1, $2)`,
-            [sessionId, chatId]
-        );
-    } catch (e) {
-        return bot.sendMessage(chatId, `Error: Session setup failed in database. Check logs.`);
-    }
-
-    // 3. Send Waiting Message
-    const waitingMsg = await bot.sendMessage(chatId, `Generating your pairing code for +${targetNumber}...`);
-    
-    // 4. Start the WhatsApp client process
-    await startClient(sessionId, targetNumber, chatId, bot, waitingMsg);
-
-    // No need to send success message here, startClient handles the final message edit.
-});
-
-
 
 bot.onText(/^\/deldb\s+([\w-]+)(?:\s+(\d+))?$/i, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -6773,58 +6735,120 @@ bot.onText(/^\/users$/, async (msg) => {
 });
 
 
-// In bot.js (Add this handler)
 
-bot.onText(/^\/listpair$/, async (msg) => {
+bot.onText(/^\/list$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching active WhatsApp sessions...");
+    const workingMsg = await bot.sendMessage(adminId, "Fetching active sessions from external server...");
 
     try {
-        // Use the new helper function from wa_core.cjs
-        const clientsData = await getConnectedClients();
+        // 1. Call External API
+        const response = await axios.get(
+            `${MESSAGE_BOT_URL}/list`,
+            { 
+                headers: { 'x-api-key': MESSAGE_BOT_API_KEY }
+            }
+        );
 
-        if (clientsData.length === 0) {
-            return bot.editMessageText("No WhatsApp clients are currently connected to the system.", {
+        const data = response.data;
+        
+        // Assuming API returns { success: true, clients: ["23490...", "1234..."] } 
+        // or { success: true, clients: [{ number: "...", status: "..." }] }
+        const clients = data.clients || [];
+
+        if (clients.length === 0) {
+            return bot.editMessageText("No active WhatsApp sessions found on the external server.", {
                 chat_id: adminId, message_id: workingMsg.message_id
             });
         }
 
-        let message = "*Active WhatsApp Clients:*\n\n";
+        let message = "*Active External Sessions:*\n\n";
         
-        for (const [index, client] of clientsData.entries()) {
-            let ownerDetails = `Owner ID: \`${client.telegram_chat_id}\``;
+        clients.forEach((client, index) => {
+            // Handle different API response formats (string vs object)
+            const number = typeof client === 'string' ? client : client.number || client.phone;
+            const status = client.status ? `[${client.status}]` : '';
             
-            // Attempt to get user's username/name for better identification
-            try {
-                const ownerChat = await bot.getChat(client.telegram_chat_id);
-                if (ownerChat.username) {
-                    ownerDetails = `@${escapeMarkdown(ownerChat.username)}`;
-                } else {
-                    ownerDetails = escapeMarkdown(ownerChat.first_name || 'User');
-                }
-            } catch (e) {
-                // If fetching fails, stick to the ID
-            }
-
-            message += `**${index + 1}. +${client.phone_number}**\n`;
-            message += `   - Owned by: ${ownerDetails}\n\n`;
-        }
-        message += `_Total Clients: ${clientsData.length}_`;
+            message += `**${index + 1}. +${number}** ${status}\n`;
+        });
+        
+        message += `\n_Total: ${clients.length}_`;
 
         await bot.editMessageText(message, {
             chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown'
         });
 
     } catch (e) {
-        console.error("[/listpair] Error fetching clients:", e);
-        await bot.editMessageText("Failed to fetch client list. Check DB connection.", {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error("[ListPair] External API Error:", errorMsg);
+        await bot.editMessageText(`❌ Failed to fetch list.\nError: ${errorMsg}`, {
             chat_id: adminId, message_id: workingMsg.message_id
         });
     }
 });
 
+
+// In bot.js (REPLACE the existing /pair handler)
+
+bot.onText(/^\/pair (\d+)$/, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    const targetNumber = match[1]; // Number without '+'
+    
+    // 1. Security & Validation
+    if (chatId !== ADMIN_ID) return; 
+    
+    if (!targetNumber || targetNumber.length < 10) {
+        return bot.sendMessage(chatId, 'Usage: /pair 2349012345678 (Provide full international number)');
+    }
+    
+    const waitingMsg = await bot.sendMessage(chatId, `Connecting to external server to pair +${targetNumber}...`);
+
+    try {
+        // 2. Call External API
+        const response = await axios.post(
+            `${MESSAGE_BOT_URL}/pair`, 
+            { number: targetNumber },
+            { 
+                headers: { 
+                    'x-api-key': MESSAGE_BOT_API_KEY,
+                    'Content-Type': 'application/json' 
+                },
+                timeout: 60000 // 60s timeout (Pairing can take time)
+            }
+        );
+
+        const data = response.data;
+
+        if (data.success) {
+            const code = data.code; // Assuming API returns { success: true, code: "ABC-123" }
+            
+            // 3. Send Success Message
+            await bot.editMessageText(
+                `**Pairing Code Generated!**\n\n` +
+                `Number: \`+${targetNumber}\`\n\n` +
+                `Code: \`${code}\`\n\n` +
+                `_Tap code to copy._`, 
+                {
+                    chat_id: chatId,
+                    message_id: waitingMsg.message_id, 
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            throw new Error(data.message || "Unknown API error");
+        }
+
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error("[Pairing] External API Error:", errorMsg);
+        await bot.editMessageText(`**Pairing Failed.**\n\nReason: ${escapeMarkdown(errorMsg)}`, {
+            chat_id: chatId,
+            message_id: waitingMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+});
 
 
 // --- REPLACE your old /bapp command with this one ---
