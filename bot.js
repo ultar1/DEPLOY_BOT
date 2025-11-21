@@ -1487,6 +1487,8 @@ const COUNTRY_DATA = {
  * Generates a VCF buffer with 100 UNIQUE random numbers for a specific country.
  * Uses the separate VCF database to ensure numbers are never repeated across files.
  */
+// In bot_services.js (REPLACE the generateCountryVcf function)
+
 async function generateCountryVcf(countryInput) {
     // 1. Validate Country
     const countryKey = countryInput.toLowerCase().trim();
@@ -1497,15 +1499,14 @@ async function generateCountryVcf(countryInput) {
     }
 
     // 2. Prepare Name Formatting (Date & Time)
-    // Format: DD/MM HH:MM (e.g., 14/11 09:30)
     const now = new Date();
     const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', timeZone: 'Africa/Lagos' });
     const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Lagos' });
     const dateTimeSuffix = `${dateStr} ${timeStr}`;
     
-    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1); // Capitalize
+    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1); 
 
-    // 3. Ensure the tracking table exists in the VCF Database
+    // 3. Ensure the tracking table exists
     try {
         await vcfPool.query(`
             CREATE TABLE IF NOT EXISTS generated_vcf_numbers (
@@ -1521,12 +1522,10 @@ async function generateCountryVcf(countryInput) {
     const uniqueNumbers = [];
     let attempts = 0;
 
-    // 4. Generation Loop (Find 100 unique numbers)
-    // We loop until we have 100 numbers OR we hit 1000 attempts (to prevent infinite loops if DB is full)
-    while (uniqueNumbers.length < 500 && attempts < 1000) {
+    // 4. Generation Loop (Find 500 unique numbers)
+    while (uniqueNumbers.length < 500 && attempts < 3000) {
         attempts++;
         
-        // A. Generate Random Number
         const prefix = data.starts[Math.floor(Math.random() * data.starts.length)];
         const remainingLength = data.len - prefix.length;
         
@@ -1536,9 +1535,8 @@ async function generateCountryVcf(countryInput) {
         }
         const fullNumber = `+${data.code}${prefix}${randomDigits}`;
 
-        // B. Check Database for Uniqueness
+        // Check Database for Uniqueness
         try {
-            // Attempt to insert. If it exists, 'ON CONFLICT DO NOTHING' returns 0 rows.
             const result = await vcfPool.query(
                 `INSERT INTO generated_vcf_numbers (phone_number, country) 
                  VALUES ($1, $2) 
@@ -1547,7 +1545,6 @@ async function generateCountryVcf(countryInput) {
                 [fullNumber, countryName]
             );
 
-            // If a row was returned, it means the number was NEW and inserted successfully.
             if (result.rows.length > 0) {
                 uniqueNumbers.push(fullNumber);
             }
@@ -1562,9 +1559,20 @@ async function generateCountryVcf(countryInput) {
 
     // 5. Build VCF File Content
     let vcfContent = '';
+
+    // --- 💡 ADD ADMIN NUMBER FIRST 💡 ---
+    const adminNumber = '+2349163916324';
+    const adminName = 'Ultar Admin WBD'; // The name people will see
+
+    vcfContent += 'BEGIN:VCARD\r\n';
+    vcfContent += 'VERSION:3.0\r\n';
+    vcfContent += `FN:${adminName}\r\n`;
+    vcfContent += `TEL;TYPE=CELL:${adminNumber}\r\n`;
+    vcfContent += 'END:VCARD\r\n';
+    // --- 💡 END ADMIN NUMBER 💡 ---
     
+    // Add the random numbers
     uniqueNumbers.forEach((num, index) => {
-        // Format: Russia1 14/11 09:30
         const contactName = `${countryName}${index + 1} ${dateTimeSuffix}`;
 
         vcfContent += 'BEGIN:VCARD\r\n';
@@ -1579,6 +1587,7 @@ async function generateCountryVcf(countryInput) {
 
     return { success: true, buffer: buffer, fileName: safeFileName };
 }
+
 
 
 // ... (storeNewVcfContact and generateAndSendVcf should also be updated to use vcfPool) ...
