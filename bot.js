@@ -3013,9 +3013,8 @@ async function handleRestartAllConfirm(query) {
                 }
 
                 // Use axios directly with proper Heroku API headers
-                // Trigger a restart by restarting all dynos (web dyno)
-                await axios.post(`https://api.heroku.com/apps/${appName}/dynos/web/restart`, 
-                    {},
+                // Heroku dyno restart requires DELETE request to /apps/{appName}/dynos/web
+                await axios.delete(`https://api.heroku.com/apps/${appName}/dynos/web`, 
                     {
                         headers: {
                             'Authorization': `Bearer ${HEROKU_API_KEY}`,
