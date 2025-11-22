@@ -57,7 +57,7 @@ const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 
 const VCF_GROUP_LINK = 'https://t.me/wbdvcf1'; 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
-const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
+const MINI_APP_URL = 'https://deploy-bot-y30h.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
 const KEYBOARD_VERSION = 4; // Increment this number for every new keyboard update
