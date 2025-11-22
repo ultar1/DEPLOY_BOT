@@ -5158,7 +5158,7 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     const isAdmin = cid === ADMIN_ID;
     delete userStates[cid];
     const { first_name, last_name, username } = msg.from;
-    console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
+    console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}] | IsAdmin: ${isAdmin}`);
 
     if (inviterId && inviterId !== cid) {
         try {
@@ -5176,7 +5176,9 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     }
 
     if (isAdmin) {
-        await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
+        console.log(`[Admin Start] Admin ${cid} used /start command. Showing admin menu.`);
+        await bot.sendMessage(cid, '*Welcome, Admin!*\n\nHere is your admin menu:', {
+            parse_mode: 'Markdown',
             reply_markup: {
                 keyboard: buildKeyboard(isAdmin),
                 resize_keyboard: true
@@ -7631,7 +7633,7 @@ bot.on('message', async msg => {
     if (msg.web_app_data) {
         try {
             const data = JSON.parse(msg.web_app_data.data);
-            console.log("📩 [MiniApp] Data received from Mini App:", data);
+            console.log("[MiniApp] Data received from Mini App:", data);
 
             // Check if this was a free trial verification
             const userState = userStates[cid];
@@ -7643,12 +7645,12 @@ bot.on('message', async msg => {
                     // Update user state to reflect successful verification
                     userStates[cid] = { step: 'FREE_TRIAL_VERIFIED', data: { verifiedAt: new Date() } };
                     
-                    await bot.sendMessage(cid, "✅ *Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click the button below to receive your free number.", {
+                    await bot.sendMessage(cid, "*Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click the button below to proceed.", {
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                                [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
+                                [{ text: 'I have joined, Proceed!', callback_data: 'verify_join_after_miniapp' }]
                             ]
                         }
                     });
@@ -7661,18 +7663,18 @@ bot.on('message', async msg => {
                     delete userStates[cid];
                     
                     await bot.sendMessage(cid, 
-                        `❌ *Your verification could not be completed.*\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
+                        `*Your verification could not be completed.*\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
                         { parse_mode: 'Markdown' }
                     );
                 }
             } else if (data.status === 'verified') {
                 // Regular mini app verification (non-free-trial)
-                await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
+                await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to proceed.", {
                     parse_mode: 'Markdown',
                     reply_markup: {
                         inline_keyboard: [
                             [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
+                            [{ text: 'I have joined, Proceed!', callback_data: 'verify_join_after_miniapp' }]
                         ]
                     }
                 });
@@ -7684,7 +7686,7 @@ bot.on('message', async msg => {
                 );
             }
         } catch (err) {
-            console.error("❌ [MiniApp] Failed to parse web_app_data:", err.message);
+            console.error("[MiniApp] Failed to parse web_app_data:", err.message);
             await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
         }
         return; // Stop processing after handling Mini App data
@@ -8553,7 +8555,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
             const verificationUrl = `${process.env.APP_URL}/verify`;
 
             // Show the security check button
-            await bot.sendMessage(cid, "🔒 *Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
+            await bot.sendMessage(cid, "*Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [

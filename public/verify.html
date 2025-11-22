@@ -146,22 +146,25 @@
                     throw new Error(serverData.message || "You are not eligible for a trial.");
                 }
 
-                // 4. ✅ SUCCESS: Update UI first, then send data
-                statusIcon.innerHTML = '✅';
+                // 4. SUCCESS: Update UI first, then send data
+                statusIcon.innerHTML = 'SUCCESS';
                 statusTitle.innerText = 'Success!';
-                statusMessage.innerText = 'Verification complete. You can now close this window.';
+                statusMessage.innerText = 'Verification complete. Closing...';
                 statusMessage.style.color = 'var(--success-color)';
                 hintText.innerText = '';
                 
-                // Wait 1.5 seconds for the user to see the success message
+                // Wait 1 second for the user to see the success message, then close
                 setTimeout(() => {
                     // This is the VERY LAST STEP. It sends data and closes the app.
+                    console.log('[Verify] Sending verified status and closing mini app...');
                     tg.sendData(JSON.stringify({ status: 'verified' }));
-                }, 1500);
+                    // Also close the web app explicitly
+                    tg.close();
+                }, 1000);
 
             } catch (error) {
-                // 5. ❌ FAILURE: Show error and retry button
-                statusIcon.innerHTML = '⚠️';
+                // 5. FAILURE: Show error and retry button
+                statusIcon.innerHTML = 'FAILED';
                 statusTitle.innerText = 'Verification Failed';
                 statusMessage.innerText = error.message;
                 statusMessage.style.color = 'var(--error-color)';
@@ -169,6 +172,7 @@
                 retryButton.style.display = 'block';
 
                 // Send a failure status to the bot for logging purposes
+                console.log('[Verify] Sending failed status to bot...');
                 tg.sendData(JSON.stringify({ status: 'failed', reason: error.message }));
             }
         }
