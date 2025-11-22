@@ -924,7 +924,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 /**
  * AUTONOMOUS GEMINI BRAIN - Enhanced to handle requests without user intervention
@@ -4783,32 +4783,37 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
     try {
         const userId = req.telegramData.id.toString();
         const country = req.body.country || 'NG';
-        const city = req.body.city || 'Unknown';
         const ipAddress = req.body.ip_address || req.socket.remoteAddress;
+        const city = req.body.city || 'Unknown';
 
-        console.log(`[Pre-Verify] User ${userId} | IP: ${ipAddress} | City: ${city} | Country: ${country}`);
+        console.log(`[Pre-Verify] User ${userId} | IP: ${ipAddress} | Country: ${country} | City: ${city}`);
 
         // Block India and Pakistan ONLY
         if (country === 'IN' || country === 'PK') {
             console.warn(`[Pre-Verify] User ${userId} blocked from: ${country}`);
-            return res.json({ success: false, message: 'Not available in your country.' });
+            return res.json({ success: false, message: 'Service not available in your country.' });
         }
 
-        // Check if user already used trial
-        const userCheck = await pool.query(
-            'SELECT id FROM free_trial_numbers WHERE user_id = $1',
-            [userId]
-        );
-        if (userCheck.rows.length > 0) {
-            return res.json({ success: false, message: 'You already used free trial.' });
+        // Save verification data to database
+        try {
+            await pool.query(
+                `INSERT INTO pre_verified_users (user_id, ip_address, city) 
+                 VALUES ($1, $2, $3) 
+                 ON CONFLICT (user_id) DO UPDATE 
+                 SET ip_address = $2, city = $3, verified_at = NOW()`,
+                [userId, ipAddress, city]
+            );
+            console.log(`[Pre-Verify] ✅ User ${userId} passed verification - data saved`);
+        } catch (dbErr) {
+            console.warn('[Pre-Verify] DB error:', dbErr.message);
+            // Don't fail - still approve the verification
         }
 
-        console.log(`[Pre-Verify] ✅ User ${userId} verified!`);
-        return res.json({ success: true, message: 'Verified!' });
+        return res.json({ success: true, message: 'Verified!', userId: userId, verified: true });
 
     } catch (error) {
         console.error("Error in /pre-verify-user:", error);
-        return res.status(500).json({ success: false, message: 'Server error during verification check.' });
+        return res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 
