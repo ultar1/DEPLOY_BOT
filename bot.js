@@ -2834,8 +2834,15 @@ async function handleRestoreAllConfirm(query) {
         }).catch(()=>{}); // Ignore "message not modified"
         
         try {
-            // --- Phase 1: Call the NEW silent restore function ---
-            const buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
+            // --- Phase 1: Call the silent restore function (with fallback) ---
+            let buildResult;
+            if (dbServices.silentRestoreBuild && typeof dbServices.silentRestoreBuild === 'function') {
+                buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
+            } else {
+                // FALLBACK: If silentRestoreBuild doesn't exist, log warning and skip
+                console.warn(`[RestoreAll] WARNING: dbServices.silentRestoreBuild is not defined. Skipping restore for ${originalAppName}`);
+                throw new Error(`Function silentRestoreBuild not found in dbServices. This deployment cannot be restored.`);
+            }
             
             if (!buildResult.success) {
                 // Throw the specific error from the silent function
@@ -2843,9 +2850,20 @@ async function handleRestoreAllConfirm(query) {
             }
 
             // 2. Update the log with the "success" line
-            const newAppName = buildResult.appName; // Use .appName from silent function
+            const newAppName = buildResult.appName || originalAppName;
             progressLog.push(`**(${index + 1}/${deployments.length})** \`${newAppName}\`... ✅ *Success*`);
             successCount++;
+            
+            // --- ADD 1-MINUTE DELAY AFTER SUCCESS ---
+            if (index < deployments.length - 1) { // Don't delay after last bot
+                progressLog.push(`_Waiting 1 minute before next restore..._`);
+                await bot.editMessageText(progressLog.join('\n'), { 
+                    chat_id: adminId, 
+                    message_id: progressMsg.message_id, 
+                    parse_mode: 'Markdown' 
+                }).catch(()=>{});
+                await new Promise(resolve => setTimeout(resolve, 60000)); // 60 seconds
+            }
 
         } catch (error) {
             failureCount++;
@@ -2863,11 +2881,12 @@ async function handleRestoreAllConfirm(query) {
         { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
     );
 
-    // --- (Phase 3 & 4 for Email and Copydb remain unchanged) ---
-    if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "**Starting Phase 3:** Automatically deploying and linking the email service...");
+    // --- FLEXIBLE Phase 3 & 4: Run if there are ANY successes ---
+    const hasOnlyMinorFailures = failureCount > 0 && successCount > 0;
+    
+    if (successCount > 0) {
+        await bot.sendMessage(adminId, `**Starting Phase 3:** Deploying email service (${successCount} bots restored)...`);
         try {
-            // ... (email service deployment logic) ...
             const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
             if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY) throw new Error("Missing email credentials");
             const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
@@ -2876,20 +2895,26 @@ async function handleRestoreAllConfirm(query) {
             await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
             await herokuApi.post(`/apps/${appName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
             await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
-            await bot.sendMessage(adminId, `**Email Service Deployed!**`);
+            await bot.sendMessage(adminId, `**Email Service Deployed!** (Phase 3 complete)`);
         } catch (error) {
             const errorMsg = error.response?.data?.message || error.message;
-            await bot.sendMessage(adminId, `**Bot restore was successful, but email service deployment failed.**\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(adminId, `**Phase 3 Failed:** Email service deployment failed.\n*Reason:* ${escapeMarkdown(errorMsg)}\n\n${hasOnlyMinorFailures ? '_Note: Some bots were restored successfully._' : ''}`, { parse_mode: 'Markdown' });
         }
-    }
-    if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "**Starting Phase 4:** Automatically copying main database to backup database...");
+        
+        await bot.sendMessage(adminId, `**Starting Phase 4:** Copying main database to backup (${successCount} bots syncing)...`);
         try {
-            await runCopyDbTask();
-            await bot.sendMessage(adminId, "**Full System Recovery Complete!**");
+            if (typeof runCopyDbTask === 'function') {
+                await runCopyDbTask();
+                await bot.sendMessage(adminId, `**Full System Recovery Complete!**\n\n✅ ${successCount} bots restored\n${failureCount > 0 ? `⚠️ ${failureCount} bots failed\n` : ''}Databases synchronized.`);
+            } else {
+                console.warn('[RestoreAll] runCopyDbTask function not found. Skipping database sync.');
+                await bot.sendMessage(adminId, `**Restore Complete (Phase 4 Skipped)**\n\n✅ ${successCount} bots restored\n${failureCount > 0 ? `⚠️ ${failureCount} bots failed` : 'All restores successful!'}`);
+            }
         } catch (copyError) {
-            await bot.sendMessage(adminId, `**Bot/Email restore was successful, but the final /copydb task failed.**\n*Reason:* ${escapeMarkdown(copyError.message)}`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(adminId, `**Phase 4 Failed:** Database sync failed.\n*Reason:* ${escapeMarkdown(copyError.message)}\n\n✅ ${successCount} bots were still restored successfully.`, { parse_mode: 'Markdown' });
         }
+    } else {
+        await bot.sendMessage(adminId, `**Recovery Cancelled:** No bots were successfully restored. Skipping Phase 3 & 4.`);
     }
 }
 
