@@ -454,19 +454,24 @@
 
         // Navigation
         function navigateTo(viewName, data = null) {
-            state.viewHistory.push({ view: state.currentView, data: null });
+            state.viewHistory.push({ view: state.currentView, data: state.selectedBot });
             state.currentView = viewName;
+            state.selectedBot = data;
             renderView(viewName, data);
             updateHeader();
         }
 
         function goBack() {
             if (state.viewHistory.length === 0) {
-                navigateTo('dashboard');
+                state.currentView = 'dashboard';
+                state.selectedBot = null;
+                renderView('dashboard', null);
+                updateHeader();
                 return;
             }
             const prev = state.viewHistory.pop();
             state.currentView = prev.view;
+            state.selectedBot = prev.data;
             renderView(prev.view, prev.data);
             updateHeader();
         }
@@ -687,18 +692,22 @@
 
                 let html = '<div class="variables-grid">';
                 for (const [key, value] of Object.entries(vars)) {
+                    const isEditable = ['PREFIX', 'SUDO', 'SESSION_ID'].includes(key);
                     html += `
-                        <div class="variable-item" data-action="edit-variable" data-app-name="${bot.appName}" data-var-name="${key}" data-current-value="${value || ''}">
+                        <div class="variable-item" ${isEditable ? `data-action="edit-variable" data-app-name="${bot.appName}" data-var-name="${key}" data-current-value="${value || ''}"` : ''} style="${isEditable ? 'cursor: pointer;' : 'cursor: default;'}">
                             <div>
                                 <div class="variable-name">${key}</div>
                                 <div class="variable-value">${value && value.length > 50 ? value.substring(0, 50) + '...' : value || 'Not set'}</div>
                             </div>
-                            <div style="color: #64748b;">></div>
+                            <div style="color: #64748b;">${isEditable ? '>' : ''}</div>
                         </div>
                     `;
                 }
                 html += '</div>';
                 varsList.innerHTML = html;
+                
+                // Reattach event listeners
+                attachEventListeners();
             } catch (error) {
                 document.getElementById('variablesList').innerHTML = `<div class="error-message">${error.message}</div>`;
             }
@@ -769,6 +778,7 @@
 
         async function editVariable(appName, varName, currentValue) {
             const booleanVars = ['ALWAYS_ONLINE', 'AUTO_READ_STATUS', 'AUTO_STATUS_VIEW', 'ANTI_DELETE'];
+            const editableVars = ['PREFIX', 'SUDO', 'SESSION_ID'];
             
             if (booleanVars.includes(varName)) {
                 tg.showPopup({
@@ -784,6 +794,9 @@
                         updateVariable(appName, varName, id === 'true');
                     }
                 });
+            } else if (editableVars.includes(varName)) {
+                // Show dynamic form for PREFIX, SUDO, SESSION_ID
+                showEditForm(appName, varName, currentValue);
             } else {
                 tg.showPopup({
                     title: `Edit ${varName}`,
@@ -801,6 +814,27 @@
             }
         }
 
+        function showEditForm(appName, varName, currentValue) {
+            const maxLength = varName === 'PREFIX' ? 5 : varName === 'SUDO' ? 50 : 2000;
+            const placeholder = varName === 'PREFIX' ? 'e.g., .' : varName === 'SUDO' ? 'Comma-separated admin IDs' : 'Paste full session JSON';
+            
+            tg.showPopup({
+                title: `Edit ${varName}`,
+                message: `Enter new value for ${varName}:`,
+                buttons: [
+                    { id: 'input', type: 'input', placeholder, text: currentValue || '' },
+                    { id: 'ok', type: 'ok', text: 'Save' },
+                    { type: 'cancel' }
+                ]
+            }, (id, value) => {
+                if (id === 'ok' && value && value.trim()) {
+                    updateVariable(appName, varName, value.trim());
+                } else if (id === 'ok' && !value) {
+                    tg.showAlert('Please enter a value');
+                }
+            });
+        }
+
         async function updateVariable(appName, varName, varValue) {
             tg.showProgress(true);
             try {
@@ -816,6 +850,11 @@
                 const data = await res.json();
                 tg.hideProgress();
                 tg.showAlert(data.message);
+                
+                // Refresh the variables list dynamically
+                if (data.success && state.selectedBot) {
+                    loadVariables(state.selectedBot);
+                }
             } catch (error) {
                 tg.hideProgress();
                 tg.showAlert('Update failed: ' + error.message);
