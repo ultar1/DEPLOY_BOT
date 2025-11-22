@@ -1053,7 +1053,12 @@ async function handleFallbackWithGemini(chatId, userMessage) {
     `;
     
     try {
-        const result = await geminiModel.generateContent(professionalPrompt);
+        // DYNAMIC BRAIN UPDATE: Refresh Gemini with latest user/bot state
+        const brainContext = await updateGeminiBrain(chatId);
+        const contextPrompt = brainContext ? `\n[Real-time System State: ${JSON.stringify(brainContext)}]` : '';
+        const fullPrompt = professionalPrompt + contextPrompt;
+        
+        const result = await geminiModel.generateContent(fullPrompt);
         const responseText = result.response.text();
         const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const aiResponse = JSON.parse(jsonString);
@@ -1097,6 +1102,61 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             'I encountered an error processing your request. Please try again or contact support.',
             { reply_markup: { inline_keyboard: [[{ text: 'Contact Support', url: `https://t.me/${SUPPORT_USERNAME}` }]] } }
         );
+    }
+}
+
+/**
+ * DYNAMIC GEMINI BRAIN UPDATE
+ * Refreshes Gemini's knowledge base with latest bot state, user data, and system status
+ */
+async function updateGeminiBrain(userId) {
+    try {
+        // Fetch current user state from database
+        const userRes = await pool.query(
+            'SELECT user_id, created_at, last_used FROM users WHERE user_id = $1',
+            [userId]
+        );
+        
+        const botsRes = await pool.query(
+            'SELECT bot_name, status, created_at FROM user_bots WHERE user_id = $1',
+            [userId]
+        );
+        
+        const deployRes = await pool.query(
+            'SELECT app_name, is_free_trial, expiration_date FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC LIMIT 5',
+            [userId]
+        );
+        
+        // Build real-time context for Gemini
+        const brainUpdate = {
+            timestamp: new Date().toISOString(),
+            user: userRes.rows[0] ? {
+                id: userId,
+                registeredDays: Math.floor((new Date() - new Date(userRes.rows[0].created_at)) / (1000 * 60 * 60 * 24)),
+                lastActive: userRes.rows[0].last_used
+            } : null,
+            bots: botsRes.rows.map(b => ({
+                name: b.bot_name,
+                status: b.status,
+                createdDays: Math.floor((new Date() - new Date(b.created_at)) / (1000 * 60 * 60 * 24))
+            })),
+            deployments: deployRes.rows.map(d => ({
+                name: d.app_name,
+                isTrial: d.is_free_trial,
+                expiresIn: d.expiration_date ? Math.floor((new Date(d.expiration_date) - new Date()) / (1000 * 60 * 60 * 24)) : 'expired'
+            })),
+            systemStatus: {
+                maintenanceMode: isMaintenanceMode,
+                currentTime: new Date().toLocaleString(),
+                freeTrialActive: deployRes.rows.some(d => d.is_free_trial && new Date(d.expiration_date) > new Date())
+            }
+        };
+        
+        console.log('[Gemini Brain] Updated with latest state:', brainUpdate);
+        return brainUpdate;
+    } catch (err) {
+        console.error('[Gemini Brain Update Error]', err);
+        return null;
     }
 }
 
@@ -7806,87 +7866,113 @@ bot.on('message', async msg => {
             console.log("[MiniApp] Data received from Mini App:", data);
             console.log("[MiniApp] User state:", userStates[cid]);
 
-            // Check if this was a free trial verification
             const userState = userStates[cid];
+            
+            // NEW PATTERN: Use callback_data to trigger bot response instead of web_app_data handler
             if (userState && userState.step === 'AWAITING_MINI_APP_VERIFICATION') {
-                console.log(`[MiniApp] Processing free trial verification for user ${cid}`);
-                
-                // Delete the mini app message first
-                if (userState.miniAppMessageId) {
-                    try {
-                        await bot.deleteMessage(cid, userState.miniAppMessageId);
-                        console.log(`[MiniApp] Deleted mini app message ${userState.miniAppMessageId} for user ${cid}`);
-                    } catch (delErr) {
-                        console.warn(`[MiniApp] Could not delete message ${userState.miniAppMessageId}:`, delErr.message);
-                    }
-                }
-
-                // This is part of the free trial flow
                 if (data.status === 'verified') {
-                    console.log(`[MiniApp] ✅ User ${cid} passed free trial verification with location/IP check`);
+                    console.log(`[MiniApp] User ${cid} passed verification - marking in DB and sending callback`);
                     
-                    // Update user state to reflect successful verification
-                    userStates[cid] = { step: 'FREE_TRIAL_VERIFIED', data: { verifiedAt: new Date() } };
+                    // Mark verification as complete in database
+                    try {
+                        await pool.query(
+                            'UPDATE pre_verified_users SET verified_at = NOW() WHERE user_id = $1',
+                            [cid]
+                        );
+                    } catch (dbErr) {
+                        console.warn('[MiniApp] DB update error:', dbErr.message);
+                    }
                     
-                    console.log(`[MiniApp] Sending channel join prompt to user ${cid}`);
-                    await bot.sendMessage(cid, "*Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click the button below to proceed.", {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                                [{ text: 'I have joined, Proceed!', callback_data: 'verify_join_after_miniapp' }]
-                            ]
+                    // Update state for callback processing
+                    userStates[cid] = { step: 'FREE_TRIAL_VERIFIED', data: { verifiedAt: new Date(), miniAppMessageId: userState.miniAppMessageId } };
+                    
+                    // Delete mini app message
+                    if (userState.miniAppMessageId) {
+                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
+                            console.warn(`[MiniApp] Could not delete message:`, e.message)
+                        );
+                    }
+                    
+                    // Send verification success with callback button that triggers next step
+                    await bot.sendMessage(cid, 
+                        "*Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click below to proceed.",
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: 'Join Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                                    [{ text: 'I have joined - Proceed!', callback_data: 'verify_join_after_miniapp' }]
+                                ]
+                            }
                         }
-                    });
+                    );
+                    
+                    console.log(`[MiniApp] Callback setup complete for user ${cid}`);
                 } else {
                     // Verification failed
                     const reason = data.reason || data.error || "An unknown issue occurred.";
-                    console.warn(`[MiniApp] ❌ User ${cid} failed free trial verification: ${reason}`);
+                    console.warn(`[MiniApp] User ${cid} failed verification: ${reason}`);
                     
-                    // Clear the state
+                    // Delete mini app message
+                    if (userState.miniAppMessageId) {
+                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
+                            console.warn(`[MiniApp] Could not delete message:`, e.message)
+                        );
+                    }
+                    
                     delete userStates[cid];
                     
+                    // Send error and retry button
                     await bot.sendMessage(cid, 
-                        `*Your verification could not be completed.*\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
-                        { parse_mode: 'Markdown' }
+                        `*Verification failed*\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support.`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: 'Try Again', callback_data: 'free_trial_start' }],
+                                    [{ text: 'Contact Support', url: `https://t.me/${SUPPORT_USERNAME}` }]
+                                ]
+                            }
+                        }
                     );
                 }
-            } else if (data.status === 'verified') {
-                console.log(`[MiniApp] Processing regular (non-trial) verification for user ${cid}`);
-                
-                // Delete the mini app message if it exists
-                if (userState && userState.miniAppMessageId) {
-                    try {
-                        await bot.deleteMessage(cid, userState.miniAppMessageId);
-                        console.log(`[MiniApp] Deleted mini app message ${userState.miniAppMessageId}`);
-                    } catch (delErr) {
-                        console.warn(`[MiniApp] Could not delete message:`, delErr.message);
-                    }
-                }
-                
-                // Regular mini app verification (non-free-trial)
-                await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to proceed.", {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Proceed!', callback_data: 'verify_join_after_miniapp' }]
-                        ]
-                    }
-                });
             } else {
-                const reason = data.reason || data.error || "An unknown issue occurred.";
-                console.log(`[MiniApp] Sending error message to user ${cid}: ${reason}`);
-                await bot.sendMessage(cid, 
-                    `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
-                    { parse_mode: 'Markdown' }
-                );
+                // Non-free-trial verification - still use callback pattern
+                if (data.status === 'verified') {
+                    console.log(`[MiniApp] Regular verification passed for user ${cid}`);
+                    
+                    if (userState && userState.miniAppMessageId) {
+                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
+                            console.warn(`[MiniApp] Could not delete message:`, e.message)
+                        );
+                    }
+                    
+                    // Update state and show callback button
+                    userStates[cid] = { step: 'VERIFICATION_COMPLETE' };
+                    
+                    await bot.sendMessage(cid, 
+                        "*Security check passed!*\n\n**Next step:** Join our channel and continue.",
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: 'Join Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                                    [{ text: 'I have joined', callback_data: 'verify_join_after_miniapp' }]
+                                ]
+                            }
+                        }
+                    );
+                }
             }
         } catch (err) {
             console.error("[MiniApp] Failed to parse web_app_data:", err.message);
-            await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
+            await bot.sendMessage(cid, "An error occurred during verification. Please try again.", {
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Retry', callback_data: 'free_trial_start' }]]
+                }
+            });
         }
-        return; // Stop processing after handling Mini App data
+        return; // Stop processing - callback will handle next steps
     }
 
     // --- Step 3: Handle Regular Text-Based Commands ---
