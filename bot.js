@@ -8523,7 +8523,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
 
     if (isFreeTrial) {
         // --- THIS IS THE FREE TRIAL FLOW ---
-        // It correctly skips the email verification.
+        // STEP 1: Check if user can use free trial (cooldown)
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
             const formattedDate = check.cooldown.toLocaleString('en-US', {
@@ -8540,38 +8540,29 @@ if (text === 'Deploy' || text === 'Free Trial') {
             });
         }
 
-        try { 
-            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
-            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-            if (isMember) {
-                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
-                await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [ // Row 1
-                                { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
-                                { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
-                            ],
-                            [ // Row 2
-                                { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
-                            ]
-                        ]
-                    }
-                });
-            } else {
-                await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
-                        ]
-                    }
-                });
+        try {
+            // STEP 2: REQUIRE MINI APP VERIFICATION FIRST (IP + Location collection)
+            // Check if the APP_URL is configured
+            if (!process.env.APP_URL) {
+                console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
+                return bot.sendMessage(cid, "Error: The verification service is currently unavailable. Please try again later.");
             }
+
+            // Set the state to indicate we're waiting for mini app verification
+            userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
+            const verificationUrl = `${process.env.APP_URL}/verify`;
+
+            // Show the security check button
+            await bot.sendMessage(cid, "🔒 *Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
+                    ]
+                }
+            });
         } catch (error) { 
-            console.error("Error in free trial initial check:", error.message);
+            console.error("Error in free trial verification flow:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
         }
         return;
