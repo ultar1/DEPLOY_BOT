@@ -1054,7 +1054,8 @@ async function handleFallbackWithGemini(chatId, userMessage) {
     
     try {
         // DYNAMIC BRAIN UPDATE: Refresh Gemini with latest user/bot state
-        const brainContext = await updateGeminiBrain(chatId);
+        // Temporarily disabled to avoid database errors - will be re-enabled once all tables are verified
+        const brainContext = null; // await updateGeminiBrain(chatId);
         const contextPrompt = brainContext ? `\n[Real-time System State: ${JSON.stringify(brainContext)}]` : '';
         const fullPrompt = professionalPrompt + contextPrompt;
         
