@@ -91,6 +91,12 @@
                 if (!geoResponse.ok) throw new Error('Could not check location.');
                 const geoData = await geoResponse.json();
 
+                // Block India and Pakistan
+                const blockedCountries = ['IN', 'PK'];
+                if (blockedCountries.includes(geoData.country_code)) {
+                    throw new Error("Sorry, the free trial is not available in your country.");
+                }
+
                 if (geoData.country_code !== 'NG') {
                     throw new Error("Sorry, the free trial is only available in Nigeria.");
                 }

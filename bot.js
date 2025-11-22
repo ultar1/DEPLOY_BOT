@@ -7638,6 +7638,16 @@ bot.on('message', async msg => {
             // Check if this was a free trial verification
             const userState = userStates[cid];
             if (userState && userState.step === 'AWAITING_MINI_APP_VERIFICATION') {
+                // Delete the mini app message first
+                if (userState.miniAppMessageId) {
+                    try {
+                        await bot.deleteMessage(cid, userState.miniAppMessageId);
+                        console.log(`[MiniApp] Deleted mini app message ${userState.miniAppMessageId} for user ${cid}`);
+                    } catch (delErr) {
+                        console.warn(`[MiniApp] Could not delete message ${userState.miniAppMessageId}:`, delErr.message);
+                    }
+                }
+
                 // This is part of the free trial flow
                 if (data.status === 'verified') {
                     console.log(`[MiniApp] User ${cid} passed free trial verification with location/IP check`);
@@ -8554,8 +8564,8 @@ if (text === 'Deploy' || text === 'Free Trial') {
             userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
             const verificationUrl = `${process.env.APP_URL}/verify`;
 
-            // Show the security check button
-            await bot.sendMessage(cid, "*Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
+            // Show the security check button and track the message ID
+            const miniAppMessage = await bot.sendMessage(cid, "*Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
@@ -8563,6 +8573,9 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     ]
                 }
             });
+            
+            // Store the message ID so we can delete it later when verification is done
+            userStates[cid].miniAppMessageId = miniAppMessage.message_id;
         } catch (error) { 
             console.error("Error in free trial verification flow:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
