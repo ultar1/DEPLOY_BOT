@@ -3012,10 +3012,18 @@ async function handleRestartAllConfirm(query) {
                     throw new Error("HEROKU_API_KEY not set in environment");
                 }
 
-                const headers = { 'Authorization': `Bearer ${HEROKU_API_KEY}` };
-                
-                // Trigger a restart by building the app
-                await herokuApi.post(`/apps/${appName}/builds`, {}, { headers });
+                // Use axios directly with proper Heroku API headers
+                // Trigger a restart by restarting all dynos (web dyno)
+                await axios.post(`https://api.heroku.com/apps/${appName}/dynos/web/restart`, 
+                    {},
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                            'Accept': 'application/vnd.heroku+json; version=3',
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
                 
                 progressLog.push(`**(${index + 1}/${bots.rows.length})** \`${appName}\`... ✅ *Restarted*`);
                 successCount++;
