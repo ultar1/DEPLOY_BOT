@@ -4913,10 +4913,13 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) return res.status(200).end();
             
+            // Convert amount from NGN to Kobo (multiply by 100) for consistent storage
+            const amountInKobo = amount * 100;
+            
             // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
+                [reference, userId, customer.email || pendingPayment.rows[0].email, amountInKobo]
             );
 
             // ❗️ FIX: Use the correct variables that are available in this scope.
