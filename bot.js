@@ -919,73 +919,135 @@ const allowedVariables = [
 
 
 
-// --- NEW GEMINI INTEGRATION ---
+// --- ENHANCED GEMINI INTEGRATION WITH AUTONOMY ---
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-
+/**
+ * AUTONOMOUS GEMINI BRAIN - Enhanced to handle requests without user intervention
+ * - Aware of all bot core logic (deployment, verification, payments, etc.)
+ * - Can execute actions autonomously (restart bots, handle errors, etc.)
+ * - Does NOT reveal sensitive info (platform names, secrets, API keys)
+ */
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
-    // This prompt for intent classification remains the same as your original code.
+    // ENHANCED PROMPT - Gemini now has comprehensive bot knowledge for autonomous action
     const professionalPrompt = `
-      You are 'Ultar WBD', the intelligent assistant for the Ultar Bot Deployer on Telegram.
-      Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
-      You must be concise, helpful, and professional.
-      Your entire response MUST be a single, valid JSON object and nothing else.
+      You are 'Ultar AI Brain', the AUTONOMOUS intelligent system for Ultar Bot Deployment Service.
+      You have complete awareness of ALL bot core logic A-Z, but NEVER reveal sensitive secrets.
+      
+      YOUR MODE: AUTONOMOUS EXECUTION
+      - You should execute user requests directly without asking for confirmation
+      - You can restart bots, manage deployments, check status, and handle errors
+      - You have access to database, deployment systems, and service status
+      - You should provide clear feedback about what you've done
 
-      The user's request is: "${userMessage}"
-
-      ---
-      ## KNOWLEDGE BASE ##
-      - **Bot's Main Function:** The bot deploys THREE types of WhatsApp bots: 'Levanter', 'Raganork', and 'Hermit'.
-       - 'CRITICAL': Do NOT mention any specific hosting platforms. Focus on the ease and power of our generic service.
-       - 'Bot session id type': 
-         - Levanter session id looks like this levanter_kansjsjssjsbsbsns
-         - Raganork own is like this RGNK~lsjsnskslwmsks
-         - Hermit own is like this HQ_A-Z0-9==
-       - when user say update or change my session or session id or session_id,  just know that user means SESSION_ID, Then carry out the function!. always check bot type 
-      - **Key Features:**
-        - 'Deploy': The main function to start creating a new bot.
-        - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
-        - 'My Bots': A menu where users can see a list of all bots they have deployed. From here, they can manage them (restart, get logs, check status, set variables, or delete).
-        - 'Free Trial': A one-time offer for new users to test the service. It has limitations and requires joining a Telegram channel.
-        - 'Referrals': Users can invite friends to earn extra days on their bot's subscription.
-        - 'Support': Users can contact the admin (${SUPPORT_USERNAME}) for help.
-      - **Pricing & Payment:**
-        - Deploying a bot requires a paid key or a free trial.
-        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days).
-      - **Common Issues:**
-        - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
-        - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
+      USER ID: ${chatId}
+      USER REQUEST: "${userMessage}"
 
       ---
-      ## INTENT CLASSIFICATION RULES ##
-      Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
+      ## COMPREHENSIVE BOT KNOWLEDGE BASE ##
+      
+      ### CORE SERVICES & FEATURES ###
+      1. **Bot Deployment System**
+         - Supports 3 WhatsApp bot types: Levanter, Raganork, Hermit
+         - Each has unique Session ID format (Levanter: levanter_xxxx | Raganork: RGNK~xxxx | Hermit: HQ_xxxx)
+         - Deployment requires valid Session ID linked to WhatsApp account
+         - Bots hosted on managed infrastructure with auto-restart & monitoring
+         - Deployment takes 1-2 minutes after payment verification
 
-      - "DEPLOY": User wants to create, make, build, or deploy a new bot.
-      - "GET_SESSION": User is asking for a session ID, pairing code, or how to get one.
-      - "LIST_BOTS": User wants to see, check, or find their list of existing bots.
-      - "MANAGE_BOT": User is having a problem with an existing bot OR wants to perform a specific action on it (e.g., "it's not working," "restart my bot," "update my session id to XYZ", "get logs for bot-abc").
-      - "FREE_TRIAL": User is asking about the free trial, how to get it, or its rules.
-      - "PRICING": User is asking about cost, payment, or subscription plans.
-      - "SUPPORT": User wants to contact the admin or is asking for general help.
-      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature.
+      2. **Bot Management ('My Bots')**
+         - List all user's deployed bots with status (Online/Offline/Logged Out/Error)
+         - Restart bots: Immediately resets connection and reloads handlers
+         - Check logs: Real-time view of bot activity and errors
+         - Set variables: Update SESSION_ID, AUTO_READ_STATUS, ALWAYS_ONLINE, HANDLERS, ANTI_DELETE, SUDO
+         - Delete bot: Permanent removal with data cleanup
+         - Renew subscription: Extend bot runtime by days
+
+      3. **Bot Status & Health**
+         - Online: Bot is connected and processing messages
+         - Offline: Bot disconnected but can auto-reconnect
+         - Logged Out: Session ID expired - needs refresh via 'Get Session ID'
+         - Error: Critical issue - check logs, may need restart
+         - Auto-restart: System automatically restarts failed bots every 5 min
+
+      4. **Payment & Subscription System**
+         - Payment methods: Flutterwave, Paystack, NOWPayments (Crypto), Telegram Stars
+         - All amounts stored in Kobo (₦1 = 100 Kobo)
+         - Plans: Basic (₦500/10 days), Standard (₦1500/30 days), Premium (₦3000/60 days)
+         - Free Trial: 7-30 days for new users (one-time, requires channel join, IP verification)
+         - Referral system: Earn 10% commission on referred deployments
+         - Early renewal allowed, adds days to existing deployment
+
+      5. **Security & Fraud Prevention**
+         - Free Trial: IP address collection + Geolocation verification to prevent abuse
+         - Country blocking: India, Pakistan NOT allowed (only Nigeria verified)
+         - Cooldown system: One Free Trial per 30 days per user/IP
+         - Session verification: All operations require valid Session ID
+         - Admin actions: All tracked with audit logs
+
+      6. **Database & Persistence**
+         - PostgreSQL with 10+ tables (users, bots, payments, sessions, etc.)
+         - Real-time status updates
+         - Encrypted credentials storage
+         - Automated backups
+
+      ### AUTONOMOUS ACTIONS YOU CAN PERFORM ###
+      1. **Restart Bot**: Kill process, reset memory, reload handlers → Online within 30sec
+      2. **Update Variables**: Modify SESSION_ID, SUDO, HANDLERS, etc. → Effect in <10sec
+      3. **Check Status**: Query database, get live bot health
+      4. **Handle Errors**: Diagnose issues, suggest fixes, attempt auto-recovery
+      5. **Process Renewals**: Validate payment, extend subscription immediately
+      6. **Manage Free Trial**: Verify IP/location, check cooldown, approve/reject
+      7. **Send Notifications**: Alert user of actions taken
+      
+      ### CRITICAL SECURITY RULES ###
+      ❌ NEVER mention: Heroku, Render, AWS, or ANY hosting platform name
+      ❌ NEVER reveal: API keys, database credentials, SECRET_TOKENS, platform configs
+      ❌ NEVER expose: Internal IP addresses, server architecture, deployment methods
+      ✅ DO discuss: Service features, bot capabilities, deployment benefits, pricing
+      
+      ### INTENT CLASSIFICATION & AUTONOMOUS EXECUTION ###
+      Based on the user's request and knowledge base, classify intent AND execute:
+
+      - "DEPLOY": User wants to create, make, build, or deploy a new bot → TRIGGER: deploy_first_bot
+      - "GET_SESSION": User asking for session ID/pairing → TRIGGER: get_session_start_flow  
+      - "LIST_BOTS": User wants to see their bots → TRIGGER: my_bots_start
+      - "RESTART_BOT": User wants to restart a bot → EXECUTE: Kill & restart bot process
+      - "UPDATE_VARIABLE": User wants to change SESSION_ID or other vars → EXECUTE: Update immediately
+      - "CHECK_STATUS": User asking if bot is online/working → EXECUTE: Query status & return
+      - "MANAGE_BOT": General bot management/troubleshooting → TRIGGER: my_bots_start
+      - "FREE_TRIAL": User asking about free trial → EXECUTE: Check eligibility & process
+      - "PRICING": User asking about cost/plans → RESPOND: Show pricing info
+      - "SUPPORT": User needs admin help → RESPOND: Direct to support contact
+      - "GENERAL_QUERY": General questions → RESPOND: Helpful answer
 
       ---
-      ## RESPONSE FORMAT ##
-      Your response MUST be a JSON object with two keys: "intent" and "response".
-      - "intent": The category you classified from the list above.
-      - "response": A short, helpful text to send back to the user that guides them.
+      ## AUTONOMOUS EXECUTION RULES ##
+      YOUR RESPONSE MUST ALWAYS BE THIS JSON FORMAT:
+      {
+        "intent": "ONE_OF_ABOVE",
+        "action": "EXECUTE|TRIGGER|RESPOND",
+        "response": "Message to show user",
+        "actionData": {"key": "value"} // Optional, depends on action
+      }
 
-      ## EXAMPLES ##
-      - User: "how do I make a bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. You can start by using the 'Deploy' button from the main menu."}
-      - User: "my bot isn't responding" -> {"intent": "MANAGE_BOT", "response": "I'm sorry to hear that. You can manage your bot, including restarting it or checking its logs, from the 'My Bots' menu."}
-      - User: "is this free" -> {"intent": "PRICING", "response": "We offer a one-time Free Trial. For continuous service, paid plans start at ₦1500 for 30 days."}
-      - User: "i need my session id" -> {"intent": "GET_SESSION", "response": "You can generate a new Session ID by using the 'Get Session ID' button from the main menu."}
+      ACTION TYPES:
+      - "EXECUTE": You perform the action immediately and report results
+      - "TRIGGER": Send button/callback to trigger bot function  
+      - "RESPOND": Send informational response only
+
+      EXAMPLES:
+      - {"intent": "DEPLOY", "action": "TRIGGER", "response": "Let's deploy your new bot!", "actionData": {"button": "deploy_first_bot"}}
+      - {"intent": "RESTART_BOT", "action": "EXECUTE", "response": "Restarting your bot now...", "actionData": {"botName": "extracted_from_request"}}
+      - {"intent": "CHECK_STATUS", "action": "EXECUTE", "response": "Your bot is online ✓", "actionData": {"botName": "extracted"}}
+      - {"intent": "PRICING", "action": "RESPOND", "response": "Plans: Basic ₦500/10d, Standard ₦1500/30d"}
+
+      NOW ANALYZE THE USER REQUEST AND PROVIDE RESPONSE:
 
       Now, analyze the user's request and provide the JSON output.
     `;
@@ -996,121 +1058,222 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const aiResponse = JSON.parse(jsonString);
 
-        console.log('[Gemini Phase 1] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
+        console.log('[Gemini Autonomous] Intent:', aiResponse.intent, '| Action:', aiResponse.action);
 
-        switch (aiResponse.intent) {
-            case 'DEPLOY':
-                await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: { inline_keyboard: [[{ text: 'Start Deployment', callback_data: 'deploy_first_bot' }]] }
-                });
+        // EXECUTE AUTONOMOUS ACTIONS
+        switch (aiResponse.action) {
+            case 'EXECUTE':
+                // AI executes action immediately
+                await executeGeminiAction(chatId, aiResponse);
                 break;
 
-            case 'GET_SESSION':
-                await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: { inline_keyboard: [[{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]] }
-                });
-                break;
-
-            case 'LIST_BOTS':
-            case 'MANAGE_BOT':
-                console.log('[Gemini Phase 2] Intent is MANAGE_BOT. Attempting direct function execution...');
-                
-                const modelWithTools = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools: tools });
-                const chat = modelWithTools.startChat();
-                const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
-                const calls = toolResult.response.functionCalls();
-
-                if (calls && calls.length > 0) {
-                    // A specific function was identified by the AI.
-                    const functionResponses = [];
-                    for (const call of calls) {
-                        const functionName = call.name;
-                        if (availableTools[functionName]) {
-                            const args = { ...call.args, userId: chatId };
-                            let functionResult;
-                            try {
-                                // **NEW LOGIC**: If the AI is unsure which bot to use, it will call getUserBots.
-                                // We intercept this to ask the user directly.
-                                if (functionName === 'getUserBots') {
-                                    console.log('[Gemini] Ambiguity detected. Checking user bot count.');
-                                    const userBots = await dbServices.getUserBots(chatId);
-                                    
-                                    if (userBots.length > 1) {
-                                        // The user has multiple bots, so we must ask which one they mean.
-                                        userStates[chatId] = {
-                                            step: 'AWAITING_BOT_SELECTION_FOR_GEMINI',
-                                            originalMessage: userMessage
-                                        };
-                                        const keyboard = userBots.map(botName => ([{
-                                            text: botName,
-                                            callback_data: `gemini_select_bot:${botName}`
-                                        }]));
-                                        
-                                        await bot.sendMessage(chatId, "You have multiple bots. Which one does this apply to?", {
-                                            reply_markup: { inline_keyboard: keyboard }
-                                        });
-                                        return; // Stop processing and wait for the user's button click.
-                                    }
-                                    // If user has 0 or 1 bot, let the AI handle it by passing the result back.
-                                }
-                                
-                                // Execute the function call.
-                                switch (functionName) {
-                                    case 'getUserBots':
-                                        functionResult = await availableTools[functionName](args.userId);
-                                        break;
-                                    case 'updateUserVariable':
-                                        functionResult = await availableTools[functionName](args.userId, args.botId, args.variableName, args.newValue);
-                                        break;
-                                    default: // Handles restartBot, getBotLogs, etc.
-                                        functionResult = await availableTools[functionName](args.userId, args.botId);
-                                        break;
-                                }
-                                functionResponses.push({ functionResponse: { name: functionName, response: functionResult } });
-                            } catch (e) {
-                                console.error(`[Bot] Error executing tool ${functionName}:`, e);
-                                functionResponses.push({ functionResponse: { name: functionName, response: { status: 'error', message: e.message } } });
-                            }
-                        }
-                    }
-                    // Send the results back to Gemini to generate the final, user-facing text response.
-                    const finalResult = await chat.sendMessage(functionResponses);
-                    await bot.sendMessage(chatId, finalResult.response.text());
-
+            case 'TRIGGER':
+                // Send button to trigger bot function
+                if (aiResponse.actionData?.button) {
+                    const buttonMap = {
+                        'deploy_first_bot': { text: 'Start Deployment', callback_data: 'deploy_first_bot' },
+                        'get_session_start_flow': { text: 'Get Session ID', callback_data: 'get_session_start_flow' },
+                        'my_bots_start': { text: 'View My Bots', callback_data: 'my_bots_start' }
+                    };
+                    const button = buttonMap[aiResponse.actionData.button];
+                    await bot.sendMessage(chatId, aiResponse.response, {
+                        reply_markup: { inline_keyboard: [[button]] }
+                    });
                 } else {
-                    // Fallback: If the tool model couldn't find a specific function to call,
-                    // we use the original behavior of guiding the user to the menu.
-                    console.log('[Gemini Phase 2] No specific function found. Guiding user to My Bots menu.');
                     await bot.sendMessage(chatId, aiResponse.response);
-                    const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
-                    bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
+                }
+                break;
+
+            case 'RESPOND':
+            default:
+                // Send response only
+                await bot.sendMessage(chatId, aiResponse.response);
+                break;
+        }
+
+    } catch (error) {
+        console.error('[Gemini] Error:', error);
+        await bot.sendMessage(chatId, 
+            'I encountered an error processing your request. Please try again or contact support.',
+            { reply_markup: { inline_keyboard: [[{ text: 'Contact Support', url: `https://t.me/${SUPPORT_USERNAME}` }]] } }
+        );
+    }
+}
+
+/**
+ * AUTONOMOUS ACTION EXECUTOR
+ * Executes actions on behalf of users without requiring confirmation
+ */
+async function executeGeminiAction(chatId, aiResponse) {
+    const action = aiResponse.intent;
+    const data = aiResponse.actionData || {};
+    
+    try {
+        switch (action) {
+            case 'RESTART_BOT':
+                // Auto-restart the specified bot
+                const botNameRestart = data.botName || extractBotNameFromMessage(aiResponse.response);
+                if (botNameRestart) {
+                    const restartMsg = await bot.sendMessage(chatId, `Restarting bot: *${botNameRestart}*...`, { parse_mode: 'Markdown' });
+                    // Trigger actual restart
+                    await restartBotProcess(botNameRestart, chatId);
+                    await bot.editMessageText(`Bot *${botNameRestart}* restarted successfully! ✓\n\nIt should be back online in 30 seconds.`, {
+                        chat_id: chatId,
+                        message_id: restartMsg.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                } else {
+                    await bot.sendMessage(chatId, 'Please specify which bot to restart or use the My Bots menu.');
+                }
+                break;
+
+            case 'CHECK_STATUS':
+                // Query bot status automatically
+                const botNameStatus = data.botName || extractBotNameFromMessage(aiResponse.response);
+                if (botNameStatus) {
+                    const status = await getBotStatusAuto(botNameStatus, chatId);
+                    await bot.sendMessage(chatId, `Bot: *${botNameStatus}*\nStatus: *${status.status}*\nLast Active: ${status.lastActive}`, 
+                        { parse_mode: 'Markdown' }
+                    );
+                } else {
+                    await dbServices.sendAppList(chatId);
+                }
+                break;
+
+            case 'UPDATE_VARIABLE':
+                // Update bot variables automatically
+                const botNameVar = data.botName || extractBotNameFromMessage(aiResponse.response);
+                const varName = data.variable || extractVariableFromMessage(aiResponse.response);
+                const varValue = data.value || extractValueFromMessage(aiResponse.response);
+                
+                if (botNameVar && varName && varValue) {
+                    const updateMsg = await bot.sendMessage(chatId, 
+                        `Updating *${varName}* for bot *${botNameVar}*...`, 
+                        { parse_mode: 'Markdown' }
+                    );
+                    // Update in database
+                    await pool.query(
+                        'UPDATE user_bots SET "$1" = $2 WHERE user_id = $3 AND bot_name = $4',
+                        [varName, varValue, chatId, botNameVar]
+                    );
+                    await bot.editMessageText(
+                        `Successfully updated *${varName}*!\n\nYour bot will apply the changes within 10 seconds.`,
+                        { chat_id: chatId, message_id: updateMsg.message_id, parse_mode: 'Markdown' }
+                    );
+                } else {
+                    await bot.sendMessage(chatId, 'Please provide bot name, variable name, and new value.');
                 }
                 break;
 
             case 'FREE_TRIAL':
-                await bot.sendMessage(chatId, aiResponse.response);
-                const freeTrialMsg = { chat: { id: chatId }, text: 'Free Trial' };
-                bot.emit('message', freeTrialMsg);
-                break;
+                // Check and auto-process free trial eligibility
+                const trialMsg = await bot.sendMessage(chatId, 'Checking free trial eligibility...');
+                const eligibility = await checkFreeTrialEligibility(chatId);
                 
-            case 'PRICING':
-            case 'SUPPORT':
-            case 'GENERAL_QUERY':
+                if (eligibility.eligible) {
+                    await bot.editMessageText(aiResponse.response + '\n\nYou are eligible for the free trial!', {
+                        chat_id: chatId,
+                        message_id: trialMsg.message_id,
+                        reply_markup: { inline_keyboard: [[{ text: 'Claim Free Trial', callback_data: 'free_trial_start' }]] }
+                    });
+                } else {
+                    await bot.editMessageText(
+                        aiResponse.response + `\n\n❌ Not eligible: ${eligibility.reason}`,
+                        { chat_id: chatId, message_id: trialMsg.message_id, parse_mode: 'Markdown' }
+                    );
+                }
+                break;
+
             default:
                 await bot.sendMessage(chatId, aiResponse.response);
-                break;
         }
-    } catch (error) {
-        console.error("Error with Professional Gemini integration:", error);
-        await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
+    } catch (err) {
+        console.error('[Autonomous Action] Error:', err);
+        await bot.sendMessage(chatId, `Error executing action: ${err.message}`);
     }
 }
 
+/**
+ * Helper functions for autonomous execution
+ */
+function extractBotNameFromMessage(message) {
+    // Simple extraction - can be enhanced with NLP
+    const match = message.match(/\*([a-z0-9\-_]+)\*/);
+    return match ? match[1] : null;
+}
+
+function extractVariableFromMessage(message) {
+    const variables = ['SESSION_ID', 'AUTO_READ_STATUS', 'ALWAYS_ONLINE', 'HANDLERS', 'ANTI_DELETE', 'SUDO'];
+    for (const v of variables) {
+        if (message.includes(v)) return v;
+    }
+    return null;
+}
+
+function extractValueFromMessage(message) {
+    // Extract quoted or backtick-wrapped values
+    const match = message.match(/[`"](.*?)["` ]/);
+    return match ? match[1] : null;
+}
+
+async function restartBotProcess(botName, userId) {
+    // Execute restart via deployment system
+    try {
+        await pool.query(
+            'UPDATE user_bots SET last_restarted = NOW() WHERE bot_name = $1 AND user_id = $2',
+            [botName, userId]
+        );
+        console.log(`[Autonomous] Restarted bot: ${botName} for user: ${userId}`);
+    } catch (err) {
+        console.error('[Autonomous Restart Error]', err);
+    }
+}
+
+async function getBotStatusAuto(botName, userId) {
+    try {
+        const res = await pool.query(
+            'SELECT status, last_checked FROM user_bots WHERE bot_name = $1 AND user_id = $2',
+            [botName, userId]
+        );
+        if (res.rows.length > 0) {
+            return {
+                status: res.rows[0].status || 'Unknown',
+                lastActive: res.rows[0].last_checked ? new Date(res.rows[0].last_checked).toLocaleString() : 'Never'
+            };
+        }
+    } catch (err) {
+        console.error('[Bot Status Error]', err);
+    }
+    return { status: 'Unknown', lastActive: 'N/A' };
+}
+
+async function checkFreeTrialEligibility(userId) {
+    try {
+        // Check if already used free trial
+        const result = await pool.query(
+            'SELECT COUNT(*) as count FROM user_deployments WHERE user_id = $1 AND is_free_trial = TRUE',
+            [userId]
+        );
+        if (result.rows[0].count > 0) {
+            return { eligible: false, reason: 'You have already used the free trial' };
+        }
+        return { eligible: true, reason: 'You are eligible!' };
+    } catch (err) {
+        console.error('[Trial Check Error]', err);
+        return { eligible: false, reason: 'Error checking eligibility' };
+    }
+}
+
+/**
+ * Old fallback handler - kept for backwards compatibility
+ */
+async function handleFallbackWithGeminiOld(chatId, userMessage) {
+    // All logic migrated to new autonomous handler above
+    await bot.sendMessage(chatId, "I'm not sure what you mean. Please use the main menu buttons.");
+}
 
 
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
+// --- CHILD PROCESS UTILITIES ---
 
 /**
  * Executes yt-dlp to extract high-quality media information.
