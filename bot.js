@@ -2921,6 +2921,139 @@ async function handleRestoreAllConfirm(query) {
 
 
 
+// NEW: Handler for /restartall - Show confirmation and bots to restart
+async function handleRestartAllSelection(query) {
+    const chatId = query.message.chat.id;
+    const botType = query.data.split(':')[1];
+    
+    await bot.editMessageText(`Fetching list of ${botType} bots to restart...`, {
+        chat_id: chatId,
+        message_id: query.message.message_id
+    });
+
+    try {
+        const bots = await pool.query(
+            'SELECT bot_name, user_id FROM user_bots WHERE bot_type = $1 ORDER BY bot_name',
+            [botType]
+        );
+        
+        if (bots.rows.length === 0) {
+            await bot.editMessageText(`No ${botType} bots found to restart.`, {
+                chat_id: chatId,
+                message_id: query.message.message_id
+            });
+            return;
+        }
+
+        let listMessage = `Found *${bots.rows.length}* ${botType} bot(s) ready to restart:\n\n`;
+        bots.rows.forEach(bot => {
+            listMessage += `• \`${bot.bot_name}\` (Owner: \`${bot.user_id}\`)\n`;
+        });
+        listMessage += `\nThis will trigger a restart/redeployment for each bot.\n\n*Do you want to proceed?*`;
+
+        await bot.editMessageText(listMessage, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Proceed", callback_data: `restart_all_confirm:${botType}` },
+                        { text: "Cancel", callback_data: 'restart_all_cancel' }
+                    ]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error(`[RestartAll] Error fetching bots:`, error);
+        await bot.editMessageText(`Error: ${escapeMarkdown(error.message)}`, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+}
+
+// NEW: Handler for /restartall - Execute restart for all selected bot type
+async function handleRestartAllConfirm(query) {
+    const adminId = query.message.chat.id;
+    const botType = query.data.split(':')[1];
+    
+    let progressMsg = await bot.editMessageText(`**Starting Full Restart: ${botType.toUpperCase()}**\n\nThis will restart each bot using Heroku/Render.`, {
+        chat_id: adminId, message_id: query.message.message_id, parse_mode: 'Markdown'
+    }).catch(() => bot.sendMessage(adminId, "**Starting Full Restart...**", { parse_mode: 'Markdown' }));
+
+    try {
+        const bots = await pool.query(
+            'SELECT bot_name, user_id FROM user_bots WHERE bot_type = $1 ORDER BY bot_name',
+            [botType]
+        );
+        
+        let successCount = 0;
+        let failureCount = 0;
+        let progressLog = [`*Starting restart for ${bots.rows.length} ${botType} bots...*\n`];
+
+        for (const [index, botInfo] of bots.rows.entries()) {
+            const appName = botInfo.bot_name;
+            const ownerId = botInfo.user_id;
+            
+            // Update progress
+            const currentTask = `**(${index + 1}/${bots.rows.length})** Restarting \`${appName}\`... ⏳`;
+            await bot.editMessageText(progressLog.join('\n') + "\n" + currentTask, { 
+                chat_id: adminId, 
+                message_id: progressMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }).catch(()=>{});
+            
+            try {
+                // Try to restart using Heroku API
+                const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
+                if (!HEROKU_API_KEY) {
+                    throw new Error("HEROKU_API_KEY not set in environment");
+                }
+
+                const headers = { 'Authorization': `Bearer ${HEROKU_API_KEY}` };
+                
+                // Trigger a restart by building the app
+                await herokuApi.post(`/apps/${appName}/builds`, {}, { headers });
+                
+                progressLog.push(`**(${index + 1}/${bots.rows.length})** \`${appName}\`... ✅ *Restarted*`);
+                successCount++;
+                
+                // 30-second delay between restarts to avoid rate limiting
+                if (index < bots.rows.length - 1) {
+                    progressLog.push(`_Waiting 30 seconds before next restart..._`);
+                    await bot.editMessageText(progressLog.join('\n'), { 
+                        chat_id: adminId, 
+                        message_id: progressMsg.message_id, 
+                        parse_mode: 'Markdown' 
+                    }).catch(()=>{});
+                    await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
+                }
+
+            } catch (error) {
+                failureCount++;
+                const errorMsg = error.message || error.response?.data?.message || 'Unknown error';
+                console.error(`[RestartAll] Error restarting ${appName}:`, errorMsg);
+                progressLog.push(`**(${index + 1}/${bots.rows.length})** \`${appName}\`... ❌ *Failed*: ${String(errorMsg).substring(0, 80)}...`);
+            }
+        }
+        
+        // Final summary
+        await bot.editMessageText(
+            `**Bot Restart Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.join('\n')}`, 
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error(`[RestartAll] CRITICAL ERROR:`, error);
+        await bot.editMessageText(
+            `**Restart Failed!**\n\n*Reason:* ${escapeMarkdown(error.message)}`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+}
+
 
 async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
     try {
@@ -7808,6 +7941,24 @@ bot.onText(/^\/restoreall$/, async (msg) => {
                 [
                     { text: 'Levanter', callback_data: 'restore_all_bots:levanter' },
                     { text: 'Raganork', callback_data: 'restore_all_bots:raganork' }
+                ]
+            ]
+        }
+    });
+});
+
+
+// NEW COMMAND: /restartall - Restart all bots of a selected type
+bot.onText(/^\/restartall$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    await bot.sendMessage(cid, "Please select the bot type you wish to restart:", {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Levanter', callback_data: 'restart_all_bots:levanter' },
+                    { text: 'Raganork', callback_data: 'restart_all_bots:raganork' }
                 ]
             ]
         }
@@ -13568,6 +13719,23 @@ if (action === 'confirmdelete') {
   }
   if (action === 'restore_all_cancel') {
       await bot.editMessageText('Restore cancelled.', {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+      });
+      return;
+  }
+
+  // NEW: Handle restart all bots
+  if (action === 'restart_all_bots') {
+      handleRestartAllSelection(q); // This shows confirmation and starts restart
+      return;
+  }
+  if (action === 'restart_all_confirm') {
+      handleRestartAllConfirm(q); // This executes the restart
+      return;
+  }
+  if (action === 'restart_all_cancel') {
+      await bot.editMessageText('Restart cancelled.', {
           chat_id: q.message.chat.id,
           message_id: q.message.message_id
       });
