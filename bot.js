@@ -203,6 +203,56 @@ cron.schedule('59 23 * * *', () => {
     timezone: "Africa/Lagos"
 });
 
+// --- AWS SELF-HOSTED DB MONITORING (Every 1 minute) ---
+let dbServerOfflineNotified = false;
+let lastDbStatusCheck = null;
+
+cron.schedule('*/1 * * * *', async () => {
+    try {
+        lastDbStatusCheck = new Date();
+        const DB_URL = process.env.DATABASE_URLVCF || process.env.DATABASE_URL;
+        
+        if (!DB_URL) {
+            console.warn('[DB Monitor] No database URL found in environment');
+            return;
+        }
+
+        // Test connection by running a simple query
+        const testPool = new Pool({ connectionString: DB_URL });
+        const client = await testPool.connect();
+        const result = await client.query('SELECT NOW()');
+        client.release();
+        await testPool.end();
+
+        // DB is online
+        if (dbServerOfflineNotified) {
+            console.log('[DB Monitor] AWS Server is back ONLINE');
+            dbServerOfflineNotified = false;
+        }
+    } catch (error) {
+        // DB is offline/unreachable
+        if (!dbServerOfflineNotified) {
+            dbServerOfflineNotified = true;
+            console.error('[DB Monitor] AWS Server is OFFLINE or UNREACHABLE:', error.message);
+            
+            // Notify admin with fix button
+            await bot.sendMessage(
+                ADMIN_ID,
+                `⚠️ Database Server Offline\n\nYour AWS self-hosted database is unreachable. Click "Fix" to automatically restart all bots.`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Fix (Restart All Bots)', callback_data: 'fix_db_restart_all' }]
+                        ]
+                    }
+                }
+            ).catch(err => console.error('[DB Monitor] Failed to send alert:', err));
+        }
+    }
+}, {
+    scheduled: true
+});
+
 // --- REPLACED DATABASE STARTUP BLOCK ---
 
 async function createAllTablesInPool(dbPool, dbName) {
@@ -9734,8 +9784,71 @@ if (action === 'bapp_select_type') {
     await sendBappList(cid, q.message.message_id, botTypeToManage);
 }
 
+// --- AWS DB FIX: Restart all bots ---
+if (action === 'fix_db_restart_all') {
+    if (cid !== ADMIN_ID) {
+        await bot.answerCallbackQuery(q.id, { text: 'Only admin can use this action', showAlert: true });
+        return;
+    }
 
-  // In bot.js, inside bot.on('callback_query', async q => { ... })
+    await bot.editMessageText('Fixing database issue... Restarting all bots (Levanter & Raganork)...', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    }).catch(() => {});
+
+    try {
+        const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
+        if (!HEROKU_API_KEY) {
+            throw new Error('HEROKU_API_KEY not configured');
+        }
+
+        // Get all bots
+        const allBots = await dbServices.getAllUserBots();
+        let successCount = 0;
+        let failureCount = 0;
+        const logMessages = [];
+
+        for (const bot_info of allBots) {
+            const appName = bot_info.bot_name;
+            try {
+                // Restart using Heroku API
+                await axios.delete(`https://api.heroku.com/apps/${appName}/dynos/web`, {
+                    headers: {
+                        'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                        'Accept': 'application/vnd.heroku+json; version=3',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                successCount++;
+                logMessages.push(`✓ Restarted: ${appName}`);
+                console.log(`[DB-Fix] Successfully restarted ${appName}`);
+            } catch (error) {
+                failureCount++;
+                logMessages.push(`✗ Failed: ${appName}`);
+                console.error(`[DB-Fix] Failed to restart ${appName}:`, error.message);
+            }
+            // Wait 30 seconds between restarts
+            await new Promise(resolve => setTimeout(resolve, 30000));
+        }
+
+        // Send completion message
+        const summary = `Database Fix Complete\n\nRestarted All Bots:\nSuccess: ${successCount}\nFailed: ${failureCount}\n\n${logMessages.join('\n')}`;
+        await bot.editMessageText(summary, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        }).catch(() => {});
+
+    } catch (error) {
+        console.error('[DB-Fix] Error during restart:', error);
+        await bot.editMessageText(`Error: ${error.message}`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        }).catch(() => {});
+    }
+    return;
+}
+
+// In bot.js, inside bot.on('callback_query', async q => { ... })
 
 if (action === 'editvar_select') {
     const varName = payload;
