@@ -16,6 +16,13 @@
       "required": false,
       "value": "true"
     },
+
+    "NO_LOGS": {
+      "description": "no logs",
+      "required": false,
+       "value": "true"
+    },
+
     "HANDLERS": {
       "description": "Handler path or module",
       "value": "."
