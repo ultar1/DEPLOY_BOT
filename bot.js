@@ -4781,85 +4781,30 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 
 app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
     try {
-        // Telegram user ID (guaranteed by middleware)
         const userId = req.telegramData.id.toString();
+        const country = req.body.country || 'NG';
+        const city = req.body.city || 'Unknown';
+        const ipAddress = req.body.ip_address || req.socket.remoteAddress;
 
-        // Extract location data sent from the Mini App
-        const {
-            ip_address: clientIpAddress,
-            country,
-            city,
-            latitude,
-            longitude
-        } = req.body;
+        console.log(`[Pre-Verify] User ${userId} | IP: ${ipAddress} | City: ${city} | Country: ${country}`);
 
-        // Safely extract server-side IP address (handles proxies / Heroku / Cloudflare)
-        const forwardedFor = req.headers['x-forwarded-for'];
-        const serverIpAddress = forwardedFor 
-            ? forwardedFor.split(',')[0].trim() 
-            : req.socket.remoteAddress;
-
-        // Use client IP if provided, otherwise fallback to server IP
-        const userIpAddress = clientIpAddress || serverIpAddress;
-
-        console.log(`[Pre-Verify] User ${userId} | IP: ${userIpAddress} | City: ${city} | Country: ${country} | Coords: ${latitude},${longitude}`);
-
-        // --- CHECK 0: Block restricted countries (India, Pakistan) ---
-        const blockedCountries = ['IN', 'PK'];
-        if (blockedCountries.includes(country)) {
-            console.warn(`[Pre-Verify] User ${userId} blocked from country: ${country}`);
-            return res.json({ success: false, message: 'Sorry, the free trial is not available in your country.' });
+        // Block India and Pakistan ONLY
+        if (country === 'IN' || country === 'PK') {
+            console.warn(`[Pre-Verify] User ${userId} blocked from: ${country}`);
+            return res.json({ success: false, message: 'Not available in your country.' });
         }
 
-        // --- CHECK 1: Has this user already claimed a final trial? ---
-        const trialUserCheck = await pool.query(
-            "SELECT user_id FROM free_trial_numbers WHERE user_id = $1",
+        // Check if user already used trial
+        const userCheck = await pool.query(
+            'SELECT id FROM free_trial_numbers WHERE user_id = $1',
             [userId]
         );
-        if (trialUserCheck.rows.length > 0) {
-            return res.json({ success: false, message: 'You have already claimed a free trial.' });
+        if (userCheck.rows.length > 0) {
+            return res.json({ success: false, message: 'You already used free trial.' });
         }
 
-        // --- CHECK 2: Has this IP already been used for a trial? ---
-        const trialIpCheck = await pool.query(
-            "SELECT user_id FROM free_trial_numbers WHERE ip_address = $1",
-            [userIpAddress]
-        );
-        if (trialIpCheck.rows.length > 0) {
-            console.warn(`[Pre-Verify] IP ${userIpAddress} already used for trial by user ${trialIpCheck.rows[0].user_id}`);
-            return res.json({ success: false, message: 'This network has already been used for a free trial.' });
-        }
-
-        // --- CHECK 3: Check for location-based abuse (same city/GPS radius) ---
-        // If precise geolocation is available, check for multiple trials from same location
-        if (latitude && longitude) {
-            const locationCheck = await pool.query(
-                `SELECT user_id, latitude, longitude FROM pre_verified_users 
-                 WHERE (latitude IS NOT NULL AND longitude IS NOT NULL)
-                 AND ABS(CAST(latitude AS FLOAT) - $1) < 0.05 
-                 AND ABS(CAST(longitude AS FLOAT) - $2) < 0.05
-                 AND verified_at > NOW() - INTERVAL '30 days'`,
-                [latitude, longitude]
-            );
-            
-            if (locationCheck.rows.length > 2) {
-                console.warn(`[Pre-Verify] Multiple trials from same location. User ${userId} | Coords: ${latitude},${longitude}`);
-                return res.json({ success: false, message: 'Multiple free trial attempts detected from this location. Please try again in 30 days.' });
-            }
-        }
-
-        // ✅ All checks passed! Record the user/IP and location data for future verification
-        await pool.query(
-            `INSERT INTO pre_verified_users (user_id, ip_address, latitude, longitude, city, verified_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             ON CONFLICT (user_id) 
-             DO UPDATE SET ip_address = EXCLUDED.ip_address, latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, city = EXCLUDED.city, verified_at = NOW()`,
-            [userId, userIpAddress, latitude || null, longitude || null, city || null]
-        );
-
-        console.log(`[Pre-Verify] ✅ User ${userId} passed all verification checks. IP: ${userIpAddress} | City: ${city}`);
-        // ✅ Everything passed on the server side
-        return res.json({ success: true, message: "Server checks passed." });
+        console.log(`[Pre-Verify] ✅ User ${userId} verified!`);
+        return res.json({ success: true, message: 'Verified!' });
 
     } catch (error) {
         console.error("Error in /pre-verify-user:", error);

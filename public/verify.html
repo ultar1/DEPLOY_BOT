@@ -86,52 +86,19 @@
             retryButton.style.display = 'none';
 
             try {
-                // 2. Check for Nigeria IP and collect location data
+                // 2. Check country - Block India and Pakistan only
                 const geoResponse = await fetch('https://ipapi.co/json/');
                 if (!geoResponse.ok) throw new Error('Could not check location.');
                 const geoData = await geoResponse.json();
 
+                console.log('[Verify] Country:', geoData.country_code, 'City:', geoData.city);
+
                 // Block India and Pakistan
-                const blockedCountries = ['IN', 'PK'];
-                if (blockedCountries.includes(geoData.country_code)) {
-                    throw new Error("Sorry, the free trial is not available in your country.");
+                if (geoData.country_code === 'IN' || geoData.country_code === 'PK') {
+                    throw new Error('Free trial not available in your country.');
                 }
 
-                if (geoData.country_code !== 'NG') {
-                    throw new Error("Sorry, the free trial is only available in Nigeria.");
-                }
-
-                // 3. Collect precise geolocation using browser Geolocation API
-                let latitude = null;
-                let longitude = null;
-                let precisionLocation = null;
-                
-                try {
-                    precisionLocation = await new Promise((resolve, reject) => {
-                        if (navigator.geolocation) {
-                            navigator.geolocation.getCurrentPosition(
-                                (position) => {
-                                    latitude = position.coords.latitude;
-                                    longitude = position.coords.longitude;
-                                    resolve({ latitude, longitude });
-                                },
-                                (error) => {
-                                    console.warn('Geolocation permission denied or unavailable:', error.message);
-                                    // Continue without precise location
-                                    resolve(null);
-                                },
-                                { timeout: 5000, maximumAge: 0, enableHighAccuracy: true }
-                            );
-                        } else {
-                            console.warn('Geolocation API not available');
-                            resolve(null);
-                        }
-                    });
-                } catch (locError) {
-                    console.warn('Error collecting geolocation:', locError.message);
-                }
-
-                // 4. Verify with your backend (include collected location data)
+                // 3. Verify with backend (simple validation)
                 const serverResponse = await fetch('/pre-verify-user', {
                     method: 'POST',
                     headers: {
@@ -141,35 +108,34 @@
                     body: JSON.stringify({
                         ip_address: geoData.ip,
                         country: geoData.country_code,
-                        city: geoData.city,
-                        latitude: latitude,
-                        longitude: longitude
+                        city: geoData.city
                     })
                 });
                 const serverData = await serverResponse.json();
 
                 if (!serverData.success) {
-                    throw new Error(serverData.message || "You are not eligible for a trial.");
+                    throw new Error(serverData.message || 'You are not eligible.');
                 }
 
-                // 4. SUCCESS: Update UI first, then send data
+                // 4. SUCCESS: Close immediately and send verified status
                 statusIcon.innerHTML = 'SUCCESS';
                 statusTitle.innerText = 'Success!';
-                statusMessage.innerText = 'Verification complete. Closing...';
+                statusMessage.innerText = 'Verified! Closing...';
                 statusMessage.style.color = 'var(--success-color)';
                 hintText.innerText = '';
                 
-                // Wait 1 second for the user to see the success message, then close
+                // Send data THEN close (order matters)
+                console.log('[Verify] Sending verified status to bot...');
+                tg.sendData(JSON.stringify({ status: 'verified' }));
+                
+                // Close after sending data
                 setTimeout(() => {
-                    // This is the VERY LAST STEP. It sends data and closes the app.
-                    console.log('[Verify] Sending verified status and closing mini app...');
-                    tg.sendData(JSON.stringify({ status: 'verified' }));
-                    // Also close the web app explicitly
+                    console.log('[Verify] Closing mini app...');
                     tg.close();
-                }, 1000);
+                }, 500);
 
             } catch (error) {
-                // 5. FAILURE: Show error and retry button
+                // FAILURE: Show error and retry button
                 statusIcon.innerHTML = 'FAILED';
                 statusTitle.innerText = 'Verification Failed';
                 statusMessage.innerText = error.message;
@@ -177,9 +143,14 @@
                 hintText.innerText = 'Please try again or contact support.';
                 retryButton.style.display = 'block';
 
-                // Send a failure status to the bot for logging purposes
-                console.log('[Verify] Sending failed status to bot...');
+                // Send failure and close
+                console.log('[Verify] Verification failed:', error.message);
                 tg.sendData(JSON.stringify({ status: 'failed', reason: error.message }));
+                
+                setTimeout(() => {
+                    console.log('[Verify] Closing after failure...');
+                    tg.close();
+                }, 2000);
             }
         }
         
