@@ -1111,14 +1111,14 @@ async function handleFallbackWithGemini(chatId, userMessage) {
  */
 async function updateGeminiBrain(userId) {
     try {
-        // Fetch current user state from database
-        const userRes = await pool.query(
-            'SELECT user_id, created_at, last_used FROM users WHERE user_id = $1',
+        // Fetch user data from user_activity instead of non-existent 'users' table
+        const activityRes = await pool.query(
+            'SELECT last_action, last_active FROM user_activity WHERE user_id = $1',
             [userId]
         );
         
         const botsRes = await pool.query(
-            'SELECT bot_name, status, created_at FROM user_bots WHERE user_id = $1',
+            'SELECT bot_name, status, deploy_date FROM user_bots WHERE user_id = $1 ORDER BY deploy_date DESC',
             [userId]
         );
         
@@ -1130,15 +1130,15 @@ async function updateGeminiBrain(userId) {
         // Build real-time context for Gemini
         const brainUpdate = {
             timestamp: new Date().toISOString(),
-            user: userRes.rows[0] ? {
+            user: {
                 id: userId,
-                registeredDays: Math.floor((new Date() - new Date(userRes.rows[0].created_at)) / (1000 * 60 * 60 * 24)),
-                lastActive: userRes.rows[0].last_used
-            } : null,
+                lastAction: activityRes.rows[0]?.last_action || 'Unknown',
+                lastActive: activityRes.rows[0]?.last_active || 'Never'
+            },
             bots: botsRes.rows.map(b => ({
                 name: b.bot_name,
                 status: b.status,
-                createdDays: Math.floor((new Date() - new Date(b.created_at)) / (1000 * 60 * 60 * 24))
+                createdDays: Math.floor((new Date() - new Date(b.deploy_date)) / (1000 * 60 * 60 * 24))
             })),
             deployments: deployRes.rows.map(d => ({
                 name: d.app_name,
