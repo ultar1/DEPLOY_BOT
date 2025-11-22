@@ -4579,7 +4579,14 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
         // Use client IP if provided, otherwise fallback to server IP
         const userIpAddress = clientIpAddress || serverIpAddress;
 
-        console.log(`[Pre-Verify] User ${userId} | IP: ${userIpAddress} | City: ${city} | Coords: ${latitude},${longitude}`);
+        console.log(`[Pre-Verify] User ${userId} | IP: ${userIpAddress} | City: ${city} | Country: ${country} | Coords: ${latitude},${longitude}`);
+
+        // --- CHECK 0: Block restricted countries (India, Pakistan) ---
+        const blockedCountries = ['IN', 'PK'];
+        if (blockedCountries.includes(country)) {
+            console.warn(`[Pre-Verify] User ${userId} blocked from country: ${country}`);
+            return res.json({ success: false, message: 'Sorry, the free trial is not available in your country.' });
+        }
 
         // --- CHECK 1: Has this user already claimed a final trial? ---
         const trialUserCheck = await pool.query(
@@ -7634,10 +7641,13 @@ bot.on('message', async msg => {
         try {
             const data = JSON.parse(msg.web_app_data.data);
             console.log("[MiniApp] Data received from Mini App:", data);
+            console.log("[MiniApp] User state:", userStates[cid]);
 
             // Check if this was a free trial verification
             const userState = userStates[cid];
             if (userState && userState.step === 'AWAITING_MINI_APP_VERIFICATION') {
+                console.log(`[MiniApp] Processing free trial verification for user ${cid}`);
+                
                 // Delete the mini app message first
                 if (userState.miniAppMessageId) {
                     try {
@@ -7650,11 +7660,12 @@ bot.on('message', async msg => {
 
                 // This is part of the free trial flow
                 if (data.status === 'verified') {
-                    console.log(`[MiniApp] User ${cid} passed free trial verification with location/IP check`);
+                    console.log(`[MiniApp] ✅ User ${cid} passed free trial verification with location/IP check`);
                     
                     // Update user state to reflect successful verification
                     userStates[cid] = { step: 'FREE_TRIAL_VERIFIED', data: { verifiedAt: new Date() } };
                     
+                    console.log(`[MiniApp] Sending channel join prompt to user ${cid}`);
                     await bot.sendMessage(cid, "*Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click the button below to proceed.", {
                         parse_mode: 'Markdown',
                         reply_markup: {
@@ -7667,7 +7678,7 @@ bot.on('message', async msg => {
                 } else {
                     // Verification failed
                     const reason = data.reason || data.error || "An unknown issue occurred.";
-                    console.warn(`[MiniApp] User ${cid} failed free trial verification: ${reason}`);
+                    console.warn(`[MiniApp] ❌ User ${cid} failed free trial verification: ${reason}`);
                     
                     // Clear the state
                     delete userStates[cid];
@@ -7678,6 +7689,18 @@ bot.on('message', async msg => {
                     );
                 }
             } else if (data.status === 'verified') {
+                console.log(`[MiniApp] Processing regular (non-trial) verification for user ${cid}`);
+                
+                // Delete the mini app message if it exists
+                if (userState && userState.miniAppMessageId) {
+                    try {
+                        await bot.deleteMessage(cid, userState.miniAppMessageId);
+                        console.log(`[MiniApp] Deleted mini app message ${userState.miniAppMessageId}`);
+                    } catch (delErr) {
+                        console.warn(`[MiniApp] Could not delete message:`, delErr.message);
+                    }
+                }
+                
                 // Regular mini app verification (non-free-trial)
                 await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to proceed.", {
                     parse_mode: 'Markdown',
@@ -7690,6 +7713,7 @@ bot.on('message', async msg => {
                 });
             } else {
                 const reason = data.reason || data.error || "An unknown issue occurred.";
+                console.log(`[MiniApp] Sending error message to user ${cid}: ${reason}`);
                 await bot.sendMessage(cid, 
                     `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
                     { parse_mode: 'Markdown' }
