@@ -1,0 +1,157 @@
+{
+  "name": "simple-app",
+  "description": "A simple Node.js app with Git buildpack",
+  "env": {
+    "ALWAYS_ONLINE": {
+      "description": "Show bot number last seen as online",
+      "required": false,
+      "value": "false"
+    },
+    "LOG_MSG": {
+      "description": "Show WhatsApp messages in log",
+      "required": false,
+      "value": "false"
+    },
+    "RESTART_DELAY_MINUTES": {
+      "description": "Delay in minutes before restarting on invalid session",
+      "required": false,
+      "value": ""
+    },
+    "SUDO": {
+      "description": "Admin",
+      "required": false,
+      "value": "234,6281374223149"
+    },
+    "APP_NAME": {
+      "description": "The name of the Heroku app (used in alerts)",
+      "required": true,
+      "value": ""
+    },
+
+    "PREFIX": {
+      "description": "Prefix, check for more",
+      "required": false,
+      "value": "."
+    },
+    "LIST_TYPE": {
+      "description": "Example: jid,jid,...",
+      "required": false,
+      "value": "poll"
+    },  
+    "SESSION_ID": {
+      "description": "Session ID",
+      "required": true,
+      "value": ""
+    },
+    "STICKER_PACKNAME": {
+      "description": "Sticker pack info",
+      "required": false,
+      "value": "𝖀𝖑𝖙-𝕬𝕽"
+    },
+    "DISABLE_BOT": {
+      "description": "Block chats. Use comma-separated numbers without spaces. E.g., 123,456",
+      "required": false,
+      "value": "2349163916314@s.whatsapp.net"
+    },
+    "ANTI_DELETE": {
+      "description": "Enable anti-delete feature",
+      "required": false,
+      "value": "p"
+    },
+    "RMBG_KEY": {
+      "description": "API key from remove.bg, required for plugin rmbg",
+      "required": false,
+      "value": "null"
+    },
+    "LANGUAGE": {
+      "description": "Default language for TTS or TRT",
+      "required": false,
+      "value": "en"
+    },
+      "TZ": { "description": "Time Zone", 
+      "required": false, "value": "Africa/Lagos"
+    },
+    "WARN_LIMIT": {
+      "description": "Maximum number of warnings to a person.",
+      "required": false,
+      "value": "3"
+    },
+    "FORCE_LOGOUT": {
+      "description": "In some scenarios, have to logout web. Only in such cases, set this to true and back to false after logout.",
+      "required": false,
+      "value": "false"
+    },
+    "DISABLE_BOT": {
+      "description": "Example: jid,jid,... where bot does not work in both ways.",
+      "required": false,
+      "value": "null"
+    },
+    "REJECT_CALL": {
+      "description": "Auto reject call, if set to true",
+      "required": false,
+      "value": "false"
+    },
+    "AUTO_STATUS_VIEW": {
+      "description": "View others' status",
+      "required": false,
+      "value": "false"
+    },
+    "SEND_READ": {
+      "description": "Send blue tick",
+      "required": false,
+      "value": "false"
+    },
+    "AJOIN": {
+      "description": "Accept group join requests (group privacy)",
+      "required": false,
+      "value": "true"
+    },
+    "PERSONAL_MESSAGE": {
+      "description": "Send a welcome message on personal chat",
+      "required": false,
+      "value": "null"
+    },
+    "GEMINI_API_KEY": {
+      "description": "Gemini API key",
+      "required": true,
+      "value": "AIzaSyBds-BuDtWCzQyFCnb9B3JRp8rG2i52soc"
+    },
+    "YT_COOKIE": {
+      "description": "YouTube cookie",
+      "required": true,
+      "value": "VISITOR_PRIVACY_METADATA=CgJMQRIEGgAgDA%3D%3D;__Secure-3PSID=g.a0002QjSDBFNVZXbrrF5YbREP53Dq4vOYRU_qYiR42Q2nR_h5DPgAR7OTPdl3cOeFnieAFCt2AACgYKARMSARESFQHGX2MiZUb7uvQE_Wr6rfoFNMqtSBoVAUF8yKqKtf62KCFf9ZRvhYTAU0TP0076;GPS=1;SIDCC=AKEyXzUzVBDr7Tu3dpLUl6IgPfXtBYJEnpvH_QQNuUFpSyOErvDgffOCAO3f-YPcueNXvUOFfQ;YSC=o-m75tMHEds;SID=g.a0002QjSDBFNVZXbrrF5YbREP53Dq4vOYRU_qYiR42Q2nR_h5DPgLEB5l7fm1l1DSnGDvVqJTAACgYKAQsSARESFQHGX2MiEDYxrd0tamrLqF78Dz3ScBoVAUF8yKqSSEPqgGTiqbM6wpXlrknl0076;__Secure-1PSIDTS=sidts-CjAB5H03P0CKOQZ9uwKrj2aOZNjPxqVRpHK-LO8YUxc8rP9N4OxxoKzGzDk1FcbP-G0QAA;SAPISID=FUS32EWAEyXa8-5u/ARAo6arjwvHyzH6m4;__Secure-1PSIDCC=AKEyXzWD1_6MBLI_E2DuHu1ABDq9LRMMaxbSngzAnFslzFkXEwgqN6VpdxMoxsc3CSHWiN79;SSID=AhSzm5QIV9MhBhgow;__Secure-1PAPISID=FUS32EWAEyXa8-5u/ARAo6arjwvHyzH6m4;__Secure-1PSID=g.a0002QjSDBFNVZXbrrF5YbREP53Dq4vOYRU_qYiR42Q2nR_h5DPg2fzgAM6FyDbodABuuNiXIwACgYKARASARESFQHGX2MijdWV7A10z11EtmCqRrNksRoVAUF8yKqoX1E4BfpIHrhy34o_fce00076;__Secure-3PAPISID=FUS32EWAEyXa8-5u/ARAo6arjwvHyzH6m4;__Secure-3PSIDCC=AKEyXzVD2R2GDHgiR_sKdtqeSr8dvvVcGCCapekwe2467tYiMp1jZjPr88s9wtSwObe-lt7X;__Secure-3PSIDTS=sidts-CjAB5H03P0CKOQZ9uwKrj2aOZNjPxqVRpHK-LO8YUxc8rP9N4OxxoKzGzDk1FcbP-G0QAA;APISID=7Uk7ZbmJXC00ii-O/AAcTak0YvcFeQ0LY6;HSID=A_VRj5qMyAaM-aAhP;LOGIN_INFO=AFmmF2swRAIgYZE6HBXHPqZ5Q17AD3RWDtnU6GuLKen1_18trnZemk0CIGqj6Wc4o95LLzAWQ4-PExupfbBn9ZJ57np_JoaVAVXI:QUQ3MjNmelZ2VFZoR1ZDQkNaWHAxZjZaWmpmaFltWnpMakxSUnJJWTN6ODBrRjZOTzdscU9mc3U3VU40SDBwRDB4eW1tenBISWpCWkowQWVSd2o5MHU2WldTd2FjY2FEMTR2Q0lvLUU1blBuOGwyMUZkYUhIM3AyMXpJUnZVaDMxUFBBSU1VNW9xd25hSGg1dlVTS0JFckFtNGhrQkxWR3VR;PREF=f6=40000000&tz=Africa.Lagos;VISITOR_INFO1_LIVE=CeSfCY1hWOc"
+},
+     "DISABLE_START_MESSAGE": {
+      "description": "Disable start message",
+      "required": false,
+      "value": "true"
+    },
+    "STATUS_VIEW_EMOJI": {
+      "description": "Emoji for auto status updates",
+      "required": false,
+      "value": ""
+    }
+  },
+  "addons": [
+    {
+      "plan": "heroku-postgresql"
+    }
+  ],
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-apt"
+    },
+    {
+      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}

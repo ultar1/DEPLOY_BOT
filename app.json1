@@ -1,0 +1,43 @@
+{
+  "name": "Raganork-md",
+  "stack": "heroku-24",
+  "env": {
+    "SESSION_ID": {
+      "description": "Unique session identifier",
+      "required": true
+    },
+    "AUTO_READ_STATUS": {
+      "description": "Enable or disable",
+      "required": false,
+      "value": "false"
+    },
+    "ALWAYS_ONLINE": {
+      "description": "Keep the app always online",
+      "required": false,
+      "value": "true"
+    },
+    "HANDLERS": {
+      "description": "Handler path or module",
+      "value": "."
+    },
+    "DISABLE_START_MESSAGE": {
+      "description": "Set to 'true' to disable the bot's auto-reply on start",
+      "required": false,
+      "value": "false"
+    },
+    "BLOCK_CHAT": {
+      "description": "Block chats. Use comma-separated numbers without spaces. E.g., 123,456",
+      "required": false,
+      "value": "2349163916314@s.whatsapp.net"
+    }
+  },
+  "addons": [
+    "heroku-postgresql"
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}
