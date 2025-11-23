@@ -4492,6 +4492,7 @@ bot.on('left_chat_member', handleLeftMembers);
 // In bot.js, inside the main (async () => { ... })(); startup block
 
   startScheduledTasks();
+    await checkHerokuApiKey(); 
   runOrphanDbCleanup();
 
   setTimeout(async () => {
