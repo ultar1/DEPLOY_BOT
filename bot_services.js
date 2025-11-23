@@ -1976,8 +1976,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
              console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
         }
 
-        const dbNameconst dbName = originalAppName.replace(/-/g, '_'); // Canonical database name
-
+        const dbName = originalAppName.replace(/-/g, '_'); 
         if (isRestore && vars.DATABASE_URL) {
             // --- RESTORE PATH: Check if the OLD DB still exists ---
             actionText = "Checking for existing database";
