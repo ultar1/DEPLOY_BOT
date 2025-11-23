@@ -1892,144 +1892,196 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
         
 
-
-// In bot_services.js (REPLACE the entire buildWithProgress function)
-
 async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
-    const { 
+    // 1. Get all the tools from the 'init' function
+        const { 
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, GITHUB_HERMIT_REPO_URL,
         ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool, 
         MUST_JOIN_CHANNEL_ID, createNeonDatabase, appDeploymentPromises, getAnimatedEmoji,
-        hasReceivedReward, addDeployKey, recordReward, grantReferralRewards, checkIfDatabaseExists
+        hasReceivedReward, addDeployKey, recordReward, grantReferralRewards
     } = moduleParams;
+
     
     let appName = vars.APP_NAME;
     const originalAppName = appName;
     
-    let adminLogMsg; 
-    let primaryBuildMsg; 
+    let adminLogMsg; // The log message sent to the ADMIN_ID chat
+    let primaryBuildMsg; // The message sent to the USER (targetChatId)
     
     let buildResult = false; 
     let neonAccountId = '1';
-    let primaryAnimateIntervalId; 
+    let primaryAnimateIntervalId; // The animation for the user's message
+
+    // --- Define which message to animate ---
     let primaryAnimChatId;
     let primaryAnimMsgId;
 
     try {
-        // --- 1. Check Ownership / Auto-Rename ---
-        try {
-            await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            // App exists and we have access.
-            if (isRestore) {
-                 const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
-                 console.log(`[Build] Restore mode: Renaming ${appName} -> ${newName}`);
-                 appName = newName;
-                 vars.APP_NAME = newName;
-            }
-        } catch (e) {
-            if (e.response && e.response.status === 403) {
-                console.warn(`[Build] 403 Forbidden for ${appName}. Ownership conflict detected. Renaming...`);
-                const randomSuffix = require('crypto').randomBytes(2).toString('hex');
-                const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
-                
-                // Update DB references
-                await mainPool.query('UPDATE user_bots SET bot_name = $1 WHERE bot_name = $2', [newAppName, appName]);
-                await mainPool.query('UPDATE user_deployments SET app_name = $1 WHERE app_name = $2', [newAppName, appName]);
-                
-                appName = newAppName;
-                vars.APP_NAME = newAppName;
-                
-                if (String(targetChatId) !== ADMIN_ID) {
-                     bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another account. Renamed to \`${appName}\`.`).catch(()=>{});
-                }
+        // 2. Handle app renaming
+        if (isRestore) {
+            try {
+                await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
+                appName = newName;
+                vars.APP_NAME = newName;
+                console.log(`[Restore] App ${originalAppName} exists. Using new name: ${appName}`);
+            } catch (e) {
+                if (e.response?.status !== 404) throw e;
             }
         }
         
-        // --- Message Setup ---
+        // --- NEW MESSAGE LOGIC ---
+        // This logic determines where to send animations.
+        
         if (String(targetChatId) === ADMIN_ID) {
+            // The admin is deploying for themselves.
+            // The "primary" message IS the admin's message.
             primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
-            adminLogMsg = null;
+            adminLogMsg = null; // No separate log needed.
+            
             primaryAnimChatId = primaryBuildMsg.chat.id;
             primaryAnimMsgId = primaryBuildMsg.message_id;
+            
         } else {
+            // A user is deploying.
+            // Send a simple log to the admin.
             adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
+            // Send the "primary" message to the user.
             primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
+            
             primaryAnimChatId = primaryBuildMsg.chat.id;
             primaryAnimMsgId = primaryBuildMsg.message_id;
         }
+        // --- END OF NEW LOGIC ---
+        
         
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
 
-        // --- Step 1: Create Heroku App ---
+        // --- Step 1: Create the Heroku app ---
         const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
-        await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(e => {
-             if (e.response?.status !== 422) throw e; // Ignore "Name taken" if we own it
-        });
-        
+        await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
         clearInterval(primaryAnimateIntervalId);
 
-        // --- Database Logic ---
+        // --- All animations now go to the user ---
         await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
 
+                // Determine action text based on isRestore
         let actionText = "Creating";
-        const dbName = appName.replace(/-/g, '_'); 
-
-        // Check if we can reuse an existing DB
-        const dbCheckResult = await checkIfDatabaseExists(dbName); 
-
-        if (dbCheckResult.exists) {
-            actionText = "Re-using existing database";
-            vars.DATABASE_URL = dbCheckResult.connection_string; 
-            neonAccountId = dbCheckResult.account_id;
-            console.log(`[Build] Re-using existing DB: ${dbName}`);
+        
+        // Edit message using primaryAnimChatId and primaryAnimMsgId
+        if (primaryAnimMsgId) { // Check if message ID exists before editing
+            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Provisioning database...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         } else {
+             console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
+        }
+
+        const dbName = appName.replace(/-/g, '_'); // Canonical database name
+
+        if (isRestore && vars.DATABASE_URL) {
+            // --- RESTORE PATH: Check if the OLD DB still exists ---
+            actionText = "Checking for existing database";
+
+            // 1. Check the old database name (underscored) for existence
+            const dbCheckResult = await checkIfDatabaseExists(dbName); 
+
+            if (dbCheckResult.exists) {
+                // 2. Database found! Use the existing connection string and account ID.
+                actionText = "Re-using existing database";
+                vars.DATABASE_URL = dbCheckResult.connection_string; // Ensure connection string is correct
+                neonAccountId = dbCheckResult.account_id;
+                console.log(`[Build/Restore] Re-using existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
+                
+            } else {
+                // 3. Database not found or deleted. Proceed to create a new one.
+                actionText = "Creating NEW database (Old one not found)";
+                console.log(`[Build/Restore] Old Neon DB not found. Creating NEW Neon DB: ${dbName}`);
+                
+                const neonResult = await createNeonDatabase(dbName);
+
+                if (!neonResult.success) {
+                    throw new Error(`Neon DB creation failed: ${neonResult.error}`);
+                }
+                vars.DATABASE_URL = neonResult.connection_string;
+                neonAccountId = neonResult.account_id;
+                console.log(`[Build/Restore] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
+            }
+        } else {
+            // --- NEW DEPLOY PATH: Always create new DB ---
             actionText = "Creating NEW database";
-            console.log(`[Build] Creating NEW DB: ${dbName}`);
+            console.log(`[Build/New] Creating NEW Neon DB: ${dbName}`);
+            
             const neonResult = await createNeonDatabase(dbName);
 
             if (!neonResult.success) {
-                throw new Error(`DB creation failed: ${neonResult.error}`);
+                throw new Error(`Neon DB creation failed: ${neonResult.error}`);
             }
             vars.DATABASE_URL = neonResult.connection_string;
             neonAccountId = neonResult.account_id;
+            console.log(`[Build/New] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
         }
         
+        // Update message with final action text
         if (primaryAnimMsgId) {
              await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText}...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         }
 
-        // --- Step 3: Buildpacks ---
+        // --- End of Neon Logic Integration ---
+
+
+        // --- Step 3: Set Buildpacks ---
+        // --- Step 3: Set Buildpacks ---
         let buildpacksToInstall = [];
+        
+        // --- 💡 START OF FIX 💡 ---
+        // This now groups Hermit with Levanter and Raganork.
+        // All three bots will get the same set of buildpacks.
         if (botType === 'levanter' || botType === 'raganork' || botType === 'hermit') {
+            
+            console.log(`[Build] Setting full buildpacks (ffmpeg, nodejs) for ${botType} bot: ${appName}`);
             buildpacksToInstall = [
               { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
               { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
               { buildpack: 'heroku/nodejs' }
             ];
+            
+        } else {
+            // This is now an error/unknown case
+            console.log(`[Build] No buildpacks set for unknown bot type: ${botType}`);
         }
-        
+        // --- 💡 END OF FIX 💡 ---
+
+        // This part remains the same
         if (buildpacksToInstall.length > 0) {
-            await herokuApi.put(`/apps/${appName}/buildpack-installations`, { updates: buildpacksToInstall }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+            await herokuApi.put(
+              `/apps/${appName}/buildpack-installations`,
+              { updates: buildpacksToInstall },
+              { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+            );
+        } else {
+            // This will now only happen if the botType is somehow unknown
+            console.log(`[Build] Skipping buildpack installation step.`);
         }
         
+        // This must be outside the 'if' block so the animation always stops
         clearInterval(primaryAnimateIntervalId);
 
-        // --- Step 4: Env Vars ---
+        // --- Step 4: Set Environment Variables ---
+
+
+        // --- Step 4: Set Environment Variables ---
         await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
         
         const filteredVars = {};
         for (const key in vars) {
-            if (vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
+            if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
                 filteredVars[key] = vars[key];
             }
         }
         
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
-        // Ensure SSL mode is set for AWS/Neon compatibility
-        finalConfigVars.PGSSLMODE = "no-verify";
         
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { ...finalConfigVars, APP_NAME: appName },
@@ -2037,19 +2089,28 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         );
         clearInterval(primaryAnimateIntervalId);
 
-        // --- Step 5: Build ---
+        // --- Step 5: Trigger Build from GitHub ---
+                // --- Step 5: Trigger Build from GitHub ---
         await bot.editMessageText(`Starting to build your Bot...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         
+        // --- 💡 UPDATED REPO URL LOGIC 💡 ---
         let repoUrl;
-        if (botType === 'raganork') repoUrl = GITHUB_RAGANORK_REPO_URL;
-        else if (botType === 'hermit') repoUrl = GITHUB_HERMIT_REPO_URL;
-        else repoUrl = GITHUB_LEVANTER_REPO_URL;
+        if (botType === 'raganork') {
+            repoUrl = GITHUB_RAGANORK_REPO_URL;
+        } else if (botType === 'hermit') {
+            // (This relies on GITHUB_HERMIT_REPO_URL being passed into init)
+            repoUrl = GITHUB_HERMIT_REPO_URL; 
+        } else {
+            // Default to Levanter
+            repoUrl = GITHUB_LEVANTER_REPO_URL;
+        }
     
+        
         const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
         }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
-        // --- Step 6: Wait for Build ---
+        // --- Step 6: Wait for Build to Finish ---
         const buildId = buildStartRes.data.id;
         const statusUrl = `/apps/${appName}/builds/${buildId}`;
         let buildStatus = 'pending';
@@ -2061,12 +2122,14 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             const buildPromise = new Promise((resolve, reject) => {
                 const timeoutId = setTimeout(() => {
                     clearInterval(buildProgressInterval);
-                    reject(new Error(`Build timed out`));
+                    reject(new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`));
                 }, BUILD_COMPLETION_TIMEOUT);
 
                 buildProgressInterval = setInterval(async () => {
                     try {
-                        const poll = await herokuApi.get(statusUrl, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                        const poll = await herokuApi.get(statusUrl, {
+                            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
+                        });
                         buildStatus = poll.data.status;
                         
                         if (buildStatus === 'pending') {
@@ -2077,18 +2140,24 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                             currentPct = 'Error';
                         }
                         
-                        await bot.editMessageText(`Building... ${currentPct}%`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId }).catch(() => {});
+                        // --- This now edits the USER's message ---
+                        await bot.editMessageText(`Building... ${currentPct}%`, {
+                            chat_id: primaryAnimChatId, message_id: primaryAnimMsgId
+                        }).catch(() => {});
                         
                         if (buildStatus !== 'pending') {
                             clearInterval(buildProgressInterval);
                             clearTimeout(timeoutId);
-                            if (buildStatus === 'succeeded') resolve('succeeded');
-                            else reject(new Error(`Build failed: ${buildStatus}`));
+                            if (buildStatus === 'succeeded') {
+                                resolve('succeeded');
+                            } else {
+                                reject(new Error(`Build failed with status: ${buildStatus}`));
+                            }
                         }
                     } catch (error) {
                         clearInterval(buildProgressInterval);
                         clearTimeout(timeoutId);
-                        reject(new Error(`Error polling build: ${error.message}`));
+                        reject(new Error(`Error polling build status: ${error.message}`));
                     }
                 }, 10000);
             });
@@ -2098,34 +2167,63 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             throw err; 
         }
 
-        // --- Step 7: Success & Records ---
-        console.log(`[Flow] Build SUCCEEDED for ${appName}`);
+        // --- Step 7: Handle Build Succeeded ---
+        console.log(`[Flow] buildWithProgress: Heroku build for "${appName}" SUCCEEDED.`);
         
         const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
         await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
         
-        let expirationDateToUse = null; 
+        // --- START OF EXPIRATION DATE UPDATE ---
+        let expirationDateToUse = null; // Initialize variable
+
         if (isRestore) {
+            // For restores, preserve the original expiration date from the backup vars if available
             expirationDateToUse = vars.expiration_date ? new Date(vars.expiration_date) : null;
+            console.log(`[Build Restore] Preserving expiration date: ${expirationDateToUse ? expirationDateToUse.toISOString() : 'Not Set'}`);
         } else {
-            if (vars.DAYS) { 
+            // For new builds, use the user's provided logic based on vars.DAYS
+            if (vars.DAYS) { // Check if DAYS property exists in the vars object
                 const daysToAdd = parseInt(vars.DAYS, 10);
                 if (!isNaN(daysToAdd) && daysToAdd > 0) {
-                    const deployDate = new Date(); 
+                    const deployDate = new Date(); // Use current date
                     expirationDateToUse = new Date(deployDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+                    console.log(`[Build] Calculated expiration date from vars.DAYS (${daysToAdd}): ${expirationDateToUse.toISOString()}`);
+                } else {
+                    console.warn(`[Build] Invalid vars.DAYS value (${vars.DAYS}). Falling back to saveUserDeployment default.`);
+                    expirationDateToUse = null; // Ensure it's null to trigger default in saveUserDeployment
                 }
+            } else if (isFreeTrial) {
+                 // Free trial logic - Pass null to let saveUserDeployment calculate the 1-day
+                 console.log(`[Build] Free trial - letting saveUserDeployment calculate expiration.`);
+                 expirationDateToUse = null;
+            } else {
+                // Paid deployment but vars.DAYS is missing - Pass null to trigger default in saveUserDeployment
+                console.warn(`[Build] vars.DAYS not provided for new paid deploy ${appName}. saveUserDeployment will use its default.`);
+                expirationDateToUse = null;
             }
         }
+        // --- END OF EXPIRATION DATE UPDATE ---
 
-        await saveUserDeployment(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, finalConfigVarsAfterBuild, botType, isFreeTrial, expirationDateToUse, vars.email || null, neonAccountId);
+        await saveUserDeployment(
+            targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, 
+            finalConfigVarsAfterBuild, botType, isFreeTrial, 
+            expirationDateToUse,
+            vars.email || null, neonAccountId
+        );
 
-        // Free Trial Logic
+        // --- ✅ Free Trial Logic ---
         if (isFreeTrial && !isRestore) {
-            await mainPool.query('INSERT INTO temp_deploys (user_id, last_deploy_at, ip_address) VALUES ($1, NOW(), $2) ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW(), ip_address = EXCLUDED.ip_address', [targetChatId, ipAddress]);
-            await mainPool.query('INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name', [targetChatId, appName, MUST_JOIN_CHANNEL_ID]);
+            await mainPool.query(
+                'INSERT INTO temp_deploys (user_id, last_deploy_at, ip_address) VALUES ($1, NOW(), $2) ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW(), ip_address = EXCLUDED.ip_address',
+                [targetChatId, ipAddress]
+            );
+            await mainPool.query(
+                'INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name',
+                [targetChatId, appName, MUST_JOIN_CHANNEL_ID]
+            );
         }
 
-        // Reward Logic
+        // --- ✅ Reward Logic ---
         if (!isRestore) {
             try {
                 const userBotCount = await getUserBotCount(targetChatId);
@@ -2134,94 +2232,137 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                     const newKey = require('crypto').randomBytes(4).toString('hex').toUpperCase();
                     await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', targetChatId);
                     await recordReward(targetChatId);
-                    await bot.sendMessage(targetChatId, `Congratulations! You deployed 10+ bots. Here is a free key:\n\`${newKey}\``, { parse_mode: 'Markdown' });
+                    await bot.sendMessage(targetChatId, `Congratulations! You have deployed 10 or more bots. As a reward, here is a free deploy key:\n\n\`${newKey}\``, { parse_mode: 'Markdown' });
+                    await bot.sendMessage(ADMIN_ID, `Reward issued to user \`${targetChatId}\` for 10 deployments. Key: \`${newKey}\``, { parse_mode: 'Markdown' });
                 }
-            } catch (e) {}
+            } catch (rewardError) {
+                console.error(`[Reward] Failed to check or issue reward:`, rewardError.message);
+            }
         }
         
-        if (!isRestore && referredBy) await grantReferralRewards(targetChatId, appName);
+        // --- Referral Logic ---
+        if (!isRestore && referredBy) {
+            await grantReferralRewards(targetChatId, appName);
+        }
 
-        // Admin Notification
+        // --- Admin Notification (This is a NEW message, which is fine) ---
         if (!isRestore) {
             const userChat = await bot.getChat(targetChatId);
-            const userDetails = `*Name:* ${escapeMarkdown(userChat.first_name || '')}\n*ID:* \`${escapeMarkdown(targetChatId)}\``;
-            await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n*App:* \`${escapeMarkdown(appName)}\`\n${userDetails}`, { parse_mode: 'Markdown' });
+            const userDetails = `*Name:* ${escapeMarkdown(userChat.first_name || '')} ${escapeMarkdown(userChat.last_name || '')}\n*Username:* @${escapeMarkdown(userChat.username || 'N/A')}\n*Chat ID:* \`${escapeMarkdown(targetChatId)}\``;
+            const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Paid'}`;
+            await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
         }
 
-        // Hermit Restart Fix
+
+
+
+        // --- 💡 START OF HERMIT RESTART FIX (STEP 7.5) 💡 ---
         if (botType === 'hermit') {
-            herokuApi.delete(`/apps/${appName}/dynos`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
+            console.log(`[Flow] Hermit build succeeded. Forcing an immediate restart for ${appName} to ensure connection.`);
+            
+            // We don't need to await this. Just send the command.
+            herokuApi.delete(`/apps/${appName}/dynos`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })
+                .catch(err => console.warn(`[Flow] Failed to force-restart ${appName}: ${err.message}`));
+            
+            // Give Heroku a 5-second head start before we listen
             await new Promise(r => setTimeout(r, 5000));
         }
-
-        // Wait for Connect
+        // --- 💡 END OF HERMIT RESTART FIX 💡 ---
+        // --- MODIFIED "Wait for Connect" Logic ---
+        // This block now animates and edits the USER's message
+        
         const baseWaitingText = `Build successful! Waiting for bot to connect...`;
         await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' });
-        primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); 
+        primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); // Re-using primaryAnimateIntervalId
         
         const appStatusPromise = new Promise((resolve, reject) => {
             const STATUS_CHECK_TIMEOUT = 120 * 1000;
             const timeoutId = setTimeout(() => {
                 const appPromise = appDeploymentPromises.get(appName);
-                if (appPromise) appPromise.reject(new Error(`Bot did not connect within 120s.`));
+                if (appPromise) {
+                    appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds (Session might be logged out).`));
+                }
             }, STATUS_CHECK_TIMEOUT);
+            
             appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId: primaryAnimateIntervalId, timeoutId });
         });
 
         try {
-            await appStatusPromise; 
+            await appStatusPromise; // Wait for connection
             const promiseData = appDeploymentPromises.get(appName);
             if (promiseData) {
                clearTimeout(promiseData.timeoutId);
                if (promiseData.animateIntervalId) clearInterval(promiseData.animateIntervalId);
             }
 
-            const successMessage = isRestore ? `Your bot *${escapeMarkdown(appName)}* has been restored!` : `Your bot *${escapeMarkdown(appName)}* is now live!`;
+            const successMessage = isRestore ? 
+                `Your bot *${escapeMarkdown(appName)}* has been restored and is now live!` :
+                `Your bot *${escapeMarkdown(appName)}* is now live!\n\nBackup your app for future reference.`;
             
-            await bot.editMessageText(successMessage, {
-                chat_id: primaryAnimChatId,
-                message_id: primaryAnimMsgId,
-                parse_mode: 'Markdown',
-                reply_markup: isRestore ? undefined : { inline_keyboard: [[{ text: `Backup "${appName}"`, callback_data: `backup_app:${appName}` }]] }
-            }).catch(() => {});
-            
+            // Edit the USER's message to show SUCCESS
+            await bot.editMessageText(
+                successMessage,
+                {
+                    chat_id: primaryAnimChatId,
+                    message_id: primaryAnimMsgId,
+                    parse_mode: 'Markdown',
+                    reply_markup: isRestore ? undefined : { inline_keyboard: [[{ text: `Backup "${appName}"`, callback_data: `backup_app:${appName}` }]] }
+                }
+            ).catch(() => {});
+
+            // If it was a user, update the ADMIN's log to show SUCCESS
             if (adminLogMsg) { 
-                await bot.editMessageText(`Success: *${escapeMarkdown(appName)}* connected.`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
+                const adminSuccessMsg = isRestore ? 
+                    `Restore successful for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Bot connected.` :
+                    `Build successful for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Bot connected.`;
+                await bot.editMessageText(adminSuccessMsg, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
             }
+            
             buildResult = true;
 
-        } catch (err) { 
+        } catch (err) { // Connection Failed (Logged Out)
             const promiseData = appDeploymentPromises.get(appName);
             if (promiseData) {
                 if (promiseData.animateIntervalId) clearInterval(promiseData.animateIntervalId);
                 clearTimeout(promiseData.timeoutId);
             }
 
-            const failMessage = `Bot *${escapeMarkdown(appName)}* deployed but failed to start: ${escapeMarkdown(err.message)}\n\nCheck Session ID.`;
-            await bot.editMessageText(failMessage, {
-                chat_id: primaryAnimChatId,
-                message_id: primaryAnimMsgId,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
-            }).catch(() => {});
+            // This is the "logged out" message you wanted
+            const failMessage = `Bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`;
+            
+            // Send failure to USER (or admin-as-user)
+            await bot.editMessageText(
+                failMessage,
+                {
+                    chat_id: primaryAnimChatId,
+                    message_id: primaryAnimMsgId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
+                }
+            ).catch(() => {});
 
+            // If it was a user, update the ADMIN's log
             if (adminLogMsg) {
-                 await bot.editMessageText(`Connection failed for *${escapeMarkdown(appName)}*. Reason: ${escapeMarkdown(err.message)}`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
+                 await bot.editMessageText(`Connection failed for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Reason: ${escapeMarkdown(err.message)}`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
             }
+            
             buildResult = false;
         } finally {
             appDeploymentPromises.delete(appName);
         }
+        // --- END OF MODIFIED BLOCK ---
 
-    } catch (error) { 
+    } catch (error) { // Build Failed
         const errorMsg = error.response?.data?.message || error.message;
         console.error(`[Build Error] Failed to build app ${appName}:`, errorMsg);
-        if (primaryAnimateIntervalId) clearInterval(primaryAnimateIntervalId); 
+        if (primaryAnimateIntervalId) clearInterval(primaryAnimateIntervalId); // Stop user/admin animation
         
+        // Edit the USER's message to show failure
         await bot.editMessageText(`Your bot *${escapeMarkdown(appName)}* failed to deploy.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         
+        // If it was a user, update the ADMIN's log
         if (adminLogMsg) {
-            await bot.editMessageText(`Build failed for *${escapeMarkdown(appName)}*. Reason: ${escapeMarkdown(errorMsg)}`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+            await bot.editMessageText(`Build failed for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`).\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
         }
         buildResult = false;
     }
@@ -2235,157 +2376,216 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 
 
 
-/**
+ /**
  * TRULY SILENTLY restores a Heroku app.
- * Checks for existing databases (AWS/Neon) to preserve data.
- * Handles "403 Forbidden" (account ownership conflict) by renaming the app.
+ * Sends NO messages to admin.
+ * Sends messages to the USER ONLY on build failure or connection failure.
+ * @param {string} targetChatId The ID of the user owning the bot.
+ *S* @param {object} vars The config vars object from the backup.
+ * @param {string} botType The type of bot ('levanter' or 'raganork').
+ * @returns {Promise<{success: boolean, error?: string, appName?: string}>}
  */
 async function silentRestoreBuild(targetChatId, vars, botType) {
+    // 1. Get all the tools from moduleParams
     const { 
-        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, GITHUB_HERMIT_REPO_URL,
+        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
         ADMIN_ID, defaultEnvVars, escapeMarkdown, mainPool, 
-        createNeonDatabase, appDeploymentPromises, checkIfDatabaseExists 
+        createNeonDatabase, appDeploymentPromises
     } = moduleParams;
     
     let appName = vars.APP_NAME;
-    const originalAppName = appName; // Keep original name for DB lookup
+    const originalAppName = appName;
+    let buildResult = false;
     
     const isRestore = true; 
-    let neonAccountId = '1'; // Default, will be updated if existing DB is found
+    let neonAccountId = '1';
+    const isFreeTrial = false;
 
     try {
-        // --- 1. Check App Status / Ownership on Heroku ---
+        // 2. Handle app renaming
         try {
             await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            
-            // If 200 OK: App exists and we have access.
-            // Rename to avoid overwriting live apps during loops.
-            // FIX: Generate only 2 characters for suffix
-            const newName = `${appName.split('-')[0]}-${crypto.randomBytes(1).toString('hex')}`;
+            const newName = `${appName.split('-')[0]}-${crypto.randomBytes(2).toString('hex')}`;
             appName = newName;
             vars.APP_NAME = newName;
-            console.log(`[SilentRestore] App ${originalAppName} exists. Renaming to: ${appName}`);
-
+            console.log(`[SilentRestore] App ${originalAppName} exists. Using new name: ${appName}`);
         } catch (e) {
-            if (e.response && e.response.status === 403) {
-                // --- 💡 FIX: 403 Forbidden (Account Mismatch) 💡 ---
-                console.warn(`[SilentRestore] 403 Forbidden for ${appName}. We do not own this app. Renaming to deploy fresh on new account.`);
-                
-                // FIX: Generate only 2 characters for suffix
-                const randomSuffix = require('crypto').randomBytes(1).toString('hex');
-                const newAppName = `${appName.substring(0, 25)}-${randomSuffix}`;
-                
-                // CRITICAL: Update DB references to the new name so the bot still works
-                await mainPool.query('UPDATE user_bots SET bot_name = $1 WHERE bot_name = $2', [newAppName, appName]);
-                await mainPool.query('UPDATE user_deployments SET app_name = $1 WHERE app_name = $2', [newAppName, appName]);
-                
-                appName = newAppName;
-                vars.APP_NAME = newAppName;
-                console.log(`[SilentRestore] Renamed record ${originalAppName} -> ${appName} to bypass 403.`);
-
-            } else if (e.response && e.response.status === 404) {
-                // 404 is good. App doesn't exist, we can create it with the original name.
-            } else {
-                throw e; // Throw other errors
-            }
+            if (e.response?.status !== 404) throw e; // 404 is good
         }
         
-        // --- Step 1: Create Heroku App ---
+        // --- ADMIN MESSAGES REMOVED ---
+        
+        // --- Step 1: Create the Heroku app ---
         const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
 
-        // --- Step 2: Database Logic (Preserve Data) ---
+        // --- ❗️ STEP 2: NEON DATABASE LOGIC (MODIFIED for Intelligent Restore) ❗️ ---
+        // Ensure 'let neonAccountId = '1';' is declared *before* this block in the function.
+        const dbName = appName.replace(/-/g, '_'); // Canonical DB name from potentially new app name
         
-        // Use ORIGINAL APP NAME to find the existing database
-        const dbName = originalAppName.replace(/-/g, '_'); 
+        // Flag to check if the database provisioning succeeded
         let provisionSuccess = false;
         
-        // Check if we can reuse an existing DB (Neon or AWS)
-        console.log(`[SilentRestore] Checking for existing DB: ${dbName}`);
-        
-        const dbCheckResult = await checkIfDatabaseExists(dbName);
+        // 1. Check if the saved variables contain a connection string pointing to Neon
+        const hasNeonDBUrl = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
-        if (dbCheckResult.exists) {
-            // REUSE EXISTING DB
-            vars.DATABASE_URL = dbCheckResult.connection_string;
-            neonAccountId = dbCheckResult.account_id;
-            provisionSuccess = true;
-            console.log(`[SilentRestore] RE-USED existing DB: ${dbName} (Account: ${neonAccountId}).`);
+        if (isRestore && hasNeonDBUrl) {
+            // --- RESTORE PATH: INTELLIGENT CHECK ---
+            
+            console.log(`[SilentRestore] Attempting to find existing Neon DB: ${dbName} for re-use.`);
+            const dbCheckResult = await checkIfDatabaseExists(dbName); // <--- NEW INTELLIGENT CHECK
+
+            if (dbCheckResult.exists) {
+                // A. Database found! Re-use the existing connection string and account ID.
+                vars.DATABASE_URL = dbCheckResult.connection_string; // Use the re-verified connection string
+                neonAccountId = dbCheckResult.account_id;
+                provisionSuccess = true;
+                console.log(`[SilentRestore] RE-USED existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
+            } else {
+                // B. Database not found (likely deleted). Must provision a new one.
+                console.log(`[SilentRestore] Old Neon DB not found. Provisioning NEW Neon DB: ${dbName} for migration.`);
+                
+                const neonResult = await createNeonDatabase(dbName);
+
+                if (neonResult.success) {
+                    vars.DATABASE_URL = neonResult.connection_string;
+                    neonAccountId = neonResult.account_id;
+                    provisionSuccess = true;
+                    console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) for migration.`);
+                } else {
+                    // DB creation failed. Throw error to stop the build.
+                    return { success: false, error: `Neon DB creation failed during restore migration: ${neonResult.error}`, appName: appName };
+                }
+            }
         } else {
-            // Create NEW DB (Only if old one is gone)
-            console.log(`[SilentRestore] Old DB not found. Creating NEW DB: ${dbName}`);
-            const neonResult = await createNeonDatabase(dbName); 
+            // --- NEW DEPLOY PATH / NON-NEON MIGRATION ---
+            // If it's not a restore, or the old DB was not Neon (e.g., Heroku Postgres), create new.
+            console.log(`[SilentRestore] Migrating/New Deploy: Creating NEW Neon DB: ${dbName}`);
+            
+            const neonResult = await createNeonDatabase(dbName);
+            
             if (neonResult.success) {
                 vars.DATABASE_URL = neonResult.connection_string;
                 neonAccountId = neonResult.account_id;
                 provisionSuccess = true;
+                console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) during migration.`);
             } else {
-                // Cleanup app if DB fails
-                await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
-                return { success: false, error: `DB creation failed: ${neonResult.error}`, appName: appName };
+                // DB creation failed. Throw error to stop the build.
+                return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
             }
         }
         
-        // --- Step 3: Buildpacks ---
-        await herokuApi.put(`/apps/${appName}/buildpack-installations`, {
-            updates: [
-              { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-              { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
-              { buildpack: 'heroku/nodejs' }
-            ]
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        // If provisionSuccess is true, proceed with the rest of the build.
+        if (!provisionSuccess) {
+            // This should ideally not be hit, but acts as a final safety catch.
+            return { success: false, error: "Database provisioning failed unexpectedly.", appName: appName };
+        }
+        // --- End of NEON LOGIC Integration ---
+        
+                // --- Step 3: Set Buildpacks --
+            await herokuApi.put(
+              `/apps/${appName}/buildpack-installations`,
+              {
+                updates: [
+                  { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+                  { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+                  { buildpack: 'heroku/nodejs' }
+                ]
+              },
+              { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+            );
+        
 
-        // --- Step 4: Env Vars ---
-        const finalConfigVars = {};
+        // --- Step 4: Set Environment Variables ---
+        const filteredVars = {};
         for (const key in vars) {
-            if (vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
-                finalConfigVars[key] = vars[key];
+            if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
+                filteredVars[key] = vars[key];
             }
         }
-        // Ensure we set the correct PGSSLMODE for AWS/Neon compatibility
-        finalConfigVars.PGSSLMODE = "no-verify";
-
+        const finalConfigVars = filteredVars;
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { ...finalConfigVars, APP_NAME: appName },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
 
-        // --- Step 5: Build from GitHub ---
+        // --- Step 5: Trigger Build from GitHub ---
+                // --- Step 5: Trigger Build from GitHub ---
+        await bot.editMessageText(`Starting build process...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+        
+        // --- 💡 UPDATED REPO URL LOGIC 💡 ---
         let repoUrl;
-        if (botType === 'raganork') repoUrl = GITHUB_RAGANORK_REPO_URL;
-        else if (botType === 'hermit') repoUrl = GITHUB_HERMIT_REPO_URL;
-        else repoUrl = GITHUB_LEVANTER_REPO_URL;
+        if (botType === 'raganork') {
+            repoUrl = GITHUB_RAGANORK_REPO_URL;
+        } else if (botType === 'hermit') {
+            // (This relies on GITHUB_HERMIT_REPO_URL being passed into init)
+            repoUrl = GITHUB_HERMIT_REPO_URL; 
+        } else {
+            // Default to Levanter
+            repoUrl = GITHUB_LEVANTER_REPO_URL;
+        }
     
         const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
         }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
 
-        // --- Step 6: Wait for Build ---
+        // --- Step 6: Wait for Build to Finish (Silently) ---
         const buildId = buildStartRes.data.id;
         const statusUrl = `/apps/${appName}/builds/${buildId}`;
         let buildStatus = 'pending';
-        
-        for (let i = 0; i < 60; i++) { 
-            await new Promise(r => setTimeout(r, 10000));
-            const poll = await herokuApi.get(statusUrl, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            buildStatus = poll.data.status;
-            if (buildStatus === 'succeeded' || buildStatus === 'failed') break;
-        }
-        
-        if (buildStatus !== 'succeeded') {
-             return { success: false, error: `Build finished with status: ${buildStatus}`, appName: appName };
+        let buildProgressInterval;
+
+        try {
+            const BUILD_COMPLETION_TIMEOUT = 600 * 1000; // 10 minutes
+            const buildPromise = new Promise((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    clearInterval(buildProgressInterval);
+                    reject(new Error(`Build timed out`));
+                }, BUILD_COMPLETION_TIMEOUT);
+
+                buildProgressInterval = setInterval(async () => {
+                    try {
+                        const poll = await herokuApi.get(statusUrl, {
+                            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
+                        });
+                        buildStatus = poll.data.status;
+                        
+                        if (buildStatus !== 'pending') {
+                            clearInterval(buildProgressInterval);
+                            clearTimeout(timeoutId);
+                            if (buildStatus === 'succeeded') {
+                                resolve('succeeded');
+                            } else {
+                                reject(new Error(`Build failed: ${buildStatus}`));
+                            }
+                        }
+                    } catch (error) {
+                        clearInterval(buildProgressInterval);
+                        clearTimeout(timeoutId);
+                        reject(new Error(`Error polling build status: ${error.message}`));
+                    }
+                }, 10000);
+            });
+            await buildPromise;
+        } catch (err) {
+            if (buildProgressInterval) clearInterval(buildProgressInterval);
+            throw err; 
         }
 
-        // --- Step 7: Update Local Records ---
-        const finalVars = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
+        // --- Step 7: Handle Build Succeeded ---
+        console.log(`[Flow] silentRestoreBuild: Heroku build for "${appName}" SUCCEEDED.`);
+        const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
+        await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
         
-        await addUserBot(targetChatId, appName, finalVars.SESSION_ID, botType);
-        // Use originalAppName logic to track backups correctly if needed, but appName is now the live one.
-        await saveUserDeployment(targetChatId, appName, finalVars.SESSION_ID, finalVars, botType, false, vars.expiration_date, null, neonAccountId);
+        const appNameForBackup = isRestore ? originalAppName : appName;
+        await saveUserDeployment(
+            targetChatId, appNameForBackup, finalConfigVarsAfterBuild.SESSION_ID, 
+            finalConfigVarsAfterBuild, botType, isFreeTrial, vars.expiration_date, neonAccountId
+        );
 
-        // --- Step 8: Connection Check (Silent) ---
+        // --- "Wait for Connect" Logic (MODIFIED FOR SILENCE) ---
         if (String(targetChatId) !== ADMIN_ID) {
             const appStatusPromise = new Promise((resolve, reject) => {
                 const STATUS_CHECK_TIMEOUT = 120 * 1000;
@@ -2402,23 +2602,52 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 await appStatusPromise; // Wait for bot to connect
                 const promiseData = appDeploymentPromises.get(appName);
                 if (promiseData) clearTimeout(promiseData.timeoutId);
+                buildResult = true; // Success, do not notify user
             } catch (err) {
-                // Log failure but return success because the deploy worked
-                console.warn(`[SilentRestore] Bot ${appName} deployed but failed to connect (Logged Out).`);
+                // --- FAILURE: THIS IS THE "LOGGED OUT" EXCEPTION ---
+                const promiseData = appDeploymentPromises.get(appName);
+                if (promiseData) clearTimeout(promiseData.timeoutId);
+                
+                await bot.sendMessage(
+                    targetChatId,
+                    `Your restored bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
+                    }
+                ).catch(()=>{});
+                
+                // Return failure
+                return { success: false, error: err.message, appName: appName };
             } finally {
                 appDeploymentPromises.delete(appName);
             }
+        } else {
+            buildResult = true; // Admin is user, no need to wait
         }
 
+        // Return success
         return { success: true, appName: appName };
 
     } catch (error) {
+        // --- Main build failure ---
         const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[SilentRestore] Failed for ${appName}:`, errorMsg);
+        console.error(`[SilentRestore Build Error] Failed to build app ${appName}:`, errorMsg);
+        
+        // --- Notify User of Build Fail ---
+        if (String(targetChatId) !== ADMIN_ID) {
+            await bot.sendMessage(
+                targetChatId, 
+                `Your bot *${escapeMarkdown(appName)}* failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`, 
+                { parse_mode: 'Markdown' }
+            ).catch(()=>{});
+        }
+        
+        // Return failure
         return { success: false, error: errorMsg, appName: appName };
     }
 }
-
+       
 
 
 module.exports = {
