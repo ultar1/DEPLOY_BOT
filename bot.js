@@ -2707,21 +2707,7 @@ const herokuApi = axios.create({
     }
 });
 
-// Add a response interceptor to automatically catch 401 errors
-// In bot.js (herokuApi interceptor)
 
-herokuApi.interceptors.response.use(
-    (response) => response,
-    async (error) => {
-        // 💡 FIX: Add error.response?.status === 403 here too
-        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-            const failingKey = error.config.headers.Authorization?.split(' ')[1] || 'unknown';
-            console.log(`INTERCEPTOR: Detected a ${error.response.status} error from Heroku. Rotating key.`);
-            handleInvalidHerokuKeyWorkflow(failingKey);
-        }
-        return Promise.reject(error);
-    }
-);
 
 
 /**
