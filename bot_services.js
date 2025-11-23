@@ -1916,19 +1916,50 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     let primaryAnimChatId;
     let primaryAnimMsgId;
 
-    try {
-        // 2. Handle app renaming
-        if (isRestore) {
-            try {
-                await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
-                appName = newName;
-                vars.APP_NAME = newName;
-                console.log(`[Restore] App ${originalAppName} exists. Using new name: ${appName}`);
-            } catch (e) {
-                if (e.response?.status !== 404) throw e;
+            // --- 💡 FIX: CHECK OWNERSHIP & RENAME IF BLOCKED 💡 ---
+        try {
+            // Check if the app exists and if we have access
+            await herokuApi.get(`/apps/${appName}`, { 
+                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+            });
+            
+            // If isRestore is true, we usually rename anyway to be safe, 
+            // but if it's a standard redeploy and we own it, we keep the name.
+            if (isRestore) {
+                 const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
+                 console.log(`[Build] Restore mode: Renaming ${appName} -> ${newName}`);
+                 appName = newName;
+                 vars.APP_NAME = newName;
+            }
+
+        } catch (e) {
+            if (e.response && e.response.status === 403) {
+                // 🛑 403 FORBIDDEN DETECTED: We don't own this app (Old Account).
+                console.warn(`[Build] 403 Forbidden for ${appName}. Ownership conflict detected. Renaming...`);
+                
+                const randomSuffix = require('crypto').randomBytes(2).toString('hex');
+                const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
+                
+                // Update DB references immediately so the user's "My Bots" list updates
+                await mainPool.query('UPDATE user_bots SET bot_name = $1 WHERE bot_name = $2', [newAppName, appName]);
+                await mainPool.query('UPDATE user_deployments SET app_name = $1 WHERE app_name = $2', [newAppName, appName]);
+                
+                appName = newAppName;
+                vars.APP_NAME = newAppName;
+                
+                // Notify Admin
+                if (String(targetChatId) !== ADMIN_ID) {
+                     bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another Heroku account. Renamed to \`${appName}\` for this deployment.`).catch(()=>{});
+                }
+
+            } else if (e.response && e.response.status === 404) {
+                // 404 is good, it means the name is free (or deleted).
+            } else {
+                // Ignore other errors for now, let the creation step handle them
             }
         }
+        // --- 💡 END OF FIX 💡 ---
+
         
         // --- NEW MESSAGE LOGIC ---
         // This logic determines where to send animations.
