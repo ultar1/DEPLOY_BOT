@@ -4001,6 +4001,8 @@ async function triggerRenderRestart() {
 
 // In bot.js, replace your old checkHerokuApiKey function with this one
 
+// In bot.js (REPLACE the checkHerokuApiKey function)
+
 async function checkHerokuApiKey() {
     if (!HEROKU_API_KEY) {
         console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
@@ -4008,9 +4010,7 @@ async function checkHerokuApiKey() {
     }
 
     try {
-        // ❗️ FIX: Use the standard 'axios' to make the call.
-        // This is necessary so this function can catch the error itself,
-        // instead of the 'herokuApi' interceptor catching it.
+        // Use standard 'axios' to make the call so we catch the error manually
         await axios.get('https://api.heroku.com/account', {
             headers: {
                 'Authorization': `Bearer ${HEROKU_API_KEY}`,
@@ -4018,23 +4018,27 @@ async function checkHerokuApiKey() {
             }
         });
         
-        // If the request succeeds, the key is valid.
         console.log('[API Check] Periodic check: Heroku API key is valid.');
 
     } catch (error) {
-        // ❗️ FIX: Check for the 401 error and MANUALLY start the workflow.
-        if (error.response && error.response.status === 401) {
-            console.error('[API Check] Status 401: The Heroku key is unauthorized. Triggering recovery workflow...');
+        // --- 💡 FIX: Catch 401 (Unauthorized) AND 403 (Forbidden/Suspended) 💡 ---
+        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
             
-            // Manually call the recovery function with the key that just failed.
+            const status = error.response.status;
+            const reason = status === 403 ? 'Forbidden/Suspended' : 'Unauthorized';
+            
+            console.error(`[API Check] Status ${status} (${reason}): Triggering recovery workflow...`);
+            
+            // Trigger the auto-replacement logic
             await handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
 
         } else {
-            // Log any other errors (like 503, 500, etc.)
+            // Log other errors (e.g. 500, 503) but don't rotate the key yet
             console.error(`[API Check] An unexpected error occurred during periodic check:`, error.message);
         }
     }
 }
+
 
 // In bot_services.js (Add this function)
 
