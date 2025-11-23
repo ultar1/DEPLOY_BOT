@@ -2429,6 +2429,8 @@ const herokuApi = axios.create({
 });
 
 // Add a response interceptor to automatically catch 401 errors
+// In bot.js
+
 herokuApi.interceptors.response.use(
     (response) => response, // If response is successful, just return it
     async (error) => {
@@ -2436,12 +2438,14 @@ herokuApi.interceptors.response.use(
         if (error.response?.status === 401) {
             const failingKey = error.config.headers.Authorization?.split(' ')[1] || 'unknown';
             console.log('INTERCEPTOR: Detected a 401 Unauthorized error from Heroku.');
+            // We do not await this, so the original request fails quickly while recovery starts in background
             handleInvalidHerokuKeyWorkflow(failingKey);
         }
         // IMPORTANT: re-throw the error so the original function that made the call knows it failed
         return Promise.reject(error);
     }
 );
+
 
 /**
  * A reusable function to display the API key deletion menu.
