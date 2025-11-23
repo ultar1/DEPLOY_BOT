@@ -20,6 +20,9 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+// Change it to:
+const { URL, URLSearchParams } = require('url'); // Add URL
+
 const express = require('express');
 
 // In bot.js (around line 30-50)
@@ -45,8 +48,6 @@ const crypto = require('crypto');
 const botServices = require('./bot_services.js');
 
 
-
-const { URLSearchParams } = require('url');
 const sharp = require('sharp');
 // ✅ Correct TITLE (what users see)
 const STICKER_PACK_TITLE = 'Ultar';
@@ -6342,6 +6343,131 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     } catch (error) {
         console.error("Error sending initial /remove message or setting state:", error);
         bot.sendMessage(cid, "An error occurred while starting the removal process. Please try again.");
+    }
+});
+
+
+// In bot.js (REPLACE the existing /updatehost handler)
+
+bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const newHost = match[1].trim();
+    
+    // Basic validation to prevent typos
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(newHost) && !/^[a-zA-Z0-9.-]+$/.test(newHost)) {
+         return bot.sendMessage(adminId, "Invalid IP format. Usage: `/updatehost 13.48.x.x`");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, `**Migration Started**\n\nTarget Host: \`${newHost}\`\n\n1️⃣ Phase 1: Updating User Bots...`, { parse_mode: 'Markdown' });
+
+    // --- PHASE 1: Update User Bots & Backup ---
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    try {
+        // Get all bots that are supposed to be on AWS
+        const result = await pool.query("SELECT user_id, app_name, config_vars FROM user_deployments WHERE neon_account_id = 'AWS_MAIN'");
+        const botsToUpdate = result.rows;
+
+        if (botsToUpdate.length > 0) {
+            for (const [i, botEntry] of botsToUpdate.entries()) {
+                const appName = botEntry.app_name;
+                const oldConfig = botEntry.config_vars || {};
+                const oldUrl = oldConfig.DATABASE_URL;
+
+                if (!oldUrl) {
+                    skipped++;
+                    continue;
+                }
+
+                try {
+                    // 1. Parse and modify the URL
+                    const dbUrlObj = new URL(oldUrl);
+                    
+                    // Skip if it's already updated
+                    if (dbUrlObj.hostname === newHost) {
+                        skipped++;
+                        continue;
+                    }
+
+                    dbUrlObj.hostname = newHost;
+                    const newUrl = dbUrlObj.toString();
+
+                    // 2. Update Heroku (This restarts the user bot)
+                    await herokuApi.patch(`/apps/${appName}/config-vars`,
+                        { DATABASE_URL: newUrl },
+                        { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                    );
+
+                    // 3. BACKUP: Update Local Database Record Immediately
+                    // We update the JSON blob so your backup is always in sync with Heroku
+                    await pool.query(`
+                        UPDATE user_deployments
+                        SET config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($1::text), true)
+                        WHERE app_name = $2
+                    `, [newUrl, appName]);
+
+                    success++;
+                    
+                    // Update progress message every 5 bots
+                    if (i % 5 === 0) {
+                         await bot.editMessageText(
+                             `1. Updating User Bots... (${i + 1}/${botsToUpdate.length})\n` +
+                             `Current: \`${appName}\`\n` +
+                             `OK: ${success} | Fail: ${failed}`, 
+                             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                         ).catch(()=>{});
+                    }
+                    
+                    // Small delay to prevent Heroku rate limiting
+                    await new Promise(r => setTimeout(r, 1000));
+
+                } catch (e) {
+                    console.error(`Failed to migrate ${appName}:`, e.message);
+                    failed++;
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Critical error during user bot update:", error);
+        return bot.sendMessage(adminId, `**Critical Error:** Database query failed. Migration stopped.\n${error.message}`);
+    }
+
+    // --- PHASE 2: Update Main Bot (Render) ---
+    
+    await bot.editMessageText(
+        `**Phase 1 Complete**\n\n` +
+        `User Bots Updated/Backed Up: ${success}\n` +
+        `Skipped (Already Done): ${skipped}\n` +
+        `Failed: ${failed}\n\n` +
+        `2. Updating Main Bot Config & Restarting...`, 
+        { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+    );
+
+    try {
+        // Construct the API URL (http://IP:3000)
+        const newApiUrl = `http://${newHost}:3000`;
+        
+        // Use your existing helper function to update Render
+        const updateResult = await updateRenderVar('SELF_HOSTED_DB_URL', newApiUrl);
+        
+        if (updateResult.success) {
+            await bot.sendMessage(adminId, 
+                `**Migration Successful!**\n\n` +
+                `1. All AWS User bots updated to \`${newHost}\`.\n` +
+                `2. Backups synchronized.\n` +
+                `3. Render \`SELF_HOSTED_DB_URL\` updated.\n\n` +
+                `**Main Bot is restarting now.** Back online in ~1 minute.`
+            );
+        } else {
+            throw new Error(updateResult.message);
+        }
+
+    } catch (error) {
+        await bot.sendMessage(adminId, `**Phase 2 Failed:** User bots are updated, but Main Bot failed to update Render.\nError: ${error.message}\n\nPlease update \`SELF_HOSTED_DB_URL\` manually in Render Dashboard.`);
     }
 });
 
