@@ -4551,7 +4551,7 @@ bot.on('left_chat_member', handleLeftMembers);
   }, 5000); // Wait 5 seconds
   //
   
-  setInterval(checkHerokuApiKey, 5 * 60 * 1000);
+  setInterval(checkHerokuApiKey, 1 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
     // In bot.js (inside your main startup block near other intervals)
