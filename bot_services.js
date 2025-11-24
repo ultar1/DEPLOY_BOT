@@ -2018,11 +2018,27 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         // User deploys: Send log to Admin, primary message to User
         adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
         
-        primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
+        try {
+            primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
+            primaryAnimChatId = primaryBuildMsg.chat.id;
+            primaryAnimMsgId = primaryBuildMsg.message_id;
+        } catch (e) {
+            // User block detected! Fallback the messaging target to the Admin's log message
+            if (e.message.includes('403 Forbidden')) {
+                console.warn(`[Build] User ${targetChatId} blocked bot. Progress updates will be sent to Admin Log.`);
+                primaryAnimChatId = ADMIN_ID;
+                primaryAnimMsgId = adminLogMsg ? adminLogMsg.message_id : null;
+            } else {
+                throw e; // Re-throw other unexpected errors
+            }
+        }
         
-        primaryAnimChatId = primaryBuildMsg.chat.id;
-        primaryAnimMsgId = primaryBuildMsg.message_id;
-    }
+        // If we still don't have a message ID (e.g., admin deployed for self AND adminLogMsg is null), use admin's ID
+        if (!primaryAnimMsgId && String(targetChatId) === ADMIN_ID) {
+             primaryAnimChatId = ADMIN_ID;
+             primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
+             primaryAnimMsgId = primaryBuildMsg.message_id;
+        }
     
     // Set the initial animation state
 
