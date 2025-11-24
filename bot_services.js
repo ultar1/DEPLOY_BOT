@@ -20,6 +20,7 @@ let HEROKU_API_KEY;
 let GITHUB_LEVANTER_REPO_URL;
 let GITHUB_RAGANORK_REPO_URL;
 let ADMIN_ID;
+let moduleCheckIfDatabaseExists; 
 let TELEGRAM_CHANNEL_ID; // Added for monitoring
 let defaultEnvVars; // This will now hold an object like { levanter: {}, raganork: {} }
 let appDeploymentPromises;
@@ -38,6 +39,7 @@ let escapeMarkdown;
  * @param {object} params.mainPool - The main PostgreSQL pool.
  * @param {object} params.backupPool - The backup PostgreSQL pool.
  * @param {object} params.bot - The TelegramBot instance.
+ * @param {function} params.checkIfDatabaseExists - The function itself.
  * @param {string} params.HEROKU_API_KEY - Heroku API key.
  * @param {Array} params.NEON_ACCOUNTS - Array containing all Neon account configurations.
  * @param {string} params.GITHUB_LEVANTER_REPO_URL - GitHub URL for Levanter.
@@ -65,6 +67,7 @@ function init(params) {
     ADMIN_ID = params.ADMIN_ID;
     runOrphanDbCleanup = params.runOrphanDbCleanup; 
     moduleParams = params;
+    moduleCheckIfDatabaseExists = params.checkIfDatabaseExists; 
     NEON_ACCOUNTS = params.NEON_ACCOUNTS;
     TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
     defaultEnvVars = params.defaultEnvVars;
@@ -2431,15 +2434,6 @@ async function getUniqueAppName(appName, herokuApi, HEROKU_API_KEY) {
 
 // --- The main function with the final logic adjustments ---
 
-/**
- * TRULY SILENTLY restores a Heroku app.
- * Sends NO messages to admin or user on BUILD failure.
- * Sends messages to the USER ONLY on CONNECTION failure (Logged Out).
- * @param {string} targetChatId The ID of the user owning the bot.
- * @param {object} vars The config vars object from the backup.
- * @param {string} botType The type of bot ('levanter' or 'raganork').
- * @returns {Promise<{success: boolean, error?: string, appName?: string, isSkipped?: boolean}>}
- */
 
 /**
  * TRULY SILENTLY restores a Heroku app.
