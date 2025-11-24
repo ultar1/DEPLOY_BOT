@@ -7978,39 +7978,6 @@ bot.onText(/^\/addexp (\d+) (\d+)$/, async (msg, match) => {
     }
 });
 
-// Callback handler for selecting a bot to extend
-bot.on('callback_query', async (query) => {
-    if (query.data.startsWith('addexp_select:')) {
-        const [, appName, daysToAdd] = query.data.split(':');
-        const userId = query.from.id.toString();
-        const days = parseInt(daysToAdd, 10);
-        
-        try {
-            const result = await pool.query(
-                `UPDATE user_deployments 
-                 SET expiration_date = expiration_date + INTERVAL '${days} days'
-                 WHERE user_id = $1 AND app_name = $2
-                 RETURNING expiration_date`,
-                [userId, appName]
-            );
-            
-            if (result.rowCount > 0) {
-                const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString();
-                await bot.answerCallbackQuery(query.id, `✅ Added ${days} day(s) to ${appName}`, true);
-                await bot.editMessageText(
-                    `✅ Successfully added ${days} day(s) to ${appName}!\n\nNew expiration: ${newDate}`,
-                    { chat_id: userId, message_id: query.message.message_id }
-                );
-            } else {
-                await bot.answerCallbackQuery(query.id, 'Bot not found or already deleted', true);
-            }
-        } catch (error) {
-            console.error('[AddExp Callback] Error:', error);
-            await bot.answerCallbackQuery(query.id, `Error: ${error.message}`, true);
-        }
-    }
-});
-
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
 
 // Updated regex to capture optional text after the user ID: /send <user_id> <optional_text>
@@ -10220,6 +10187,38 @@ if (action === 'bapp_select_type') {
     const botTypeToManage = payload;
     // Call the sendBappList function with the selected filter
     await sendBappList(cid, q.message.message_id, botTypeToManage);
+}
+
+// --- ADD EXP SELECT: Extend a bot's expiration ---
+if (action === 'addexp_select') {
+    const [appName, daysToAdd] = payload.split(':');
+    const userId = cid;
+    const days = parseInt(daysToAdd, 10);
+    
+    try {
+        const result = await pool.query(
+            `UPDATE user_deployments 
+             SET expiration_date = expiration_date + INTERVAL '${days} days'
+             WHERE user_id = $1 AND app_name = $2
+             RETURNING expiration_date`,
+            [userId, appName]
+        );
+        
+        if (result.rowCount > 0) {
+            const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString();
+            await bot.answerCallbackQuery(q.id, `✅ Added ${days} day(s) to ${appName}`, true);
+            await bot.editMessageText(
+                `✅ Successfully added ${days} day(s) to ${appName}!\n\nNew expiration: ${newDate}`,
+                { chat_id: userId, message_id: q.message.message_id }
+            );
+        } else {
+            await bot.answerCallbackQuery(q.id, 'Bot not found or already deleted', true);
+        }
+    } catch (error) {
+        console.error('[AddExp Callback] Error:', error);
+        await bot.answerCallbackQuery(q.id, `Error: ${error.message}`, true);
+    }
+    return;
 }
 
 // --- AWS DB FIX: Restart all bots ---
