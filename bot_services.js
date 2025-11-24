@@ -1938,7 +1938,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                 appName = newAppName;
                 vars.APP_NAME = newAppName;
                 if (String(targetChatId) !== ADMIN_ID) {
-                     bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another account. Renamed to \`${appName}\` for this deployment.`).catch(()=>{});
+                     bot.sendMessage(ADMIN_ID, `Renamed to \`${appName}\`).catch(()=>{});
                 }
             } else if (e.response?.status !== 404) {
                 throw e;
