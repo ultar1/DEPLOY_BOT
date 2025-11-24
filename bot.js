@@ -2807,84 +2807,60 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
 // In bot.js, REPLACE this entire function
 async function runBackupAllTask(adminId, initialMessageId = null) {
     console.log('[Backup Task] Starting execution...');
-    
+
     let progressMsg;
     if (initialMessageId) {
         progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
     } else {
-        // Send plain text, no parse_mode
         progressMsg = await bot.sendMessage(adminId, 'Starting Bot Settings Backup...');
     }
 
-    let backupSuccess = true;
-    let failCount = 0;
     try {
-        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
-        let successCount = 0;
+        await bot.editMessageText('Collecting app list and backing up settings from Heroku...', { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
 
-        for (const [index, botInfo] of allBots.entries()) {
-            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
-            
-            // Send plain text, no parse_mode
-            await bot.editMessageText(`Progress: (${index + 1}/${allBots.length})\n\nBacking up settings for ${appName}...`, {
-                chat_id: adminId, message_id: progressMsg.message_id
-            }).catch(() => {});
+        // Use the service function which centralizes Heroku API logic and DB writes
+        const result = await dbServices.backupAllPaidBots();
 
+        if (!result || !result.success) {
+            const message = result && result.message ? result.message : 'Unknown error while performing backupAllPaidBots';
+            console.error('[Backup Task] backupAllPaidBots reported failure:', message);
+            await bot.editMessageText(`Backup failed: ${message}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
+            await bot.sendMessage(adminId, `Backup failed: ${message}`);
+            // Do not proceed to /copydb on failure
+            return;
+        }
+
+        const stats = result.stats || {};
+        const misc = result.miscStats || {};
+
+        let summary = `Bot Settings Backup Complete!\n\nProcessed: ${misc.totalRelevantApps || 0}\nBacked up: ${misc.appsBackedUp || 0}\nFailed: ${misc.appsFailed || 0}\nNot found locally: ${misc.appsNotFoundLocally || 0}\n\nType Summary:\n`;
+        for (const t of Object.keys(stats)) {
+            const s = stats[t] || { backedUp: [], failed: [] };
+            summary += `- ${t}: backed ${s.backedUp.length}, failed ${s.failed.length}\n`;
+        }
+
+        await bot.editMessageText(summary, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
+
+        const backupSuccess = (misc.appsFailed || 0) === 0;
+
+        // PHASE 2: copydb if the backup phase was successful
+        if (backupSuccess) {
+            await bot.sendMessage(adminId, 'Starting Phase 2: Automatically copying main database to backup database...');
             try {
-                // Step 1: Backup config vars (settings)
-                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
-                successCount++;
-            } catch (error) {
-                 if (error.response && error.response.status === 404) {
-                    console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
-                    await dbServices.deleteUserBot(ownerId, appName);
-                    await dbServices.markDeploymentDeletedFromHeroku(ownerId, appName);
-                    // Send plain text, no parse_mode
-                    await bot.sendMessage(adminId, `Bot ${appName} not found on Heroku. Records cleaned.`);
-                } else {
-                    failCount++;
-                    const errorMsg = error.response?.data?.message || error.message;
-                    console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
-                    // Send plain text, no parse_mode
-                    await bot.sendMessage(adminId, `Failed to back up ${appName}.\nReason: ${String(errorMsg).substring(0, 200)}`);
-                }
+                await runCopyDbTask();
+                await bot.sendMessage(adminId, 'Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.');
+            } catch (copyError) {
+                console.error('Error during automated /copydb task:', copyError);
+                await bot.sendMessage(adminId, `Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`);
             }
-        } // End of loop
-
-        // Send plain text, no parse_mode
-        await bot.editMessageText(
-            `Bot Settings Backup Complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}\n\nBot configurations (including DATABASE_URL) are saved.`,
-            { chat_id: adminId, message_id: progressMsg.message_id }
-        );
-        
-        if (failCount > 0) {
-             backupSuccess = false;
+        } else {
+            await bot.sendMessage(adminId, 'Main database copy was skipped because errors occurred during the bot backup phase.');
         }
 
     } catch (error) {
         console.error('[Backup Task] Critical error during /backupall:', error);
-        // Send plain text, no parse_mode
-        await bot.editMessageText(`A critical error occurred during backup:\n\n${error.message}`, {
-            chat_id: adminId, message_id: progressMsg.message_id
-        });
-        backupSuccess = false;
-    }
-
-    // --- PHASE 2: Automatically Run /copydb ---
-    if (backupSuccess) {
-        // Send plain text, no parse_mode
-        await bot.sendMessage(adminId, "Starting Phase 2: Automatically copying main database to backup database...");
-        try {
-            await runCopyDbTask(); // This is the core logic function for /copydb
-            await bot.sendMessage(adminId, "Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.");
-        } catch (copyError) {
-            console.error("Error during automated /copydb task:", copyError);
-            // Send plain text, no parse_mode
-            await bot.sendMessage(adminId, `Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`);
-        }
-    } else {
-         await bot.sendMessage(adminId, "Main database copy was skipped because errors occurred during the bot backup phase.");
+        await bot.editMessageText(`A critical error occurred during backup:\n\n${error.message}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
+        await bot.sendMessage(adminId, `A critical error occurred during backup: ${error.message}`);
     }
 }
 
