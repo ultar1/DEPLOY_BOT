@@ -2006,7 +2006,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     
     // --- NEW MESSAGE LOGIC ---
     
-    / Send log message to Admin (always done first)
+   //Send log message to Admin (always done first)
         if (String(targetChatId) !== ADMIN_ID) {
             adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
         }
