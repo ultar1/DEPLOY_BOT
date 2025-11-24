@@ -15213,10 +15213,10 @@ async function checkAndManageExpirations() {
     for (const botInfo of expiringBots) {
         const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
         
-        let warningToSend = null; // 7, 3, or null
+        let warningToSend = null; // 7, 3, 1, or null
         let newWarningLevel = 0;
 
-        // --- NEW Multi-Stage Warning Logic ---
+        // --- Multi-Stage Warning Logic: 7 days, 3 days, and LAST DAY ---
         if (botInfo.warning_level === 0 && daysLeft <= 7) {
             // Bot is at level 0 and is 7 days (or less) from expiring. Send 7-day warning.
             warningToSend = 7;
@@ -15225,23 +15225,36 @@ async function checkAndManageExpirations() {
             // Bot is at level 7 and is 3 days (or less) from expiring. Send 3-day warning.
             warningToSend = 3;
             newWarningLevel = 3;
+        } else if (botInfo.warning_level === 3 && daysLeft <= 1) {
+            // Bot is at level 3 and is 1 day (or less) from expiring. Send LAST DAY warning.
+            warningToSend = 1;
+            newWarningLevel = 1;
         }
-        // --- End of New Logic ---
+        // --- End of Multi-Stage Logic ---
 
         // If a warning needs to be sent
         if (warningToSend) {
+            let warningMessageText = '';
+            
+            // Customize message based on days left
+            if (warningToSend === 7) {
+                warningMessageText = `⏰ Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
+            } else if (warningToSend === 3) {
+                warningMessageText = `🔴 URGENT: Your bot *${escapeMarkdown(botInfo.app_name)}* expires in *${daysLeft} day(s)* only! Renew now or it will be deleted.`;
+            } else if (warningToSend === 1) {
+                warningMessageText = `🚨 CRITICAL: Your bot *${escapeMarkdown(botInfo.app_name)}* expires *TODAY/TOMORROW*! This is your LAST CHANCE to renew before permanent deletion!`;
+            }
+            
             console.log(`[Expiration] Sending ${warningToSend}-day warning for ${botInfo.app_name}.`);
             
             try {
                 // --- A) Send Telegram Message ---
-                const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
-                
-                await bot.sendMessage(botInfo.user_id, warningMessage, {
+                await bot.sendMessage(botInfo.user_id, warningMessageText, {
                     parse_mode: 'Markdown',
                     reply_markup: {
                         inline_keyboard: [
                             [
-                                { text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
+                                { text: `🔄 Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
                             ]
                         ]
                     }
