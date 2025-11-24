@@ -7023,6 +7023,54 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork|hermit))?\s*([\s\S]*)$/, async (m
 });
 
 
+// ... (Your existing bot.js content)
+
+// Add this handler to your bot.onText section in bot.js
+
+bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const appName = match[1].trim();
+
+    const workingMsg = await bot.sendMessage(adminId, `Fetching AWS DB URL for \`${appName}\`...`, { parse_mode: 'Markdown' });
+
+    try {
+        // Call the new service function
+        const result = await dbServices.getAwsDbConnectionString(appName);
+
+        if (result.success) {
+            await bot.editMessageText(
+                `**AWS Database Connection String** for \`${appName}\`:\n\n` +
+                `\`${result.dbUrl}\``,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            await bot.editMessageText(
+                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${result.message}`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        }
+    } catch (e) {
+        console.error(`Error processing /getawsdb for ${appName}:`, e.message);
+        await bot.editMessageText(`An unexpected error occurred.`, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id
+        });
+    }
+});
+
+// ... (Your existing bot.js content)
+
+
 bot.onText(/\/sticker(?: (.+))?/, async (msg, match) => {
     // 1. Check permissions
     if (String(msg.from.id) !== ADMIN_ID) {
