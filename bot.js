@@ -6342,14 +6342,11 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 
 // ... (Your existing bot.js content)
 
-// Add this handler to your bot.onText section in bot.js
-
 bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     
     // --- 1. Admin Check ---
     if (adminId !== ADMIN_ID) {
-        // Send and return immediately if not admin
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
 
@@ -6361,7 +6358,6 @@ bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
         workingMsg = await bot.sendMessage(adminId, `Fetching AWS DB URL for \`${appName}\`...`, { parse_mode: 'Markdown' });
 
         // --- 3. Call the service function ---
-        // Ensure dbServices is correctly imported and available in scope
         const result = await dbServices.getAwsDbConnectionString(appName);
 
         // --- 4. Handle success or failure ---
@@ -6377,7 +6373,7 @@ bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
             );
         } else {
             await bot.editMessageText(
-                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${result.message}`,
+                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${escapeMarkdown(result.message)}`,
                 {
                     chat_id: adminId,
                     message_id: workingMsg.message_id,
@@ -6387,19 +6383,21 @@ bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
         }
     } catch (e) {
         // --- 5. CRITICAL CATCH: Handle unexpected crashes ---
-        const errorMessage = e.message || 'An unknown critical error occurred.';
-        console.error(`Error processing /getawsdb for ${appName}:`, errorMessage, e.stack);
+        const rawErrorMessage = e.message || 'An unknown critical error occurred.';
+        // CRITICAL FIX: Escape the raw error message before wrapping it in backticks for display
+        const escapedErrorMessage = escapeMarkdown(rawErrorMessage); 
+        console.error(`Error processing /getawsdb for ${appName}:`, rawErrorMessage, e.stack);
 
         if (workingMsg && workingMsg.message_id) {
-            // If the initial message was sent, edit it with the error
-            await bot.editMessageText(`An unexpected critical error occurred:\n\n\`${errorMessage}\``, {
+            // Edit the message with the escaped error wrapped in code block
+            await bot.editMessageText(`An unexpected critical error occurred:\n\n\`${escapedErrorMessage}\``, {
                 chat_id: adminId,
                 message_id: workingMsg.message_id,
-                parse_mode: 'Markdown'
+                parse_mode: 'Markdown' // Still using Markdown for the outer formatting
             }).catch(editError => console.error(`Failed to send error reply: ${editError.message}`));
         } else {
-            // If the initial message failed (e.g., bot was blocked by admin), send a new one
-             await bot.sendMessage(adminId, `An unexpected critical error occurred:\n\n\`${errorMessage}\``, {
+            // If the initial message failed, send a new one
+             await bot.sendMessage(adminId, `An unexpected critical error occurred:\n\n\`${escapedErrorMessage}\``, {
                 parse_mode: 'Markdown'
             });
         }
