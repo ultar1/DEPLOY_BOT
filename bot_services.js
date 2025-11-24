@@ -1917,42 +1917,57 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     let primaryAnimMsgId;
 
     try {
-        // 2. Handle app renaming
-        if (isRestore) {
-            try {
-                await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
-                appName = newName;
-                vars.APP_NAME = newName;
-                console.log(`[Restore] App ${originalAppName} exists. Using new name: ${appName}`);
-            } catch (e) {
-                if (e.response?.status !== 404) throw e;
+    // 2. Handle app renaming/ownership check
+    if (isRestore) {
+        try {
+            await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+            
+            // If 200 OK: App exists and we have access.
+            const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
+            appName = newName;
+            vars.APP_NAME = newName;
+            console.log(`[Restore] App ${originalAppName} exists. Using new name: ${appName}`);
+
+        } catch (e) {
+            // Logic for 403/404 handling (omitted here as it was fixed separately)
+            if (e.response && e.response.status === 403) {
+                const randomSuffix = require('crypto').randomBytes(2).toString('hex');
+                const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
+                await mainPool.query('UPDATE user_bots SET bot_name = $1 WHERE bot_name = $2', [newAppName, appName]);
+                await mainPool.query('UPDATE user_deployments SET app_name = $1 WHERE app_name = $2', [newAppName, appName]);
+                appName = newAppName;
+                vars.APP_NAME = newAppName;
+                if (String(targetChatId) !== ADMIN_ID) {
+                     bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another account. Renamed to \`${appName}\` for this deployment.`).catch(()=>{});
+                }
+            } else if (e.response?.status !== 404) {
+                throw e;
             }
         }
+    }
+    
+    // --- NEW MESSAGE LOGIC ---
+    
+    if (String(targetChatId) === ADMIN_ID) {
+        // Admin deploys for self: Primary message is sent to ADMIN_ID
+        primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
+        adminLogMsg = null; // No separate log needed for admin
         
-        // --- NEW MESSAGE LOGIC ---
-        // This logic determines where to send animations.
+        primaryAnimChatId = primaryBuildMsg.chat.id;
+        primaryAnimMsgId = primaryBuildMsg.message_id;
         
-        if (String(targetChatId) === ADMIN_ID) {
-            // The admin is deploying for themselves.
-            // The "primary" message IS the admin's message.
-            primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
-            adminLogMsg = null; // No separate log needed.
-            
-            primaryAnimChatId = primaryBuildMsg.chat.id;
-            primaryAnimMsgId = primaryBuildMsg.message_id;
-            
-        } else {
-            // A user is deploying.
-            // Send a simple log to the admin.
-            adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
-            // Send the "primary" message to the user.
-            primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
-            
-            primaryAnimChatId = primaryBuildMsg.chat.id;
-            primaryAnimMsgId = primaryBuildMsg.message_id;
-        }
-        // --- END OF NEW LOGIC ---
+    } else {
+        // User deploys: Send log to Admin, primary message to User
+        adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
+        
+        primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
+        
+        primaryAnimChatId = primaryBuildMsg.chat.id;
+        primaryAnimMsgId = primaryBuildMsg.message_id;
+    }
+    
+    // Set the initial animation state
+
         
         
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
