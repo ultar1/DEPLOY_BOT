@@ -2793,6 +2793,26 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
+// In bot.js (Find the herokuApi interceptor block and REPLACE it)
+
+herokuApi.interceptors.response.use(
+    (response) => response, // If response is successful, just return it
+    async (error) => {
+        // --- 💡 CHECK FOR UNAUTHORIZED (401) ONLY 💡 ---
+        if (error.response && error.response.status === 401) {
+            const failingKey = error.config.headers.Authorization?.split(' ')[1] || 'unknown';
+            console.log(`INTERCEPTOR: Detected a 401 (Unauthorized) error from Heroku. Rotating key.`);
+            
+            // This starts the self-healing process in the background
+            handleInvalidHerokuKeyWorkflow(failingKey);
+            
+            // NOTE: The separate checkHerokuApiKey interval handles 403 on the /account endpoint.
+        }
+        // IMPORTANT: re-throw the error so the original function that made the call knows it failed
+        return Promise.reject(error);
+    }
+);
+
 
 async function sendPricingTiers(chatId, messageId) {
     // Check if user has existing bots to determine if they are a new user
