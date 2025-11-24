@@ -2483,38 +2483,57 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
 
 
         // --- ❗️ STEP 2: NEON DATABASE LOGIC ❗️ ---
-        const dbName = appName.replace(/-/g, '_'); // Canonical DB name from potentially new app name
+                // --- Step 2: Database Logic ---
         
-        let provisionSuccess = false;
-        
-        // 1. Check if the saved variables contain a connection string pointing to Neon
-        const hasNeonDBUrl = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
+        // Use ORIGINAL APP NAME to find the existing database reference locally
+        const dbName = originalAppName.replace(/-/g, '_'); 
 
-        if (isRestore && hasNeonDBUrl) {
-            // --- RESTORE PATH: INTELLIGENT CHECK ---
-            console.log(`[SilentRestore] Attempting to find existing Neon DB: ${dbName} for re-use.`);
-            const dbCheckResult = await checkIfDatabaseExists(dbName);
+        // --- 💡 FIX: SIMPLIFIED RESTORE LOGIC 💡 ---
+        if (isRestore && vars.DATABASE_URL) {
+            // RESTORE MODE: Blindly trust the backup URL.
+            console.log(`[SilentRestore] Restore Mode: Using saved DATABASE_URL for ${appName}.`);
+            
+            // Attempt to recover the Account ID from the original deployment record for local tracking.
+            // If this fails, neonAccountId remains '1' (default), which is fine as the URL is what matters.
+            try {
+                const prevRecord = await mainPool.query(
+                    'SELECT neon_account_id FROM user_deployments WHERE app_name = $1', 
+                    [originalAppName]
+                );
+                if (prevRecord.rows.length > 0) {
+                    neonAccountId = prevRecord.rows[0].neon_account_id || '1';
+                }
+            } catch(e) {
+                console.warn(`[SilentRestore] Could not fetch previous account ID. Defaulting to '1'.`);
+            }
+
+        } else {
+            // STANDARD CREATION LOGIC (New Deploys or Missing URL)
+            console.log(`[SilentRestore] New/Missing URL: Creating or Checking for DB ${dbName}`);
+            
+            // 1. Check if we can reuse an existing DB
+            const dbCheckResult = await checkIfDatabaseExists(dbName); 
 
             if (dbCheckResult.exists) {
-                // A. Database found! Re-use the existing connection string and account ID.
+                console.log(`[SilentRestore] Re-using existing DB: ${dbName}`);
                 vars.DATABASE_URL = dbCheckResult.connection_string; 
                 neonAccountId = dbCheckResult.account_id;
-                provisionSuccess = true;
-                console.log(`[SilentRestore] RE-USED existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
             } else {
-                // B. Database not found. Provision NEW.
-                console.log(`[SilentRestore] Old Neon DB not found. Provisioning NEW Neon DB: ${dbName}`);
+                // 2. Database not found. Create a NEW one.
+                console.log(`[SilentRestore] Creating NEW DB: ${dbName}`);
                 const neonResult = await createNeonDatabase(dbName);
 
-                if (neonResult.success) {
-                    vars.DATABASE_URL = neonResult.connection_string;
-                    neonAccountId = neonResult.account_id;
-                    provisionSuccess = true;
-                    console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) for migration.`);
-                } else {
-                    return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
+                if (!neonResult.success) {
+                    // Cleanup the empty app if DB creation fails
+                    await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
+                    return { success: false, error: `DB creation failed: ${neonResult.error}`, appName: appName };
                 }
+                vars.DATABASE_URL = neonResult.connection_string;
+                neonAccountId = neonResult.account_id;
             }
+        }
+        // --- 💡 END OF FIX 💡 ---
+
         } else {
             // --- NEW DEPLOY PATH / NON-NEON MIGRATION ---
             console.log(`[SilentRestore] Migrating/New Deploy: Creating NEW Neon DB: ${dbName}`);
