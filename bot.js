@@ -7514,55 +7514,92 @@ bot.onText(/^\/users$/, async (msg) => {
 
 
 bot.onText(/^\/list$/, async (msg) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
+    const cid = msg.chat.id.toString();
+    const isAdmin = cid === ADMIN_ID;
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching active sessions from external server...");
+    const commands = `
+📋 **BOT COMMANDS SUMMARY**
 
-    try {
-        // 1. Call External API
-        const response = await axios.get(
-            `${MESSAGE_BOT_URL}/list`,
-            { 
-                headers: { 'x-api-key': MESSAGE_BOT_API_KEY }
-            }
-        );
+🔧 **ADMIN COMMANDS:**
+\`/menu\` - Show admin menu
+\`/apps\` - List all deployed bots
+\`/dbstats\` - DB stats with owner lookup
+\`/sync\` - Sync databases
 
-        const data = response.data;
-        
-        // Assuming API returns { success: true, clients: ["23490...", "1234..."] } 
-        // or { success: true, clients: [{ number: "...", status: "..." }] }
-        const clients = data.clients || [];
+💾 **BACKUP & RESTORE:**
+\`/backupall\` - Backup all paid bots
+\`/copydb\` - Copy database
+\`/restoreall\` - Restore all bots
+\`/restartall\` - Restart all bots
 
-        if (clients.length === 0) {
-            return bot.editMessageText("No active WhatsApp sessions found on the external server.", {
-                chat_id: adminId, message_id: workingMsg.message_id
-            });
-        }
+🌐 **DATABASE:**
+\`/createawsdb <name>\` - Create AWS database
+\`/deleteawsdb <name>\` - Delete AWS database
+\`/getawsdb <name>\` - Get AWS database info
+\`/createneondb <name>\` - Create Neon database
+\`/changedb <url>\` - Change database URL
+\`/updatehost <ip>\` - Update database host IP
 
-        let message = "*Active External Sessions:*\n\n";
-        
-        clients.forEach((client, index) => {
-            // Handle different API response formats (string vs object)
-            const number = typeof client === 'string' ? client : client.number || client.phone;
-            const status = client.status ? `[${client.status}]` : '';
-            
-            message += `**${index + 1}. +${number}** ${status}\n`;
-        });
-        
-        message += `\n_Total: ${clients.length}_`;
+⏱️ **EXPIRATION:**
+\`/expire <days>\` - Set bot expiration (admin)
+\`/exp\` - View my expiration
+\`/addexpall <days>\` - Add days to ALL bots
+\`/addexp <days>\` - Add days to my bot
+\`/addexp <user_id> <days>\` - Add days to user's bots
 
-        await bot.editMessageText(message, {
-            chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown'
-        });
+👥 **USER MANAGEMENT:**
+\`/add <user_id>\` - Add user (free trial)
+\`/deluser <user_id>\` - Delete user
+\`/ban <user_id>\` - Ban user
+\`/unban\` - Show banned users
+\`/info <user_id>\` - User info
+\`/num\` - View pending users
+\`/mynum\` - My number
+\`/users\` - List all users
+\`/revenue\` - Revenue stats
 
-    } catch (e) {
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error("[ListPair] External API Error:", errorMsg);
-        await bot.editMessageText(`❌ Failed to fetch list.\nError: ${errorMsg}`, {
-            chat_id: adminId, message_id: workingMsg.message_id
-        });
-    }
+🔍 **BOT MANAGEMENT:**
+\`/findbot <name>\` - Find bot by name
+\`/restart\` - Restart main bot
+\`/dellogout\` - Delete logged-out bots
+\`/deldb <name>\` - Delete bot database
+\`/remove <user_id>\` - Remove user bot
+
+🔐 **SECURITY:**
+\`/id\` - Show my ID
+\`/dkey\` - Get deployment key
+\`/key <1-5>\` - Get API key
+
+📨 **MESSAGING:**
+\`/send <user_id> <text>\` - Send message to user
+\`/sendall <type> <text>\` - Send to all bots
+\`/askadmin <text>\` - Ask admin question
+
+📱 **WHATSAPP & STICKERS:**
+\`/pair <number>\` - Pair WhatsApp number
+\`/sticker <pack>\` - Download stickers
+
+🛠️ **OTHER:**
+\`/maintenance on|off\` - Toggle maintenance
+\`/addapi <url>\` - Add API endpoint
+\`/apilist\` - List APIs
+\`/delapi\` - Delete API
+\`/editvar\` - Edit variables
+\`/deployem\` - Deploy test bot
+\`/updateall <type>\` - Update bot type
+\`/vcf <data>\` - Generate VCF
+\`/copy\` - Copy something
+\`/bapp\` - Bot app info
+
+✅ **USER COMMANDS:**
+\`/start\` - Start bot
+\`/menu\` - Show menu
+\`/exp\` - Check expiration
+\`/addexp <days>\` - Extend my bot
+\`/askadmin <text>\` - Contact admin
+    `;
+
+    await bot.sendMessage(cid, commands.trim(), { parse_mode: 'Markdown' });
 });
 
 
