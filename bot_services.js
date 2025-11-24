@@ -1463,34 +1463,40 @@ async function getAllBotDeployments() {
 
 // ... (Your existing bot_services.js content)
 
-// Add this function to the module's scope in bot_services.js
-
 /**
- * Fetches the AWS database connection string from the local deployment record.
- * Assumes the AWS self-hosted identifier is stored as 'AWS_MAIN' in neon_account_id.
- * @param {string} appName The name of the Heroku application.
+ * Fetches the AWS/Self-Hosted database connection string from the local deployment record.
+ * It searches only by appName and verifies the URL is NOT a Neon address.
+ * @param {string} appName The name of the Heroku application (e.g., bigmts).
  * @returns {Promise<{success: boolean, dbUrl?: string, message?: string}>}
  */
 async function getAwsDbConnectionString(appName) {
     try {
-        // We look for a record matching the app name AND the assumed AWS account ID
+        // Find ANY deployment record for the appName and retrieve config_vars
         const result = await pool.query(
             `SELECT config_vars FROM user_deployments 
-             WHERE app_name = $1 AND neon_account_id = 'AWS_MAIN'`,
+             WHERE app_name = $1`,
             [appName]
         );
 
         if (result.rows.length === 0) {
-            return { success: false, message: "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing)." };
+            return { success: false, message: "Bot deployment record not found in the database." };
         }
 
-        const configVars = result.rows[0].config_vars;
-        const dbUrl = configVars?.DATABASE_URL;
+        const dbUrl = result.rows[0].config_vars?.DATABASE_URL;
 
         if (!dbUrl) {
             return { success: false, message: "DATABASE_URL not found in the stored configuration variables." };
         }
 
+        // Final Sanity Check: If the URL contains '.neon.tech', it's a Neon URL, not AWS.
+        if (dbUrl.includes('.neon.tech')) {
+             return { 
+                success: false, 
+                message: `The app is currently hosted on Neon. The URL is: ${dbUrl.substring(0, 40)}...`
+            };
+        }
+
+        // If it passed the Neon check, it is assumed to be the AWS/Self-Hosted URL.
         return { success: true, dbUrl: dbUrl };
 
     } catch (error) {
@@ -1498,6 +1504,13 @@ async function getAwsDbConnectionString(appName) {
         return { success: false, message: `Database error: ${error.message}` };
     }
 }
+
+// ... (Ensure this is added to module.exports) ...
+module.exports = {
+    // ... existing exports ...
+    getAwsDbConnectionString,
+    // ... existing exports ...
+};
 
 // ... (Ensure this is added to modul
 
