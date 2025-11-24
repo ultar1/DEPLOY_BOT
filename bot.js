@@ -6981,31 +6981,79 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
     const workingMsg = await bot.sendMessage(adminId, "Fetching database lists (AWS + Neon)...");
 
-    // --- 0. CRITICAL FIX: PREPARE ROBUST OWNER MAPPING ---
-    // This query uses UNION to merge user_id and app/bot_name from both core tables,
-    // ensuring we find the owner for apps tracked in user_deployments (like after /changedb).
+    // --- 0. FUZZY OWNER MAPPING WITH SIMILARITY MATCHING ---
+    // This query uses UNION to merge user_id and app/bot_name from both core tables
     const allBotsResult = await pool.query(`
         SELECT bot_name, user_id FROM user_bots
         UNION 
         SELECT app_name AS bot_name, user_id FROM user_deployments
     `);
     
-    // Create a map of canonical DB name (underscores) -> user_id
-    // Also add entries for the base name (before any rename suffix) to handle restored apps
-    const ownerMap = new Map();
-    for (const bot of allBotsResult.rows) {
-        const canonicalName = bot.bot_name.replace(/-/g, '_');
-        ownerMap.set(canonicalName, bot.user_id);
+    // Build owner list with canonical names for fuzzy matching
+    const botList = allBotsResult.rows.map(bot => ({
+        name: bot.bot_name,
+        canonical: bot.bot_name.replace(/-/g, '_'),
+        userId: bot.user_id
+    }));
+    
+    // Similarity function: Levenshtein distance ratio
+    function getSimilarity(str1, str2) {
+        const longer = str1.length > str2.length ? str1 : str2;
+        const shorter = str1.length > str2.length ? str2 : str1;
         
-        // Also add the base name (everything before the last dash-hex pattern for renamed apps)
-        // This helps match original DB names to renamed apps (e.g., bigmts to bigmts-abc123)
-        const baseNameMatch = bot.bot_name.match(/^(.+?)-[a-f0-9]{6}$/);
-        if (baseNameMatch) {
-            const baseName = baseNameMatch[1].replace(/-/g, '_');
-            if (!ownerMap.has(baseName)) {
-                ownerMap.set(baseName, bot.user_id);
+        if (longer.length === 0) return 1.0;
+        
+        const editDistance = getEditDistance(longer, shorter);
+        return (longer.length - editDistance) / longer.length;
+    }
+    
+    function getEditDistance(s1, s2) {
+        const costs = [];
+        for (let i = 0; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 0; j <= s2.length; j++) {
+                if (i === 0) {
+                    costs[j] = j;
+                } else if (j > 0) {
+                    let newValue = costs[j - 1];
+                    if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                        newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                    }
+                    costs[j - 1] = lastValue;
+                    lastValue = newValue;
+                }
+            }
+            if (i > 0) costs[s2.length] = lastValue;
+        }
+        return costs[s2.length];
+    }
+    
+    // Function to find owner by exact or fuzzy match
+    function findOwnerByName(dbName) {
+        // 1. Try exact match on canonical name
+        for (const bot of botList) {
+            if (bot.canonical === dbName) return bot.userId;
+        }
+        
+        // 2. Try exact match on original name (with underscores)
+        const dbNameWithUnderscores = dbName.replace(/-/g, '_');
+        for (const bot of botList) {
+            if (bot.canonical === dbNameWithUnderscores) return bot.userId;
+        }
+        
+        // 3. Fuzzy match: find the most similar name with threshold > 70%
+        let bestMatch = null;
+        let bestSimilarity = 0.7; // 70% similarity threshold
+        
+        for (const bot of botList) {
+            const similarity = getSimilarity(dbName, bot.canonical);
+            if (similarity > bestSimilarity) {
+                bestSimilarity = similarity;
+                bestMatch = bot.userId;
             }
         }
+        
+        return bestMatch || 'Unknown';
     }
 
     // --- 1. AWS SELF-HOSTED REPORT ---
