@@ -1725,23 +1725,7 @@ cron.schedule('0 0 * * 0', () => {
 
 console.log('Weekly prune job for logged-out bots is scheduled.');
 
-// --- END SCHEDULED JOBS ---
-// In bot.js, inside the main startup block, alongside other scheduled tasks:
 
-// Schedule 3: Run Orphan DB Cleanup every 12 hours (43,200,000 ms)
-const ORPHAN_CLEANUP_INTERVAL_MS = 12 * 60 * 60 * 1000; 
-
-setInterval(async () => {
-    console.log('[Scheduler] Cron job triggered: Running Orphan DB Cleanup task');
-    await runOrphanDbCleanup(ADMIN_ID); // Pass ADMIN_ID so the report is sent to Telegram
-}, ORPHAN_CLEANUP_INTERVAL_MS);
-
-console.log(`[Cleanup] Scheduled Orphan DB Cleanup every 12 hours.`);
-
-
-    // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
-    // Cron format: 'Minute Hour DayOfMonth Month DayOfWeek'
-    // Inside startScheduledTasks function...
 cron.schedule('0 0 * * *', async () => {
     console.log('[Scheduler] Cron job triggered: Running backupall task');
     const startMsg = await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
@@ -4538,7 +4522,6 @@ bot.on('left_chat_member', handleLeftMembers);
 
   startScheduledTasks();
     await checkHerokuApiKey(); 
-  runOrphanDbCleanup();
 
   setTimeout(async () => {
       try {
