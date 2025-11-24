@@ -1978,68 +1978,54 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         clearInterval(primaryAnimateIntervalId);
 
         // --- All animations now go to the user ---
+                // --- Database Logic ---
         await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
 
-                // Determine action text based on isRestore
         let actionText = "Creating";
-        
-        // Edit message using primaryAnimChatId and primaryAnimMsgId
-        if (primaryAnimMsgId) { // Check if message ID exists before editing
-            await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Provisioning database...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
-        } else {
-             console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
-        }
+        const dbName = originalAppName.replace(/-/g, '_'); 
 
-        const dbName = originalAppName.replace(/-/g, '_');  // Canonical database name
-
+        // --- 💡 FIX: PURE RESTORE LOGIC (NO CHECKS) 💡 ---
         if (isRestore && vars.DATABASE_URL) {
-            // --- RESTORE PATH: Check if the OLD DB still exists ---
-            actionText = "Checking for existing database";
-
-            // 1. Check the old database name (underscored) for existence
-            const dbCheckResult = await checkIfDatabaseExists(dbName); 
-
-            if (dbCheckResult.exists) {
-                // 2. Database found! Use the existing connection string and account ID.
-                actionText = "Re-using existing database";
-                vars.DATABASE_URL = dbCheckResult.connection_string; // Ensure connection string is correct
-                neonAccountId = dbCheckResult.account_id;
-                console.log(`[Build/Restore] Re-using existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
-                
-            } else {
-                // 3. Database not found or deleted. Proceed to create a new one.
-                actionText = "Creating NEW database (Old one not found)";
-                console.log(`[Build/Restore] Old Neon DB not found. Creating NEW Neon DB: ${dbName}`);
-                
-                const neonResult = await createNeonDatabase(dbName);
-
-                if (!neonResult.success) {
-                    throw new Error(`Neon DB creation failed: ${neonResult.error}`);
-                }
-                vars.DATABASE_URL = neonResult.connection_string;
-                neonAccountId = neonResult.account_id;
-                console.log(`[Build/Restore] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
-            }
-        } else {
-            // --- NEW DEPLOY PATH: Always create new DB ---
-            actionText = "Creating NEW database";
-            console.log(`[Build/New] Creating NEW Neon DB: ${dbName}`);
+            // RESTORE MODE: Blindly trust the backup URL.
+            // We use the DATABASE_URL exactly as it was saved in the backup.
+            console.log(`[Build] Restore Mode: Applying saved DATABASE_URL from backup settings.`);
+            actionText = "Restoring...";
             
-            const neonResult = await createNeonDatabase(dbName);
-
-            if (!neonResult.success) {
-                throw new Error(`Neon DB creation failed: ${neonResult.error}`);
-            }
-            vars.DATABASE_URL = neonResult.connection_string;
-            neonAccountId = neonResult.account_id;
-            console.log(`[Build/New] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
+            // We don't need neonAccountId for the API call, but we keep it for saving the record later.
+            // It will be recovered from the DB search later in the Save Deployment step.
+            
+        } else {
+             // --- STANDARD CREATION LOGIC (New Deploys or Missing URL) ---
+             actionText = "Creating NEW database";
+             
+             // 1. Check if we can reuse an existing DB
+             const dbCheckResult = await checkIfDatabaseExists(dbName); 
+    
+             if (dbCheckResult.exists) {
+                 console.log(`[Build] Re-using existing DB: ${dbName}`);
+                 vars.DATABASE_URL = dbCheckResult.connection_string; 
+                 neonAccountId = dbCheckResult.account_id;
+             } else {
+                 // 2. Create a brand new database
+                 console.log(`[Build] Creating NEW DB: ${dbName}`);
+                 const neonResult = await createNeonDatabase(dbName);
+    
+                 if (!neonResult.success) {
+                     // Cleanup the empty app if DB creation fails
+                     await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
+                     return { success: false, error: `DB creation failed: ${neonResult.error}`, appName: appName };
+                 }
+                 vars.DATABASE_URL = neonResult.connection_string;
+                 neonAccountId = neonResult.account_id;
+             }
         }
         
         // Update message with final action text
         if (primaryAnimMsgId) {
              await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText}...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         }
+
 
         // --- End of Neon Logic Integration ---
 
