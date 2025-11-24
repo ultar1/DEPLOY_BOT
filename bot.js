@@ -7041,12 +7041,25 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             if (bot.canonical === dbNameWithUnderscores) return bot.userId;
         }
         
-        // 3. Fuzzy match: find the most similar name with threshold > 70%
+        // 3. Try prefix matching (for renamed apps like mecusgift-4221 matching mecusgift)
+        // Check if DB name starts with any bot's base name
+        for (const bot of botList) {
+            // Extract base name (remove hex suffix if present)
+            const baseName = bot.canonical.replace(/_[a-f0-9]{4,}$/, '');
+            
+            // Check if database name matches the base name or is a renamed version
+            if (dbNameWithUnderscores.startsWith(baseName + '_') || 
+                dbNameWithUnderscores === baseName) {
+                return bot.userId;
+            }
+        }
+        
+        // 4. Fuzzy match: find the most similar name with lower threshold > 65%
         let bestMatch = null;
-        let bestSimilarity = 0.7; // 70% similarity threshold
+        let bestSimilarity = 0.65; // 65% similarity threshold (lowered for better matching)
         
         for (const bot of botList) {
-            const similarity = getSimilarity(dbName, bot.canonical);
+            const similarity = getSimilarity(dbNameWithUnderscores, bot.canonical);
             if (similarity > bestSimilarity) {
                 bestSimilarity = similarity;
                 bestMatch = bot.userId;
