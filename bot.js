@@ -7081,8 +7081,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
                     awsDbs.forEach((db, index) => {
                         const dbName = db.name;
                         const size = db.size;
-                        // Map DB Name to Owner ID
-                        const owner = ownerMap.get(dbName) || 'Unknown';
+                        // Use fuzzy matching to find owner
+                        const owner = findOwnerByName(dbName);
                         
                         // Format: #1 dbname | size | ownerID
                         awsReport += `▫️ #${index + 1} <code>${escapeHTML(dbName)}</code> | ${size} | <code>${owner}</code>\n`;
