@@ -2449,7 +2449,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
     const { 
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
         ADMIN_ID, defaultEnvVars, escapeMarkdown, mainPool, 
-        createNeonDatabase, appDeploymentPromises, GITHUB_HERMIT_REPO_URL, checkIfDatabaseExists 
+        createNeonDatabase, appDeploymentPromises, GITHUB_HERMIT_REPO_URL, 
     } = moduleParams;
     
     const crypto = require('crypto'); 
