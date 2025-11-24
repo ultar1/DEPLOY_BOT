@@ -6340,6 +6340,74 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 });
 
 
+// ... (Your existing bot.js content)
+
+// Add this handler to your bot.onText section in bot.js
+
+bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    
+    // --- 1. Admin Check ---
+    if (adminId !== ADMIN_ID) {
+        // Send and return immediately if not admin
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const appName = match[1].trim();
+    let workingMsg;
+
+    try {
+        // --- 2. Send initial message and store reference ---
+        workingMsg = await bot.sendMessage(adminId, `Fetching AWS DB URL for \`${appName}\`...`, { parse_mode: 'Markdown' });
+
+        // --- 3. Call the service function ---
+        // Ensure dbServices is correctly imported and available in scope
+        const result = await dbServices.getAwsDbConnectionString(appName);
+
+        // --- 4. Handle success or failure ---
+        if (result.success) {
+            await bot.editMessageText(
+                `**AWS Database Connection String** for \`${appName}\`:\n\n` +
+                `\`${result.dbUrl}\``,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            await bot.editMessageText(
+                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${result.message}`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        }
+    } catch (e) {
+        // --- 5. CRITICAL CATCH: Handle unexpected crashes ---
+        const errorMessage = e.message || 'An unknown critical error occurred.';
+        console.error(`Error processing /getawsdb for ${appName}:`, errorMessage, e.stack);
+
+        if (workingMsg && workingMsg.message_id) {
+            // If the initial message was sent, edit it with the error
+            await bot.editMessageText(`An unexpected critical error occurred:\n\n\`${errorMessage}\``, {
+                chat_id: adminId,
+                message_id: workingMsg.message_id,
+                parse_mode: 'Markdown'
+            }).catch(editError => console.error(`Failed to send error reply: ${editError.message}`));
+        } else {
+            // If the initial message failed (e.g., bot was blocked by admin), send a new one
+             await bot.sendMessage(adminId, `An unexpected critical error occurred:\n\n\`${errorMessage}\``, {
+                parse_mode: 'Markdown'
+            });
+        }
+    }
+});
+
+// ... (Ensure this is added to module.
+
 // In bot.js
 bot.onText(/^\/copy$/, async (msg) => {
     const adminId = msg.chat.id.toString();
