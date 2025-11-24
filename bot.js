@@ -291,10 +291,23 @@ await client.query(`
   );
 `);
 
+  // In createAllTablesInPool (bot.js), add this new table definition:
+await client.query(`
+  CREATE TABLE IF NOT EXISTS recovery_schedule (
+      id SERIAL PRIMARY KEY,
+      task_name TEXT NOT NULL,
+      scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      status TEXT DEFAULT 'PENDING'
+  );
+`);
+// NOTE: Make sure this is added to both pools if they are used for recovery tracking.
+// Assuming for simplicity, only the 'pool' (main database) tracks the schedule.
+      
+
 await client.query(`
   CREATE TABLE IF NOT EXISTS wa_settings (
     phone_number TEXT PRIMARY KEY,
-    anti_msg_enabled BOOLEAN DEFAULT FALSE
+    anti_msg_enabled BOOLEAN DEFAULT FAL
   );
 `);
 // --- END WHATSAPP SESSION TABLES ---
@@ -615,6 +628,62 @@ async function runCopyDbTask() {
     }
 }
 
+// In bot.js (Add these new functions globally)
+
+/**
+ * Checks the database on startup and every minute for pending recovery tasks.
+ */
+async function runScheduledRecoveryCheck() {
+    try {
+        const now = new Date();
+        const pendingTasks = await pool.query(
+            "SELECT * FROM recovery_schedule WHERE status = 'PENDING' AND scheduled_at <= $1",
+            [now]
+        );
+
+        for (const task of pendingTasks.rows) {
+            console.log(`[Scheduler] Executing scheduled task: ${task.task_name} (ID: ${task.id})`);
+            
+            // Mark as running immediately to prevent duplicate execution
+            await pool.query("UPDATE recovery_schedule SET status = 'RUNNING' WHERE id = $1", [task.id]);
+
+            if (task.task_name === 'MASS_RESTORE') {
+                await performMassRestoreSequence(task.id);
+            }
+        }
+    } catch (e) {
+        console.error('[Scheduler] Error during recovery check:', e);
+    }
+}
+
+/**
+ * Executes the multi-step restore sequence for all bot types.
+ */
+async function performMassRestoreSequence(taskId) {
+    try {
+        await bot.sendMessage(ADMIN_ID, "**Starting Persistent Mass Restore** (Task ID: **`" + taskId + "`**)\n\nThis will take a long time...", { parse_mode: 'Markdown' });
+        
+        // 1. Levanter Restore
+        await bot.sendMessage(ADMIN_ID, "**Starting Mass Restore: Levanter**", { parse_mode: 'Markdown' });
+        await handleRestoreAllConfirm({ data: 'restore_all_confirm:levanter', message: { chat: { id: ADMIN_ID } } });
+
+        // 2. Raganork Restore
+        await bot.sendMessage(ADMIN_ID, "**Levanter Restore Complete.**\n\n**Starting Mass Restore: Raganork**", { parse_mode: 'Markdown' });
+        await handleRestoreAllConfirm({ data: 'restore_all_confirm:raganork', message: { chat: { id: ADMIN_ID } } });
+
+        // 3. Complete and clean up
+        await pool.query("UPDATE recovery_schedule SET status = 'COMPLETED', scheduled_at = NOW() WHERE id = $1", [taskId]);
+        isMaintenanceMode = false;
+        await saveMaintenanceStatus(false);
+        
+        await bot.sendMessage(ADMIN_ID, `**Persistent Mass Restore Complete!**\n\nMaintenance mode is now disabled.`);
+
+    } catch (restoreError) {
+        console.error(`[Mass Restore] CRITICAL ERROR during sequence (Task ID: ${taskId}):`, restoreError);
+        await pool.query("UPDATE recovery_schedule SET status = 'FAILED', scheduled_at = NOW() WHERE id = $1", [taskId]);
+        await bot.sendMessage(ADMIN_ID, `**Mass Restore Sequence Failed!** (Task ID: **\`${taskId}\`**)\n\nAn error occurred during the restore phase: ${restoreError.message}\n\nThe bot is still in maintenance mode. Manual intervention is required.`);
+    }
+}
 
 async function redeployBot(userId, botId) {
     console.log(`[ACTION] User ${userId} requested redeployment for bot ${botId}.`);
@@ -2631,6 +2700,8 @@ async function findAndDeleteNeonDatabase(dbName) {
  * Handles the entire automated workflow when a Heroku API key is found to be invalid.
  * @param {string} failingKey The API key that just failed.
  */
+// In bot.js (REPLACE the handleInvalidHerokuKeyWorkflow function)
+
 async function handleInvalidHerokuKeyWorkflow(failingKey) {
     if (isRecoveryInProgress) {
         console.log('[Recovery] A recovery process is already in progress. Ignoring trigger.');
@@ -2645,7 +2716,7 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
 
-        // 2. Get a new, valid key from the database that is NOT the one that just failed
+        // 2. Get a new, valid key from the database 
         const newKeyResult = await pool.query(
             "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
             [failingKey]
@@ -2658,45 +2729,38 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         const newKeyId = newKeyResult.rows[0].id;
         await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
         
-        // 3. Update the HEROKU_API_KEY on Render
+        // 3. Update the HEROKU_API_KEY on Render (This triggers the first restart)
         const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
         if (!updateResult.success) {
             throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
         }
         await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render. A new deployment has been triggered to apply the new key.");
 
-        // 4. Delete the used key from the database as requested
+        // 4. Delete the used key from the database
         await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
         console.log('[Recovery] Deleted the newly used key from the database.');
 
-        // 5. Schedule the restore process for 1 hour from now
-        await bot.sendMessage(ADMIN_ID, "The bot will now wait **1 hour** for the new key to be active before starting the mass restore process.");
+        // 5. 💡 FIX: Schedule the Mass Restore in the database for 5 minutes from now 💡
+        const delayMinutes = 5;
+        const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
+
+        await pool.query(
+            `INSERT INTO recovery_schedule (task_name, scheduled_at, status) 
+             VALUES ($1, $2, $3)`,
+            ['MASS_RESTORE', scheduledTime, 'PENDING']
+        );
         
-        setTimeout(async () => {
-            try {
-                await bot.sendMessage(ADMIN_ID, "**Starting Mass Restore: Levanter**\n\nThis will take a long time...", { parse_mode: 'Markdown' });
-                await handleRestoreAllConfirm({ data: 'restore_all_confirm:levanter', message: { chat: { id: ADMIN_ID } } });
-
-                await bot.sendMessage(ADMIN_ID, "**Levanter Restore Complete.**\n\n**Starting Mass Restore: Raganork**", { parse_mode: 'Markdown' });
-                await handleRestoreAllConfirm({ data: 'restore_all_confirm:raganork', message: { chat: { id: ADMIN_ID } } });
-
-                await bot.sendMessage(ADMIN_ID, "**All recovery actions complete!**\n\nDisabling maintenance mode now.", { parse_mode: 'Markdown' });
-                isMaintenanceMode = false;
-                await saveMaintenanceStatus(false);
-            } catch (restoreError) {
-                console.error('[Recovery] CRITICAL ERROR during the restore phase:', restoreError);
-                await bot.sendMessage(ADMIN_ID, `**Restore Phase Failed!**\n\nAn error occurred during the mass restore: ${restoreError.message}\n\nThe bot is still in maintenance mode. Manual intervention is required.`);
-            } finally {
-                isRecoveryInProgress = false; // Reset the flag after the timeout completes or fails
-            }
-        }, 3600000); // 1 hour in milliseconds
+        // 6. Notify admin about the persistent wait
+        await bot.sendMessage(ADMIN_ID, `The bot is restarting now with the new key. A **Mass Restore** is now scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive the restart.`, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
         await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nThe bot is stuck in maintenance mode. Please fix the issue manually.`);
+    } finally {
         isRecoveryInProgress = false; // Reset flag on failure
     }
 }
+
 
 // Create a dedicated axios instance for Heroku API calls
 const herokuApi = axios.create({
@@ -3985,8 +4049,6 @@ async function triggerRenderRestart() {
 }
 
 
-// In bot.js, replace your old checkHerokuApiKey function with this one
-
 // In bot.js (REPLACE the checkHerokuApiKey function)
 
 async function checkHerokuApiKey() {
@@ -3996,7 +4058,6 @@ async function checkHerokuApiKey() {
     }
 
     try {
-        // Use standard 'axios' to make the call so we catch the error manually
         await axios.get('https://api.heroku.com/account', {
             headers: {
                 'Authorization': `Bearer ${HEROKU_API_KEY}`,
@@ -4007,7 +4068,6 @@ async function checkHerokuApiKey() {
         console.log('[API Check] Periodic check: Heroku API key is valid.');
 
     } catch (error) {
-        // --- 💡 FIX: Catch 401 (Unauthorized) AND 403 (Forbidden/Suspended) 💡 ---
         if (error.response && (error.response.status === 401 || error.response.status === 403)) {
             
             const status = error.response.status;
@@ -4015,11 +4075,10 @@ async function checkHerokuApiKey() {
             
             console.error(`[API Check] Status ${status} (${reason}): Triggering recovery workflow...`);
             
-            // Trigger the auto-replacement logic
+            // Trigger the auto-replacement logic (where the DB logic resides)
             await handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
 
         } else {
-            // Log other errors (e.g. 500, 503) but don't rotate the key yet
             console.error(`[API Check] An unexpected error occurred during periodic check:`, error.message);
         }
     }
@@ -4494,6 +4553,16 @@ bot.on('left_chat_member', handleLeftMembers);
   
   setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
+
+    // In bot.js (inside your main startup block near other intervals)
+
+// Schedule the DB-backed recovery check every minute
+setInterval(runScheduledRecoveryCheck, 60 * 1000); 
+console.log('[Scheduler] Database-backed recovery check initiated.');
+
+// Also run it once at startup
+runScheduledRecoveryCheck(); 
+
 
   setInterval(checkNeonCapacity, CAPACITY_CHECK_INTERVAL_MS);
     console.log(`[Capacity Check] Proactive Neon capacity monitor scheduled every 6 hours.`);
