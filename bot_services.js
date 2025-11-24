@@ -1461,6 +1461,47 @@ async function getAllBotDeployments() {
 }
 
 
+// ... (Your existing bot_services.js content)
+
+// Add this function to the module's scope in bot_services.js
+
+/**
+ * Fetches the AWS database connection string from the local deployment record.
+ * Assumes the AWS self-hosted identifier is stored as 'AWS_MAIN' in neon_account_id.
+ * @param {string} appName The name of the Heroku application.
+ * @returns {Promise<{success: boolean, dbUrl?: string, message?: string}>}
+ */
+async function getAwsDbConnectionString(appName) {
+    try {
+        // We look for a record matching the app name AND the assumed AWS account ID
+        const result = await pool.query(
+            `SELECT config_vars FROM user_deployments 
+             WHERE app_name = $1 AND neon_account_id = 'AWS_MAIN'`,
+            [appName]
+        );
+
+        if (result.rows.length === 0) {
+            return { success: false, message: "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing)." };
+        }
+
+        const configVars = result.rows[0].config_vars;
+        const dbUrl = configVars?.DATABASE_URL;
+
+        if (!dbUrl) {
+            return { success: false, message: "DATABASE_URL not found in the stored configuration variables." };
+        }
+
+        return { success: true, dbUrl: dbUrl };
+
+    } catch (error) {
+        console.error(`[DB] Error fetching AWS DB URL for ${appName}:`, error.message);
+        return { success: false, message: `Database error: ${error.message}` };
+    }
+}
+
+// ... (Ensure this is added to modul
+
+
 // --- FIXED FUNCTION: NOW RETURNS A LIST OF APPS IN EACH CATEGORY ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
@@ -2720,6 +2761,7 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
+    getAwsDbConnectionString,
     processBotSwitch,
     generateAndSendVcf,
     storeNewVcfContact,
