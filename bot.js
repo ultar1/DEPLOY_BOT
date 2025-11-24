@@ -7849,6 +7849,168 @@ bot.onText(/^\/backupall$/, async (msg) => {
 });
 
 
+// ========== ADD EXPIRATION DAYS COMMANDS ==========
+
+// /addexpall <days> - Add days to ALL bots in the system
+bot.onText(/^\/addexpall (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+    
+    const daysToAdd = parseInt(match[1], 10);
+    if (daysToAdd <= 0 || daysToAdd > 3650) {
+        return bot.sendMessage(adminId, "Invalid number of days. Please use a value between 1 and 3650.");
+    }
+    
+    try {
+        const result = await pool.query(
+            `UPDATE user_deployments 
+             SET expiration_date = expiration_date + INTERVAL '${daysToAdd} days'
+             WHERE expiration_date IS NOT NULL AND deleted_from_heroku_at IS NULL
+             RETURNING user_id, app_name, expiration_date`
+        );
+        
+        const updated = result.rowCount;
+        let summary = `✅ Added ${daysToAdd} days to ${updated} bot(s).\n\n`;
+        
+        if (result.rows.length > 0 && result.rows.length <= 20) {
+            summary += `Updated:\n`;
+            result.rows.forEach((row, idx) => {
+                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                summary += `${idx + 1}. ${row.app_name} (User: ${row.user_id}) → ${newDate}\n`;
+            });
+        } else if (result.rows.length > 20) {
+            summary += `First 20 of ${result.rows.length} updates:\n`;
+            result.rows.slice(0, 20).forEach((row, idx) => {
+                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                summary += `${idx + 1}. ${row.app_name} (User: ${row.user_id}) → ${newDate}\n`;
+            });
+        }
+        
+        await bot.sendMessage(adminId, summary);
+    } catch (error) {
+        console.error('[AddExpAll] Error:', error);
+        await bot.sendMessage(adminId, `Error updating expirations: ${error.message}`);
+    }
+});
+
+// /addexp <days> - Show YOUR bots, select one to add days
+bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
+    const userId = msg.chat.id.toString();
+    const daysToAdd = parseInt(match[1], 10);
+    
+    if (daysToAdd <= 0 || daysToAdd > 3650) {
+        return bot.sendMessage(userId, "Invalid number of days. Please use a value between 1 and 3650.");
+    }
+    
+    try {
+        const result = await pool.query(
+            `SELECT app_name, expiration_date FROM user_deployments 
+             WHERE user_id = $1 AND expiration_date IS NOT NULL AND deleted_from_heroku_at IS NULL
+             ORDER BY app_name`,
+            [userId]
+        );
+        
+        if (result.rows.length === 0) {
+            return bot.sendMessage(userId, "You have no active bots to extend.");
+        }
+        
+        const buttons = result.rows.map(bot => ({
+            text: `${bot.app_name} (${new Date(bot.expiration_date).toLocaleDateString()})`,
+            callback_data: `addexp_select:${bot.app_name}:${daysToAdd}`
+        }));
+        
+        // Split into columns of 2
+        const keyboard = [];
+        for (let i = 0; i < buttons.length; i += 2) {
+            keyboard.push(buttons.slice(i, i + 2));
+        }
+        
+        await bot.sendMessage(userId, `Select a bot to add ${daysToAdd} day(s):`, {
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    } catch (error) {
+        console.error('[AddExp] Error:', error);
+        await bot.sendMessage(userId, `Error fetching bots: ${error.message}`);
+    }
+});
+
+// /addexp <user_id> <days> - Add days to ALL bots of a specific user (Admin only)
+bot.onText(/^\/addexp (\d+) (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+    
+    const targetUserId = match[1];
+    const daysToAdd = parseInt(match[2], 10);
+    
+    if (daysToAdd <= 0 || daysToAdd > 3650) {
+        return bot.sendMessage(adminId, "Invalid number of days. Please use a value between 1 and 3650.");
+    }
+    
+    try {
+        const result = await pool.query(
+            `UPDATE user_deployments 
+             SET expiration_date = expiration_date + INTERVAL '${daysToAdd} days'
+             WHERE user_id = $1 AND expiration_date IS NOT NULL AND deleted_from_heroku_at IS NULL
+             RETURNING app_name, expiration_date`,
+            [targetUserId]
+        );
+        
+        const updated = result.rowCount;
+        let summary = `✅ Added ${daysToAdd} days to ${updated} bot(s) of user ${targetUserId}.\n\n`;
+        
+        if (result.rows.length > 0) {
+            summary += `Updated:\n`;
+            result.rows.forEach((row, idx) => {
+                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                summary += `${idx + 1}. ${row.app_name} → ${newDate}\n`;
+            });
+        }
+        
+        await bot.sendMessage(adminId, summary);
+        
+        // Notify the user
+        if (updated > 0) {
+            await bot.sendMessage(targetUserId, `✅ Admin added ${daysToAdd} day(s) to ${updated} of your bot(s)!`).catch(()=>{});
+        }
+    } catch (error) {
+        console.error('[AddExp Admin] Error:', error);
+        await bot.sendMessage(adminId, `Error updating expirations: ${error.message}`);
+    }
+});
+
+// Callback handler for selecting a bot to extend
+bot.on('callback_query', async (query) => {
+    if (query.data.startsWith('addexp_select:')) {
+        const [, appName, daysToAdd] = query.data.split(':');
+        const userId = query.from.id.toString();
+        const days = parseInt(daysToAdd, 10);
+        
+        try {
+            const result = await pool.query(
+                `UPDATE user_deployments 
+                 SET expiration_date = expiration_date + INTERVAL '${days} days'
+                 WHERE user_id = $1 AND app_name = $2
+                 RETURNING expiration_date`,
+                [userId, appName]
+            );
+            
+            if (result.rowCount > 0) {
+                const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString();
+                await bot.answerCallbackQuery(query.id, `✅ Added ${days} day(s) to ${appName}`, true);
+                await bot.editMessageText(
+                    `✅ Successfully added ${days} day(s) to ${appName}!\n\nNew expiration: ${newDate}`,
+                    { chat_id: userId, message_id: query.message.message_id }
+                );
+            } else {
+                await bot.answerCallbackQuery(query.id, 'Bot not found or already deleted', true);
+            }
+        } catch (error) {
+            console.error('[AddExp Callback] Error:', error);
+            await bot.answerCallbackQuery(query.id, `Error: ${error.message}`, true);
+        }
+    }
+});
+
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
 
 // Updated regex to capture optional text after the user ID: /send <user_id> <optional_text>
