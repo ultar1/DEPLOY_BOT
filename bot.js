@@ -6442,9 +6442,25 @@ bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
 
     const newHost = match[1].trim();
     
-    // Basic validation to prevent typos
-    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(newHost) && !/^[a-zA-Z0-9.-]+$/.test(newHost)) {
-         return bot.sendMessage(adminId, "Invalid IP format. Usage: `/updatehost 13.48.x.x`");
+    // Smart IP validation - must be exactly 4 octets, each 0-255
+    function isValidIPAddress(ip) {
+        const ipRegex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+        const match = ip.match(ipRegex);
+        
+        if (!match) return false;
+        
+        // Check each octet is between 0-255
+        for (let i = 1; i <= 4; i++) {
+            const octet = parseInt(match[i], 10);
+            if (octet < 0 || octet > 255) return false;
+        }
+        
+        return true;
+    }
+    
+    // Validate IP address
+    if (!isValidIPAddress(newHost)) {
+        return bot.sendMessage(adminId, "❌ Invalid IP address format.\n\nRequired: Must be exactly 4 octets (0-255 each).\nExample: `13.48.5.119`\n\nUsage: `/updatehost 13.48.5.119`");
     }
 
     const workingMsg = await bot.sendMessage(adminId, `**Migration Started**\n\nTarget Host: \`${newHost}\`\n\n1️⃣ Phase 1: Updating User Bots...`, { parse_mode: 'Markdown' });
@@ -6455,17 +6471,23 @@ bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
     let skipped = 0;
 
     try {
-        // Get all bots that are supposed to be on AWS
-        const result = await pool.query("SELECT user_id, app_name, config_vars FROM user_deployments WHERE neon_account_id = 'AWS_MAIN'");
-        const botsToUpdate = result.rows;
+        // Get ALL bots with their config vars
+        const result = await pool.query("SELECT user_id, app_name, config_vars FROM user_deployments");
+        const allBots = result.rows;
 
-        if (botsToUpdate.length > 0) {
-            for (const [i, botEntry] of botsToUpdate.entries()) {
+        if (allBots.length > 0) {
+            for (const [i, botEntry] of allBots.entries()) {
                 const appName = botEntry.app_name;
                 const oldConfig = botEntry.config_vars || {};
                 const oldUrl = oldConfig.DATABASE_URL;
 
                 if (!oldUrl) {
+                    skipped++;
+                    continue;
+                }
+
+                // ✅ CRITICAL: Only update if DATABASE_URL does NOT contain 'neon' (i.e., it's AWS)
+                if (oldUrl.includes('neon')) {
                     skipped++;
                     continue;
                 }
