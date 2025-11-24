@@ -7155,8 +7155,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
                     const dbNameSanitized = db.name.replace(/-/g, '_'); 
-                    // 💡 FIX APPLIED: This now correctly fetches the owner ID from the robust ownerMap
-                    const ownerUserId = ownerMap.get(dbNameSanitized) || 'Unknown'; 
+                    // Use fuzzy matching to find owner
+                    const ownerUserId = findOwnerByName(dbNameSanitized); 
                     consolidatedDBListMessage += `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerUserId}</code>\n`;
                 });
             }
