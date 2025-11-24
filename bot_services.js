@@ -1152,7 +1152,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         const deployDate = new Date();
 
         // Corrected calculation line (fixed earlier)
-        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 30) * 24 * 60 * 60 * 1000);
+        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 45) * 24 * 60 * 60 * 1000);
 
         const query = `
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial, email, neon_account_id)

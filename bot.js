@@ -3290,8 +3290,8 @@ async function sendPricingTiers(chatId, messageId) {
 
     // Standard Plan
     planButtons.push({ 
-        text: `Standard: $${pricesUsd.standard} / 30 Days`, 
-        callback_data: `select_plan:${p.standard}:30` 
+        text: `Standard: $${pricesUsd.standard} / 45 Days`, 
+        callback_data: `select_plan:${p.standard}:45` 
     });
 
     // Quarterly Plan
@@ -5096,7 +5096,7 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
             if (price_amount >= 5.0) days = 365;
             else if (price_amount >= 3.0) days = 185;
             else if (price_amount >= 1.5) days = 92;
-            else if (price_amount >= 0.8) days = 30;
+            else if (price_amount >= 0.8) days = 45;
             else days = 10;
             
             // --- 💡 FIX: Calculate Kobo for storage ---
@@ -5323,7 +5323,7 @@ let days;
 if (amount >= 8000) days = 365;    // Annual: ₦10,000
 else if (amount >= 5000) days = 185; // Semi-Annual: ₦6,000
 else if (amount >= 3000) days = 92;  // Quarterly: ₦3,500
-else if (amount >= 1500) days = 30;  // Standard: ₦1,500
+else if (amount >= 1500) days = 45;  // Standard: ₦1,500
 else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
 
 
@@ -12379,7 +12379,7 @@ if (action === 'renew_bot') {
     // --- Create list of plan buttons ---
     const planButtons = [
         { text: 'Basic: ₦500 / 10 Days', callback_data: `select_renewal:500:10:${appName}` },
-        { text: 'Standard: ₦1500 / 30 Days', callback_data: `select_renewal:1500:30:${appName}` },
+        { text: 'Standard: ₦1500 / 45 Days', callback_data: `select_renewal:1500:45:${appName}` },
         { text: 'Quarterly: ₦3,000 / 3 months', callback_data: `select_renewal:3000:92:${appName}` },
         { text: 'Semi-Annual: ₦5,000 / 6 months', callback_data: `select_renewal:5000:185:${appName}` },
         { text: 'Annual: ₦8,000 / 1 year', callback_data: `select_renewal:8000:365:${appName}` },
