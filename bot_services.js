@@ -2006,20 +2006,16 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     
     // --- NEW MESSAGE LOGIC ---
     
-    if (String(targetChatId) === ADMIN_ID) {
-        // Admin deploys for self: Primary message is sent to ADMIN_ID
-        primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
-        adminLogMsg = null; // No separate log needed for admin
-        
-        primaryAnimChatId = primaryBuildMsg.chat.id;
-        primaryAnimMsgId = primaryBuildMsg.message_id;
-        
-    } else {
-        // User deploys: Send log to Admin, primary message to User
-        adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
-        
+    / Send log message to Admin (always done first)
+        if (String(targetChatId) !== ADMIN_ID) {
+            adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
+        }
+
+        // Attempt to send primary message to the User
         try {
             primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
+            
+            // If successful, set animation targets to the user's message
             primaryAnimChatId = primaryBuildMsg.chat.id;
             primaryAnimMsgId = primaryBuildMsg.message_id;
         } catch (e) {
@@ -2032,8 +2028,8 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                 throw e; // Re-throw other unexpected errors
             }
         }
-        
-        // If we still don't have a message ID (e.g., admin deployed for self AND adminLogMsg is null), use admin's ID
+
+        // Handle the case where the Admin deploys for self (no adminLogMsg sent yet)
         if (!primaryAnimMsgId && String(targetChatId) === ADMIN_ID) {
              primaryAnimChatId = ADMIN_ID;
              primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
