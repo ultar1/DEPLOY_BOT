@@ -2502,250 +2502,57 @@ async function getUniqueAppName(appName, herokuApi, HEROKU_API_KEY) {
 
 
 /**
- * TRULY SILENTLY restores a Heroku app.
- * Sends NO messages to admin or user on BUILD failure.
- * Sends messages to the USER ONLY on CONNECTION failure (Logged Out).
+ * Silently restores a bot by intercepting bot messages.
+ * Suppresses all messages to bot owner (only notifies ADMIN_ID).
+ * Only sends connection failure alerts to the bot owner.
  * @param {string} targetChatId The ID of the user owning the bot.
  * @param {object} vars The config vars object from the backup.
  * @param {string} botType The type of bot ('levanter' or 'raganork').
  * @returns {Promise<{success: boolean, error?: string, appName?: string, isSkipped?: boolean}>}
  */
 async function silentRestoreBuild(targetChatId, vars, botType) {
-    // 1. Get all the tools from moduleParams
-    const { 
-        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
-        ADMIN_ID, defaultEnvVars, escapeMarkdown, mainPool, 
-        createNeonDatabase, appDeploymentPromises, GITHUB_HERMIT_REPO_URL, 
-    } = moduleParams;
+    const { bot, ADMIN_ID, appDeploymentPromises, escapeMarkdown } = moduleParams;
     
-    const crypto = require('crypto'); 
-    
-    let appName = vars.APP_NAME;
-    const originalAppName = appName;
-    let buildResult = false;
-    
-    const isRestore = true; 
-    let neonAccountId = '1';
-    const isFreeTrial = false; // Always false for restore
-
     try {
-        // 2. APP NAME CHECK & RENAME LOGIC (Same as buildWithProgress conflict handling)
-        const appCheck = await getUniqueAppName(appName, herokuApi, HEROKU_API_KEY);
+        let originalBotSendMessage = bot.sendMessage;
+        let blockedSendCount = 0;
         
-        if (appCheck.isSkipped) {
-            return { success: true, appName: appName, isSkipped: true };
-        }
-        
-        appName = appCheck.uniqueName;
-        vars.APP_NAME = appName; 
-        
-        if (appCheck.isRenamed) {
-            console.log(`[SilentRestore] Renamed from ${originalAppName} to ${appName} due to conflict.`);
-        }
-        
-        // --- Step 1: Create the Heroku app (using the unique appName) ---
-        const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
-        await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-
-        // --- 💡 Step 2: DATABASE LOGIC (NOW IDENTICAL TO buildWithProgress RESTORE PATH) 💡 ---
-        // This is the core change to match buildWithProgress logic exactly.
-        const dbName = originalAppName.replace(/-/g, '_'); 
-        let provisionSuccess = false;
-        
-        // We only proceed with database checks if we are restoring AND a DATABASE_URL exists in the backup.
-        // If DATABASE_URL is missing, we proceed to the standard creation flow, which is also correct.
-        if (isRestore && vars.DATABASE_URL) {
-            
-            // This is the explicit restore logic: Re-use if possible, otherwise create new.
-            const dbCheckResult = await checkIfDatabaseExists(dbName); 
-
-            if (dbCheckResult.exists) {
-                vars.DATABASE_URL = dbCheckResult.connection_string; 
-                neonAccountId = dbCheckResult.account_id;
-                provisionSuccess = true;
-                console.log(`[SilentRestore] RE-USED existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
-            } else {
-                console.log(`[SilentRestore] Old Neon DB not found. Provisioning NEW Neon DB: ${dbName}.`);
-                const neonResult = await createNeonDatabase(dbName);
-
-                if (neonResult.success) {
-                    vars.DATABASE_URL = neonResult.connection_string;
-                    neonAccountId = neonResult.account_id;
-                    provisionSuccess = true;
-                } else {
-                    await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
-                    return { success: false, error: `Neon DB creation failed during restore migration: ${neonResult.error}`, appName: appName };
-                }
+        // Intercept bot.sendMessage to suppress messages to targetChatId (only allow ADMIN_ID messages)
+        bot.sendMessage = async function(chatId, text, options) {
+            // Allow messages to ADMIN_ID, suppress messages to bot owner (targetChatId)
+            if (String(chatId) === String(targetChatId)) {
+                blockedSendCount++;
+                console.log(`[SilentRestore] Suppressing message to bot owner: "${text.substring(0, 50)}..."`);
+                // Return a mock message object to avoid breaking the flow
+                return { chat: { id: chatId }, message_id: 0, text: text };
             }
-        } else {
-             // Fallback: If not a restore or DATABASE_URL missing, we still try to create a new one based on the canonical name
-             const neonResult = await createNeonDatabase(dbName);
-             if (neonResult.success) {
-                 vars.DATABASE_URL = neonResult.connection_string;
-                 neonAccountId = neonResult.account_id;
-                 provisionSuccess = true;
-             } else {
-                 await herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
-                 return { success: false, error: `DB creation failed: ${neonResult.error}`, appName: appName };
-             }
-        }
+            // All other chats (including ADMIN_ID) get normal messages
+            return originalBotSendMessage.apply(bot, arguments);
+        };
+
+        // Call buildWithProgress with isRestore=true
+        const result = await buildWithProgress(targetChatId, vars, false, true, botType);
         
-        if (!provisionSuccess) {
-            return { success: false, error: "Database provisioning failed unexpectedly.", appName: appName };
-        }
-        // --- END OF DATABASE LOGIC ---
+        // Restore the original sendMessage function
+        bot.sendMessage = originalBotSendMessage;
         
-        // --- Step 3: Set Buildpacks ---
-        // Same as buildWithProgress
-        await herokuApi.put(
-            `/apps/${appName}/buildpack-installations`,
-            {
-                updates: [
-                { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
-                { buildpack: 'heroku/nodejs' }
-                ]
-            },
-            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
+        console.log(`[SilentRestore] Restored. Suppressed ${blockedSendCount} messages to bot owner.`);
         
-
-        // --- Step 4: Set Environment Variables ---
-        // Same as buildWithProgress
-        const filteredVars = {};
-        for (const key in vars) {
-            if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
-                filteredVars[key] = vars[key];
-            }
-        }
-        // buildWithProgress uses 'filteredVars' (which are the backup vars) for restore, NOT targetDefaults.
-        const finalConfigVars = filteredVars; 
-        await herokuApi.patch(`/apps/${appName}/config-vars`, 
-            { ...finalConfigVars, APP_NAME: appName },
-            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
-
-        // --- Step 5: Trigger Build from GitHub ---
-        // Same as buildWithProgress
-        let repoUrl;
-        if (botType === 'raganork') {
-            repoUrl = GITHUB_RAGANORK_REPO_URL;
-        } else if (botType === 'hermit') {
-            repoUrl = GITHUB_HERMIT_REPO_URL; 
-        } else {
-            repoUrl = GITHUB_LEVANTER_REPO_URL;
-        }
-    
-        const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
-            source_blob: { url: `${repoUrl}/tarball/main` }
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-
-
-        // --- Step 6: Wait for Build to Finish (Silently) ---
-        // Same logic as buildWithProgress, but without editing the user message.
-        const buildId = buildStartRes.data.id;
-        const statusUrl = `/apps/${appName}/builds/${buildId}`;
-        let buildProgressInterval;
-
-        try {
-            const BUILD_COMPLETION_TIMEOUT = 600 * 1000;
-            const buildPromise = new Promise((resolve, reject) => {
-                const timeoutId = setTimeout(() => {
-                    clearInterval(buildProgressInterval);
-                    reject(new Error(`Build timed out`));
-                }, BUILD_COMPLETION_TIMEOUT);
-
-                buildProgressInterval = setInterval(async () => {
-                    try {
-                        const poll = await herokuApi.get(statusUrl, {
-                            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
-                        });
-                        if (poll.data.status !== 'pending') {
-                            clearInterval(buildProgressInterval);
-                            clearTimeout(timeoutId);
-                            if (poll.data.status === 'succeeded') {
-                                resolve('succeeded');
-                            } else {
-                                reject(new Error(`Build failed: ${poll.data.status}`));
-                            }
-                        }
-                    } catch (error) {
-                        clearInterval(buildProgressInterval);
-                        clearTimeout(timeoutId);
-                        reject(new Error(`Error polling build status: ${error.message}`));
-                    }
-                }, 10000);
-            });
-            await buildPromise;
-        } catch (err) {
-            if (buildProgressInterval) clearInterval(buildProgressInterval);
-            throw err; 
-        }
-
-        // --- Step 7: Handle Build Succeeded & Save DB Records ---
-        const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
-        
-        // buildWithProgress logic for DB updates (using new appName for user_bots, original for deployment key)
-        await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
-        
-        const appNameForBackupKey = originalAppName; 
-        
-        await saveUserDeployment(
-            targetChatId, appNameForBackupKey, finalConfigVarsAfterBuild.SESSION_ID, 
-            finalConfigVarsAfterBuild, botType, isFreeTrial, vars.expiration_date, vars.email || null, neonAccountId
-        );
-
-        // --- Step 8: Wait for Connect (CONNECTION FAILURE is the ONLY USER NOTIFICATION) ---
-        if (String(targetChatId) !== ADMIN_ID) {
-            const appStatusPromise = new Promise((resolve, reject) => {
-                const STATUS_CHECK_TIMEOUT = 120 * 1000;
-                const timeoutId = setTimeout(() => {
-                    const appPromise = appDeploymentPromises.get(appName);
-                    if (appPromise) {
-                        appPromise.reject(new Error(`Bot did not connect within 120s (Logged Out).`));
-                    }
-                }, STATUS_CHECK_TIMEOUT);
-                appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId: null, timeoutId });
-            });
-
-            try {
-                await appStatusPromise; 
-                const promiseData = appDeploymentPromises.get(appName);
-                if (promiseData) clearTimeout(promiseData.timeoutId);
-                buildResult = true; 
-            } catch (err) {
-                // ⚠️ CONNECTION FAILURE: NOTIFY USER ⚠️
-                const promiseData = appDeploymentPromises.get(appName);
-                if (promiseData) clearTimeout(promiseData.timeoutId);
-                
-                await bot.sendMessage(
-                    targetChatId,
-                    `Your restored bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
-                    }
-                ).catch(()=>{});
-                
-                return { success: false, error: err.message, appName: appName };
-            } finally {
-                appDeploymentPromises.delete(appName);
-            }
-        } else {
-            buildResult = true; 
-        }
-
-        return { success: true, appName: appName, isSkipped: false };
-
+        // Return in the expected format
+        return {
+            success: result.success,
+            error: result.error,
+            appName: result.appName,
+            isSkipped: result.isSkipped || false
+        };
     } catch (error) {
-        // ❌ BUILD FAILURE: LOG BUT DO NOT NOTIFY USER ❌
-        const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[SilentRestore Build Error] Failed to build app ${appName}:`, errorMsg);
-        
-        // Cleanup the Heroku app if it was created before the failure
-        herokuApi.delete(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }).catch(()=>{});
-        
-        return { success: false, error: errorMsg, appName: appName, isSkipped: false };
+        console.error(`[SilentRestore] Error during restore:`, error.message);
+        return {
+            success: false,
+            error: error.message,
+            appName: vars.APP_NAME || 'unknown',
+            isSkipped: false
+        };
     }
 }
 

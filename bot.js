@@ -6991,7 +6991,22 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     `);
     
     // Create a map of canonical DB name (underscores) -> user_id
-    const ownerMap = new Map(allBotsResult.rows.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
+    // Also add entries for the base name (before any rename suffix) to handle restored apps
+    const ownerMap = new Map();
+    for (const bot of allBotsResult.rows) {
+        const canonicalName = bot.bot_name.replace(/-/g, '_');
+        ownerMap.set(canonicalName, bot.user_id);
+        
+        // Also add the base name (everything before the last dash-hex pattern for renamed apps)
+        // This helps match original DB names to renamed apps (e.g., bigmts to bigmts-abc123)
+        const baseNameMatch = bot.bot_name.match(/^(.+?)-[a-f0-9]{6}$/);
+        if (baseNameMatch) {
+            const baseName = baseNameMatch[1].replace(/-/g, '_');
+            if (!ownerMap.has(baseName)) {
+                ownerMap.set(baseName, bot.user_id);
+            }
+        }
+    }
 
     // --- 1. AWS SELF-HOSTED REPORT ---
     let awsReport = "";
