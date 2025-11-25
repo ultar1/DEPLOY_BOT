@@ -5285,99 +5285,111 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
 
-/// In bot.js (REPLACE this handler)
 
 app.post('/flutterwave/webhook', async (req, res) => {
+    // 1. Verify the signature (Security)
     const signature = req.headers['verif-hash'];
     if (!signature || (signature !== process.env.FLUTTERWAVE_SECRET_HASH)) {
+        console.warn('[Flutterwave] Invalid IPN signature received. Ignoring.');
         return res.status(401).end();
     }
 
     const payload = req.body;
     console.log('[Flutterwave] Webhook received:', payload.event);
 
+    // 2. Only process successful charge completions
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         
         const reference = payload.data.tx_ref;
-        const amount = payload.data.amount;
+        const amount = payload.data.amount; // Amount is in NGN
         const customer = payload.data.customer;
         
+        // 3. Find the pending payment to get necessary deployment/renewal context
         const pendingPayment = await pool.query(
-            'SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', 
+            'SELECT user_id, bot_type, app_name, session_id, email FROM pending_payments WHERE reference = $1', 
             [reference]
         );
         
         if (pendingPayment.rows.length === 0) {
-            console.warn(`[Flutterwave Webhook] Cannot process reference ${reference}. Details missing.`);
+            console.warn(`[Flutterwave Webhook] Cannot process reference ${reference}. Details missing in pending_payments.`);
             return res.status(200).end(); 
         }
 
-        // The user ID is fetched as 'user_id' and renamed to 'userId' for the rest of this function.
-        const { user_id: userId, bot_type, app_name, session_id } = pendingPayment.rows[0];
+        const { 
+            user_id: userId, 
+            bot_type, 
+            app_name, 
+            session_id, 
+            email: pendingEmail 
+        } = pendingPayment.rows[0];
 
+        // Determine if it's a renewal (based on app_name prefix set during payment initiation)
         const isRenewal = app_name && app_name.startsWith('renewal_');
         let finalAppName = app_name;
         
     
-let days;
-if (amount >= 8000) days = 365;    // Annual: ₦10,000
-else if (amount >= 5000) days = 185; // Semi-Annual: ₦6,000
-else if (amount >= 3000) days = 92;  // Quarterly: ₦3,500
-else if (amount >= 1500) days = 45;  // Standard: ₦1,500
-else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
-
+        // Calculate the days based on the amount paid (must match your pricing tiers)
+        let days;
+        if (amount >= 8000) days = 365;    
+        else if (amount >= 5000) days = 185; 
+        else if (amount >= 3000) days = 92;  
+        else if (amount >= 1500) days = 45;  
+        else days = 10;                    
 
         try {
+            // 4. Check if already processed (Idempotency)
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) return res.status(200).end();
             
             // Convert amount from NGN to Kobo (multiply by 100) for consistent storage
             const amountInKobo = amount * 100;
+            const finalEmail = customer.email || pendingEmail || 'flutterwave_user@email.com';
             
             // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amountInKobo]
+                [reference, userId, finalEmail, amountInKobo]
             );
 
-            // ❗️ FIX: Use the correct variables that are available in this scope.
-            await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
-
+            // Notify user of confirmation and admin of sale
             const userChat = await bot.getChat(userId);
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
 
+            // Send internal payment confirmation email
+            await sendPaymentConfirmation(finalEmail, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
+
             if (isRenewal) {
-                // RENEWAL LOGIC
+                // --- RENEWAL LOGIC: UPDATE EXPIRATION DATE ONLY ---
                 finalAppName = finalAppName.substring('renewal_'.length);
                 
-                // ❗️ FIX: Use the correct 'userId' variable here.
+                // CRITICAL FIX: Add days to the expiration date. Use CASE WHEN to handle past expiration.
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
                         CASE 
+                           -- If expiration_date is past or NULL, start counting from NOW()
                            WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
+                           -- Otherwise, add days to the existing future date
                            ELSE expiration_date + ($1 * INTERVAL '1 day')
                         END
                      WHERE user_id = $2 AND app_name = $3`,
                     [days, userId, finalAppName]
                 );
 
-                // ❗️ FIX: Use the correct 'userId' variable here.
-                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully **renewed** for **${days} days**.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
             
             } else { 
-                // NEW DEPLOYMENT LOGIC
+                // --- NEW DEPLOYMENT LOGIC: START THE BUILD ---
                 
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 await bot.sendMessage(userId, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days }; 
                 
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
                 await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
             }
             
+            // 5. Clean up pending payment
             await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             
         } catch (dbError) {
