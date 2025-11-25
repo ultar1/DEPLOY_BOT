@@ -6271,7 +6271,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         if (userBots.length > 0) {
             userDetails += `\n*Deployed Bots:*\n`;
             for (const botName of userBots) {
-                userDetails += `  - \`${escapeMarkdown(botName)}\`\n`;
+                userDetails += `  - \`${botName}\`\n`;
             }
         } else {
             userDetails += `\n*Deployed Bots:* None\n`;
@@ -8320,7 +8320,7 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
 
         // FIX: The final response string is now fully escaped to prevent errors.
         const response = `
-*Bot Details for: \`${escapeMarkdown(appName)}\`*
+*Bot Details for: \`${appName}\`*
 
 *Owner Info:*
 ${ownerDetails}
@@ -13209,7 +13209,14 @@ if (action === 'selectapp' || action === 'selectbot') {
     }
 
     let finalStatusText;
-    let expirationCountdown = formatPreciseCountdown(dbBotInfo?.expiration_date);
+    // Standardize expiration display across all commands
+    let expirationCountdown = 'Not Set';
+    if (dbBotInfo?.expiration_date) {
+        const expiration = new Date(dbBotInfo.expiration_date);
+        const now = new Date();
+        const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
+        expirationCountdown = daysLeft > 0 ? `${daysLeft} days remaining` : 'Expired';
+    }
     const keyboard = [];
     
     // 💡 Get bot_type for the header
