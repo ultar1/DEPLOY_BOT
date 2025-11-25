@@ -6365,7 +6365,43 @@ bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
     }
 });
 
-// ... (Ensure this is added to module.
+
+// In bot.js, with your other command handlers (e.g., near /revenue)
+
+bot.onText(/^\/addsale (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const amountNaira = parseInt(match[1], 10);
+    const amountKobo = amountNaira * 100;
+    
+    if (isNaN(amountNaira) || amountNaira <= 0) {
+        return bot.sendMessage(adminId, "Please provide a valid sale amount in Naira (e.g., `/addsale 1500`).", { parse_mode: 'Markdown' });
+    }
+
+    try {
+        const reference = `manual_${crypto.randomBytes(8).toString('hex')}`;
+        const adminEmail = await getUserEmail(adminId) || 'admin@ultarbot.com';
+
+        // Insert into completed_payments table
+        await pool.query(
+            `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) 
+             VALUES ($1, $2, $3, $4, $5, NOW())`,
+            [reference, adminId, adminEmail, amountKobo, 'NGN']
+        );
+        
+        await bot.sendMessage(adminId, 
+            `**Manual Sale Recorded!**\n\n` +
+            `*Amount:* ₦${amountNaira.toLocaleString()}\n` +
+            `*Reference:* \`${reference}\`\n\n` +
+            `Revenue stats will reflect this entry.`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        console.error("Error recording manual sale:", error);
+        await bot.sendMessage(adminId, `❌ Failed to record manual sale. Reason: ${error.message}`);
+    }
+});
 
 // In bot.js
 bot.onText(/^\/copy$/, async (msg) => {
