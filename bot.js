@@ -1638,32 +1638,22 @@ function escapeHTML(text) {
 
 
 // Function to escape Markdown V2 special characters
+/**
+ * CRITICAL FIX: Replaces the chained .replace() calls with a single, robust regex 
+ * to prevent unwanted backslashes from appearing in non-special characters (like letters).
+ * Telegram's official Markdown V2 requires escaping these 16 characters plus the backslash itself:
+ * _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !, \
+ */
 function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // Escape all special Markdown v2 characters: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
-    // Only escape if not part of a known URL or if it's explicitly used as a markdown character
-    return text
-        .replace(/_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/~/g, '\\~')
-        .replace(/`/g, '\\`')
-        .replace(/>/g, '\\>')
-        .replace(/#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/-/g, '\\-')
-        .replace(/=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/!/g, '\\!');
+    // Escape all Markdown V2 special characters in one robust pass.
+    // The single regex handles all necessary escaping correctly.
+    // The `\\` at the end ensures the backslash character itself is escaped.
+    return text.replace(/([_*[\]()~`>#+=\-|{}!.!\\\\])/g, '\\$1');
 }
+
 
 // A reusable function to format a concise countdown string for button lists.
 function formatTimeLeft(expirationDateStr) {
