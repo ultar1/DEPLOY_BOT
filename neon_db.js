@@ -339,16 +339,16 @@ const NEON_ACCOUNTS = [
     db_password: 'npg_g9xz4ZkvGMHh'
 },
 
-  {
+    {
     id: 31,
     active_db_limit: 2,
-    api_key: 'napi_ua7h48kj91khiwqhp3py5suelqaup3a09svklm6k264yp52o3c7la3lvvikua9iw',
-    project_id: 'blue-smoke-28870085',
-    branch_id: 'br-shy-bush-a42dzn7v',
-    db_host: 'ep-still-tree-a4zo49ce-pooler.us-east-1.aws.neon.tech',
+    api_key: 'napi_mbkbl3f21junoii5i33y7fp8y689mwxy0frct1vug1rw9edsr8qds26t2w6dzcug',
+    project_id: 'bitter-sunset-02501283',
+    branch_id: 'br-mute-morning-a4vrb8yk',
+    db_host: 'ep-morning-pine-a4ny6ryo-pooler.us-east-1.aws.neon.tech',
     db_user: 'neondb_owner',
-    db_password: 'npg_pfR0wQUdGF2H'
-},
+    db_password: 'npg_gv5aiPQ0kmlH'
+    },
 
   {
     id: 32,
@@ -813,17 +813,6 @@ const NEON_ACCOUNTS = [
     db_user: 'neondb_owner',
     db_password: 'npg_6yOfgM2xRrPz'
 },
-
-  {
-    id: 74,
-    active_db_limit: 2,
-    api_key: 'napi_mbkbl3f21junoii5i33y7fp8y689mwxy0frct1vug1rw9edsr8qds26t2w6dzcug',
-    project_id: 'bitter-sunset-02501283',
-    branch_id: 'br-mute-morning-a4vrb8yk',
-    db_host: 'ep-morning-pine-a4ny6ryo-pooler.us-east-1.aws.neon.tech',
-    db_user: 'neondb_owner',
-    db_password: 'npg_gv5aiPQ0kmlH'
-}
 
 ];
 
