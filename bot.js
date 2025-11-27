@@ -5275,6 +5275,7 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
 
+// In bot.js (REPLACE the Flutterwave webhook)
 
 app.post('/flutterwave/webhook', async (req, res) => {
     // 1. Verify the signature (Security)
@@ -5291,10 +5292,10 @@ app.post('/flutterwave/webhook', async (req, res) => {
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         
         const reference = payload.data.tx_ref;
-        const amount = payload.data.amount; // Amount is in NGN
+        const amount_ngn = payload.data.amount; // Amount is in NGN
         const customer = payload.data.customer;
         
-        // 3. Find the pending payment to get necessary deployment/renewal context
+        // 3. Find the pending payment to get necessary context
         const pendingPayment = await pool.query(
             'SELECT user_id, bot_type, app_name, session_id, email FROM pending_payments WHERE reference = $1', 
             [reference]
@@ -5308,31 +5309,31 @@ app.post('/flutterwave/webhook', async (req, res) => {
         const { 
             user_id: userId, 
             bot_type, 
-            app_name, 
-            session_id, 
+            app_name, // Member count (e.g., '50') or Renewal Name
+            session_id, // Group link or Session ID
             email: pendingEmail 
         } = pendingPayment.rows[0];
 
-        // Determine if it's a renewal (based on app_name prefix set during payment initiation)
-        const isRenewal = app_name && app_name.startsWith('renewal_');
-        let finalAppName = app_name;
+        // Determine the intent flags
+        const isGroupFiller = bot_type === 'group_filler'; // 💡 NEW CHECK
+        const isSwitch = bot_type && bot_type.startsWith('switch-'); 
+        const isRenewal = bot_type === 'renewal'; // We should rely on bot_type for intent
         
-    
-        // Calculate the days based on the amount paid (must match your pricing tiers)
+        // Calculate days based on NGN amount (This must match your pricing tiers)
         let days;
-        if (amount >= 8000) days = 365;    
-        else if (amount >= 5000) days = 185; 
-        else if (amount >= 3000) days = 92;  
-        else if (amount >= 1500) days = 45;  
-        else days = 10;                    
+        if (amount_ngn >= 8000) days = 365;
+        else if (amount_ngn >= 5000) days = 185;
+        else if (amount_ngn >= 3000) days = 92;
+        else if (amount_ngn >= 1500) days = 45; 
+        else days = 10;
 
         try {
             // 4. Check if already processed (Idempotency)
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) return res.status(200).end();
             
-            // Convert amount from NGN to Kobo (multiply by 100) for consistent storage
-            const amountInKobo = amount * 100;
+            // Convert amount from NGN to Kobo (multiply by 100)
+            const amountInKobo = amount_ngn * 100;
             const finalEmail = customer.email || pendingEmail || 'flutterwave_user@email.com';
             
             // Log the completed payment
@@ -5346,67 +5347,69 @@ app.post('/flutterwave/webhook', async (req, res) => {
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
 
             // Send internal payment confirmation email
-            await sendPaymentConfirmation(finalEmail, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
+            await sendPaymentConfirmation(finalEmail, `User ${userId}`, reference, app_name || 'N/A', bot_type || 'N/A', session_id || 'N/A');
 
+
+            // --- 5. EXECUTION LOGIC (Ordered by Intent) ---
 
             if (isGroupFiller) {
-        const link = session_id; // Group link stored here
-        const members = parseInt(app_name, 10); // Member count stored here
-        const webhookMessageId = payload.data.id; // Unique ID for tracking
-
-        // 1. Notify User
-        await bot.sendMessage(userId, `**Payment Confirmed!** The job to add **${members} members** to your group has started. Hold on...`, { parse_mode: 'Markdown' });
-        
-        // 2. Call External Group Filler API
-        try {
-             const fillResponse = await axios.post(
-                 `${process.env.MESSAGE_BOT_URL}/api/join`, // Assumes URL and secret are accessible
-                 {
-                     apiKey: process.env.GROUP_FILLER_API_SECRET,
-                     amount: members,
-                     link: link
-                 },
-                 { timeout: 300000 } // 5 minutes timeout for job start
-             );
-
-             const responseData = fillResponse.data;
-             const finalMessage = `**Job Status Update** (Link: ${link})\n\n` +
-                                  `Requested Members: ${responseData.data.requested}\n` +
-                                  `Successfully Joined: ${responseData.data.success}\n` +
-                                  `Already in Group: ${responseData.data.already_in}\n` +
-                                  `Failed to Join: ${responseData.data.failed}`;
-
-             await bot.sendMessage(userId, finalMessage, { parse_mode: 'Markdown' });
-             await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] Job complete for user ${userId}. Success: ${responseData.data.success}.`);
-
-
-        } catch (error) {
-             const errMsg = error.message || error.response?.data?.message || 'API connection failed';
-             await bot.sendMessage(userId, `**Group Filler Failed:** The external service could not start the job.\nReason: ${errMsg}`);
-             await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] CRITICAL API Failure for ${userId}: ${errMsg}`);
-        }
-
-           } else if (isRenewal) {
-                // --- RENEWAL LOGIC: UPDATE EXPIRATION DATE ONLY ---
-                finalAppName = finalAppName.substring('renewal_'.length);
+                // --- 🎯 GROUP FILLER LOGIC 🎯 ---
+                const link = session_id; // Group link stored in session_id
+                const members = parseInt(app_name, 10); // Member count stored in app_name
                 
-                // CRITICAL FIX: Add days to the expiration date. Use CASE WHEN to handle past expiration.
+                await bot.sendMessage(userId, `**Payment Confirmed!** The job to add **${members} members** to your group has started. Hold on...`, { parse_mode: 'Markdown' });
+                
+                // Call External Group Filler API
+                try {
+                     const fillResponse = await axios.post(
+                         `${process.env.GROUP_FILLER_API_URL}/api/join`, 
+                         {
+                             apiKey: process.env.GROUP_FILLER_API_SECRET,
+                             amount: members,
+                             link: link
+                         },
+                         { timeout: 300000 } // 5 minutes timeout
+                     );
+
+                     const responseData = fillResponse.data;
+                     const finalMessage = `**Job Status Update** (Link: ${link})\n\n` +
+                                          `Requested Members: ${responseData.data.requested}\n` +
+                                          `Successfully Joined: ${responseData.data.success}\n` +
+                                          `Already in Group: ${responseData.data.already_in}\n` +
+                                          `Failed to Join: ${responseData.data.failed}`;
+
+                     await bot.sendMessage(userId, finalMessage, { parse_mode: 'Markdown' });
+                     await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] Job complete for user ${userId}. Success: ${responseData.data.success}.`, { parse_mode: 'Markdown' });
+
+                } catch (error) {
+                     const errMsg = error.message || error.response?.data?.message || 'API connection failed';
+                     await bot.sendMessage(userId, `**Group Filler Failed:** The external service could not start the job.\nReason: ${errMsg}`);
+                     await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] CRITICAL API Failure for ${userId}: ${errMsg}`, { parse_mode: 'Markdown' });
+                }
+                
+            } else if (isRenewal) {
+                // --- RENEWAL LOGIC: ADJUST DATE ONLY ---
+                
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
                         CASE 
-                           -- If expiration_date is past or NULL, start counting from NOW()
                            WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
-                           -- Otherwise, add days to the existing future date
                            ELSE expiration_date + ($1 * INTERVAL '1 day')
                         END
                      WHERE user_id = $2 AND app_name = $3`,
-                    [days, userId, finalAppName]
+                    [days, userId, app_name]
                 );
 
-                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully **renewed** for **${days} days**.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `Payment confirmed! *${escapeMarkdown(app_name)}* has been successfully **renewed** for ${days} days.`, { parse_mode: 'Markdown' });
             
+            } else if (isSwitch) {
+                // --- SWITCH LOGIC: DEPLOY NEW APP ---
+                await bot.sendMessage(userId, 'Payment confirmed! Processing your bot migration now...', { parse_mode: 'Markdown' });
+                const targetType = bot_type.replace('switch-', '');
+                await dbServices.processBotSwitch(userId, app_name, targetType, session_id);
+                await bot.sendMessage(ADMIN_ID, `*Bot Switch Paid (Flutterwave)*\nUser: \`${userId}\`\nApp: \`${app_name}\`\nTo: ${targetType.toUpperCase()}`, { parse_mode: 'Markdown' });
+
             } else { 
                 // --- NEW DEPLOYMENT LOGIC: START THE BUILD ---
                 
@@ -5414,12 +5417,16 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days }; 
                 
                 dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
-                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\nUser: ${userName}\nApp Name: \`${app_name}\`\nAmount: ₦${amount_ngn}`, { parse_mode: 'Markdown' });
             }
             
-            // 5. Clean up pending payment
+            // 6. Clean up pending payment
             await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             
+            // Clear Awaiting Key state if it exists
+            if (userStates[userId]) delete userStates[userId];
+
+
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
             await bot.sendMessage(ADMIN_ID, `CRITICAL FLUTTERWAVE WEBHOOK ERROR for ref ${reference}. Manual review needed. Error: ${dbError.message}`);
@@ -5427,8 +5434,6 @@ app.post('/flutterwave/webhook', async (req, res) => {
     }
     res.status(200).end();
 });
-
-
 
 
 
