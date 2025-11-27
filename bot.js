@@ -9145,7 +9145,65 @@ if (st && st.step === 'AWAITING_VCF_NUMBER') {
     return;
 }
 
-// ... (rest of your state machine logic) ...
+// In bot.js (inside bot.on('message', ...) handler)
+
+// --- STEP 2: AWAITING GROUP LINK ---
+if (st && st.step === 'AWAITING_GROUP_LINK') {
+    const groupLink = text.trim();
+    // Validate common WhatsApp group link format (https://chat.whatsapp.com/...)
+    if (!groupLink.startsWith('https://chat.whatsapp.com/')) {
+        return bot.sendMessage(cid, "❌ Invalid Link. Please send the full WhatsApp group invite link, starting with `https://chat.whatsapp.com/`.");
+    }
+
+    st.data.groupLink = groupLink;
+    st.step = 'AWAITING_MEMBER_AMOUNT';
+
+    const rate = process.env.RATE_PER_NUMBER || 50;
+    
+    return bot.sendMessage(cid, 
+        `Group Link received. The rate is **₦${rate} per number**.\n\n` +
+        `How many members do you want to add? (Min: 1, Max: 500)`, 
+        { parse_mode: 'Markdown' }
+    );
+}
+
+// --- STEP 3: AWAITING MEMBER AMOUNT & CONFIRMATION ---
+if (st && st.step === 'AWAITING_MEMBER_AMOUNT') {
+    const amount = parseInt(text.trim(), 10);
+    const rate = parseInt(process.env.RATE_PER_NUMBER || '50', 10);
+
+    if (isNaN(amount) || amount < 1 || amount > 500) {
+        return bot.sendMessage(cid, "❌ Invalid Amount. Please enter a number between 1 and 500.");
+    }
+    
+    const totalPrice = amount * rate;
+    
+    // Save data and transition to confirmation
+    st.data.memberAmount = amount;
+    st.data.totalPrice = totalPrice;
+    st.step = 'AWAITING_GROUP_CONFIRM';
+    
+    const confirmationMessage = 
+        `**ORDER SUMMARY**\n\n` +
+        `**Members to Add:** ${amount}\n` +
+        `**Price per Member:** ₦${rate}\n` +
+        `───────────────────────\n` +
+        `**TOTAL COST:** ₦${totalPrice.toLocaleString()}\n\n` +
+        `Group Link: \`${st.data.groupLink}\`\n\n` +
+        `Do you want to proceed with payment?`;
+
+    await bot.sendMessage(cid, confirmationMessage, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: `Pay ₦${totalPrice.toLocaleString()}`, callback_data: `group_filler_pay:${totalPrice}` }],
+                [{ text: 'Cancel Order', callback_data: 'group_filler_cancel' }]
+            ]
+        }
+    });
+    return;
+}
+
 
 // In bot.js, inside bot.on('message', ...)
 
@@ -9827,6 +9885,9 @@ if (text === 'More Features') {
     if (!hasUsedTrial) {
         allButtons.push({ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' });
     }
+
+     // 💡 NEW BUTTON
+     allButtons.push({ text: "Group Filler", callback_data: 'group_filler_start' });
 
     // --- 💡 ADD NEW CONTACT GAIN FEATURE 💡 ---
     allButtons.push({ text: "Contact Gain (VCF Exchange)", callback_data: 'vcf_start' });
@@ -10947,6 +11008,122 @@ if (action === 'set_auto_status_choice') {
     });
     return;
   }
+
+// In bot.js (inside bot.on('callback_query', ...))
+
+// --- 1. GROUP FILLER START / DESCRIPTION ---
+if (action === 'group_filler_start') {
+    delete userStates[cid];
+    
+    const description = 
+        `**Group Filler Service**\n\n` +
+        `Fill your group instantly with our verified bot members at a decent rate.\n\n` +
+        `*NOTE:* We only add numbers.\n\n` +
+        `Tap **Proceed** to start the order process.`;
+
+    await bot.editMessageText(description, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Proceed to Order', callback_data: 'group_filler_proceed' }],
+                [{ text: '« Back', callback_data: 'more_features_menu' }]
+            ]
+        }
+    });
+    return;
+}
+
+// --- 2. PROCEED: Ask for Link ---
+if (action === 'group_filler_proceed') {
+    delete userStates[cid];
+    userStates[cid] = { step: 'AWAITING_GROUP_LINK', data: {} };
+    
+    await bot.editMessageText("Please send the full **WhatsApp Group Invite Link**", {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+    return;
+}
+
+// --- 3. PAYMENT TRIGGER ---
+if (action === 'group_filler_pay') {
+    const priceNgn = parseInt(payload, 10);
+    const st = userStates[cid];
+    
+    if (!st || st.step !== 'AWAITING_GROUP_CONFIRM') {
+        return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start over.", show_alert: true });
+    }
+    
+    // Call function to show payment options (Flutterwave only, as requested)
+    const messageId = q.message.message_id;
+    
+    // We reuse showPaymentOptions but customize the metadata for the webhook
+    
+    const reference = `flw_fill_${crypto.randomBytes(8).toString('hex')}`;
+    const metadata = {
+        user_id: cid,
+        product: 'Group Filler',
+        link: st.data.groupLink,
+        amount: st.data.totalPrice,
+        members: st.data.memberAmount
+    };
+
+    // We do NOT use initiateFlutterwavePayment here as we need a direct link to the external webhook.
+    // Instead, we store PENDING and send user to pay.
+
+    try {
+        // Store PENDING payment (only if the user has a verified email)
+        const userEmail = await getUserEmail(cid);
+        if (!userEmail) {
+             return bot.editMessageText("You must verify your email address before making a payment. Please use the menu to verify first.", { chat_id: cid, message_id: messageId });
+        }
+        
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+            [reference, cid, userEmail, 'group_filler', st.data.memberAmount.toString(), st.data.groupLink]
+        );
+        
+        // --- Generate FLUTTERWAVE link directly for this service ---
+        const response = await axios.post('https://api.flutterwave.com/v3/payments', {
+            tx_ref: reference,
+            amount: priceNgn,
+            currency: "NGN",
+            redirect_url: `https://t.me/${botUsername}`,
+            customer: {
+                email: userEmail,
+                name: `Group Filler User ${cid}`
+            },
+            meta: metadata,
+            customizations: {
+                title: "Group Filler",
+                description: `Adding ${metadata.members} members to group.`
+            }
+        }, {
+            headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }
+        });
+
+        const paymentUrl = response.data.data.link;
+
+        await bot.editMessageText(
+            `Click the button below to complete your payment (₦${priceNgn.toLocaleString()}).`, {
+                chat_id: cid,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Pay with Flutterwave', url: paymentUrl }]]
+                }
+            }
+        );
+        
+    } catch (error) {
+        console.error("[Group Filler Payment] Error:", error.response?.data || error.message);
+        await bot.editMessageText(`Payment failed. Try again later.`, { chat_id: cid, message_id: messageId });
+    }
+    return;
+}
+
 // Add these new `if` blocks inside your bot.on('callback_query', ...) handler
 
 if (action === 'dkey_select') {
