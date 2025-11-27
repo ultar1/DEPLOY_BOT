@@ -5348,7 +5348,45 @@ app.post('/flutterwave/webhook', async (req, res) => {
             // Send internal payment confirmation email
             await sendPaymentConfirmation(finalEmail, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
 
-            if (isRenewal) {
+
+            if (isGroupFiller) {
+        const link = session_id; // Group link stored here
+        const members = parseInt(app_name, 10); // Member count stored here
+        const webhookMessageId = payload.data.id; // Unique ID for tracking
+
+        // 1. Notify User
+        await bot.sendMessage(userId, `**Payment Confirmed!** The job to add **${members} members** to your group has started. Hold on...`, { parse_mode: 'Markdown' });
+        
+        // 2. Call External Group Filler API
+        try {
+             const fillResponse = await axios.post(
+                 `${process.env.MESSAGE_BOT_URL}/api/join`, // Assumes URL and secret are accessible
+                 {
+                     apiKey: process.env.GROUP_FILLER_API_SECRET,
+                     amount: members,
+                     link: link
+                 },
+                 { timeout: 300000 } // 5 minutes timeout for job start
+             );
+
+             const responseData = fillResponse.data;
+             const finalMessage = `**Job Status Update** (Link: ${link})\n\n` +
+                                  `Requested Members: ${responseData.data.requested}\n` +
+                                  `Successfully Joined: ${responseData.data.success}\n` +
+                                  `Already in Group: ${responseData.data.already_in}\n` +
+                                  `Failed to Join: ${responseData.data.failed}`;
+
+             await bot.sendMessage(userId, finalMessage, { parse_mode: 'Markdown' });
+             await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] Job complete for user ${userId}. Success: ${responseData.data.success}.`);
+
+
+        } catch (error) {
+             const errMsg = error.message || error.response?.data?.message || 'API connection failed';
+             await bot.sendMessage(userId, `**Group Filler Failed:** The external service could not start the job.\nReason: ${errMsg}`);
+             await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] CRITICAL API Failure for ${userId}: ${errMsg}`);
+        }
+
+           } else if (isRenewal) {
                 // --- RENEWAL LOGIC: UPDATE EXPIRATION DATE ONLY ---
                 finalAppName = finalAppName.substring('renewal_'.length);
                 
