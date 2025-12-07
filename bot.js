@@ -6096,6 +6096,100 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/changessl\s+(no-verify|disable)$/i, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const sslMode = match[1].toLowerCase();
+    
+    // 1. Send working message
+    const workingMsg = await bot.sendMessage(adminId, `**Starting Mass DB SSL Update**\n\nTargeting: \`${sslMode}\`\n\n1️⃣ Phase 1: Fetching all deployed apps...`, { parse_mode: 'Markdown' });
+
+    let successCount = 0;
+    let failCount = 0;
+    
+    try {
+        // 2. Get all deployed apps from the database (to get the list of appNames)
+        const allBotsResult = await pool.query("SELECT user_id, app_name FROM user_deployments");
+        const allBots = allBotsResult.rows;
+
+        if (allBots.length === 0) {
+            return bot.editMessageText(`No deployed bots found in the database.`, { chat_id: adminId, message_id: workingMsg.message_id });
+        }
+        
+        // 3. Process each bot sequentially
+        for (const [index, botRow] of allBots.entries()) {
+            const appName = botRow.app_name;
+            
+            // Update progress message periodically
+            if (index % 5 === 0 || index === allBots.length - 1) {
+                await bot.editMessageText(
+                    `**Mass DB SSL Update**\n\nTargeting: \`${sslMode}\`\nProgress: ${index + 1}/${allBots.length}\nSuccess: ${successCount} | Failed: ${failCount}\n\nCurrent App: \`${appName}\``, 
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                ).catch(()=>{});
+            }
+
+            try {
+                // 4. Fetch current config vars
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { 
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+                });
+                const configVars = configRes.data;
+                const oldDbUrl = configVars.DATABASE_URL;
+
+                if (!oldDbUrl) {
+                    failCount++;
+                    continue;
+                }
+                
+                // 5. Parse and modify the DATABASE_URL
+                const dbUrlObj = new URL(oldDbUrl);
+                const params = new URLSearchParams(dbUrlObj.search);
+                params.set('sslmode', sslMode);
+                
+                // Reconstruct the new URL with the updated parameters
+                dbUrlObj.search = params.toString();
+                const newDbUrl = dbUrlObj.toString();
+
+                // 6. Update Heroku config var (triggers bot restart)
+                await herokuApi.patch(`/apps/${appName}/config-vars`,
+                    { DATABASE_URL: newDbUrl },
+                    { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                );
+
+                // ❌ STEP 7: REMOVED LOCAL DB UPDATE (dbServices.saveUserDeployment) ❌
+
+                successCount++;
+                
+                // Small delay to prevent Heroku rate limiting
+                await new Promise(r => setTimeout(r, 1000));
+
+            } catch (e) {
+                failCount++;
+                console.error(`[SSL Update] Failed to process ${appName}:`, e.message);
+            }
+        }
+
+        // 8. Final Success Report
+        await bot.editMessageText(
+            `**Mass DB SSL Update Complete!**\n\n` +
+            `Target SSL Mode: \`${sslMode}\`\n` +
+            `Successfully Updated: **${successCount}** app(s).\n` +
+            `Failed to Update: **${failCount}** app(s).`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error(`[SSL Update] CRITICAL ERROR:`, error.message);
+        await bot.editMessageText(`**CRITICAL FAILURE!**\n\nReason: ${error.message}`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+});
+
+
 bot.onText(/^\/mynum$/, async (msg) => {
     const userId = msg.chat.id.toString();
     try {
