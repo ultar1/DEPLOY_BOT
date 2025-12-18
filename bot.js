@@ -419,32 +419,31 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
     `);
     await client.query(`ALTER TABLE heroku_api_keys ADD COLUMN IF NOT EXISTS added_by TEXT;`);
 
-    // --- CRITICAL REPAIR FIX START ---
-    // If the table exists but the sequence is broken/missing, this ensures 'id' 
-    // is correctly linked to the sequence and set as the default value.
-    await client.query(`
-        DO $$
-        BEGIN
-            -- 1. Ensure the sequence object exists (or create it with the correct name)
-            IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = 'heroku_api_keys_id_seq') THEN
-                CREATE SEQUENCE heroku_api_keys_id_seq;
-            END IF;
-            
-            -- 2. Link the sequence to the column 'id' and set it as the default value
-            -- Use the pg_get_serial_sequence function's output as the default expression
-            IF (SELECT pg_get_serial_sequence('heroku_api_keys', 'id')) IS NULL THEN
-                -- Drop and re-add the PRIMARY KEY constraint if needed, but linking the sequence is sufficient.
-                
-                -- Set the default sequence for the column
-                ALTER TABLE heroku_api_keys ALTER COLUMN id SET DEFAULT nextval('heroku_api_keys_id_seq');
-            END IF;
+        // --- CRITICAL REPAIR FIX START (Re-Written) ---
+    // This ensures 'id' is correctly linked to the sequence without using forbidden column references
+    try {
+        await client.query(`
+            DO $$
+            BEGIN
+                -- 1. Create the sequence if it doesn't exist
+                IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = 'heroku_api_keys_id_seq') THEN
+                    CREATE SEQUENCE heroku_api_keys_id_seq;
+                END IF;
 
-            -- 3. Update the sequence to the current MAX(id) value to prevent conflicts on next insert
-            PERFORM setval('heroku_api_keys_id_seq', COALESCE(MAX(id), 1)) FROM heroku_api_keys;
+                -- 2. Correctly set the default value using the sequence
+                -- We use the string literal of the sequence name to avoid "column reference" errors
+                EXECUTE 'ALTER TABLE heroku_api_keys ALTER COLUMN id SET DEFAULT nextval(''heroku_api_keys_id_seq'')';
 
-        END
-        $$ LANGUAGE plpgsql;
-    `);
+                -- 3. Sync the sequence with the existing data to prevent "duplicate key" errors on next insert
+                PERFORM setval('heroku_api_keys_id_seq', COALESCE(MAX(id), 1)) FROM heroku_api_keys;
+            END
+            $$;
+        `);
+    } catch (seqError) {
+        console.warn(`[DB-${dbName}] Sequence repair skipped (might already be correct):`, seqError.message);
+    }
+    // --- END OF REPAIR FIX ---
+
 
       
         await client.query(`
