@@ -4534,6 +4534,15 @@ const APP_URL = process.env.APP_URL;
         process.exit(1);
     }
     const PORT = process.env.PORT || 3000;
+
+    app.listen(PORT, () => {
+    console.log(`[Web Server] Server running on port ${PORT}`);
+});
+
+    app.get('/', (req, res) => {
+        res.send('Bot is running (webhook mode)!');
+    });
+
     
     const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
 
@@ -4543,13 +4552,6 @@ const APP_URL = process.env.APP_URL;
     await bot.setWebHook(fullWebhookUrl);
     console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
 
-  // --- REPLACE the previous pinging block with this one ---
-
-    app.listen(PORT, () => {
-        console.log(`[Web Server] Server running on port ${PORT}`);
-    });
-
-    // --- START: Auto-Ping Logic (Render ONLY) ---
 
     // This check now ensures it only runs if the APP_URL is set AND it's on Render
     if (process.env.APP_URL && process.env.RENDER === 'true') {
@@ -4577,9 +4579,6 @@ const APP_URL = process.env.APP_URL;
         res.sendStatus(200);
     });
 
-    app.get('/', (req, res) => {
-        res.send('Bot is running (webhook mode)!');
-    });
 
   app.get('/verify', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'verify.html'));
