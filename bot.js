@@ -372,8 +372,7 @@ await client.query(`
             PRIMARY KEY (user_id, app_name)
           );
         `);
-
-        await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id INTEGER DEFAULT 1;`);
+      await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id INTEGER DEFAULT '1';`);
 
       // In bot.js, inside createAllTablesInPool, after the user_deployments table definition:
 
@@ -419,31 +418,32 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
     `);
     await client.query(`ALTER TABLE heroku_api_keys ADD COLUMN IF NOT EXISTS added_by TEXT;`);
 
-            // --- SAFE REPAIR FIX ---
-    try {
-        await client.query(`
-            DO $$
-            BEGIN
-                -- 1. Create the sequence if it is missing
-                IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = 'heroku_api_keys_id_seq') THEN
-                    CREATE SEQUENCE heroku_api_keys_id_seq;
-                END IF;
+    // --- CRITICAL REPAIR FIX START ---
+    // If the table exists but the sequence is broken/missing, this ensures 'id' 
+    // is correctly linked to the sequence and set as the default value.
+    await client.query(`
+        DO $$
+        BEGIN
+            -- 1. Ensure the sequence object exists (or create it with the correct name)
+            IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = 'heroku_api_keys_id_seq') THEN
+                CREATE SEQUENCE heroku_api_keys_id_seq;
+            END IF;
+            
+            -- 2. Link the sequence to the column 'id' and set it as the default value
+            -- Use the pg_get_serial_sequence function's output as the default expression
+            IF (SELECT pg_get_serial_sequence('heroku_api_keys', 'id')) IS NULL THEN
+                -- Drop and re-add the PRIMARY KEY constraint if needed, but linking the sequence is sufficient.
+                
+                -- Set the default sequence for the column
+                ALTER TABLE heroku_api_keys ALTER COLUMN id SET DEFAULT nextval('heroku_api_keys_id_seq');
+            END IF;
 
-                -- 2. Link the sequence to the ID column
-                -- We use a string literal for the nextval to prevent "column reference" errors
-                ALTER TABLE heroku_api_keys ALTER COLUMN id SET DEFAULT nextval('heroku_api_keys_id_seq'::regclass);
+            -- 3. Update the sequence to the current MAX(id) value to prevent conflicts on next insert
+            PERFORM setval('heroku_api_keys_id_seq', COALESCE(MAX(id), 1)) FROM heroku_api_keys;
 
-                -- 3. Sync the sequence with the highest existing ID
-                PERFORM setval('heroku_api_keys_id_seq', COALESCE(MAX(id), 1)) FROM heroku_api_keys;
-            END
-            $$;
-        `);
-        console.log(`[DB-${dbName}] heroku_api_keys sequence synced.`);
-    } catch (seqErr) {
-        console.warn(`[DB-${dbName}] Non-critical sequence notice: ${seqErr.message}`);
-    }
-
-
+        END
+        $$ LANGUAGE plpgsql;
+    `);
 
       
         await client.query(`
@@ -4534,15 +4534,6 @@ const APP_URL = process.env.APP_URL;
         process.exit(1);
     }
     const PORT = process.env.PORT || 3000;
-
-    app.listen(PORT, () => {
-    console.log(`[Web Server] Server running on port ${PORT}`);
-});
-
-    app.get('/', (req, res) => {
-        res.send('Bot is running (webhook mode)!');
-    });
-
     
     const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
 
@@ -4552,6 +4543,13 @@ const APP_URL = process.env.APP_URL;
     await bot.setWebHook(fullWebhookUrl);
     console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
 
+  // --- REPLACE the previous pinging block with this one ---
+
+    app.listen(PORT, () => {
+        console.log(`[Web Server] Server running on port ${PORT}`);
+    });
+
+    // --- START: Auto-Ping Logic (Render ONLY) ---
 
     // This check now ensures it only runs if the APP_URL is set AND it's on Render
     if (process.env.APP_URL && process.env.RENDER === 'true') {
@@ -4579,6 +4577,9 @@ const APP_URL = process.env.APP_URL;
         res.sendStatus(200);
     });
 
+    app.get('/', (req, res) => {
+        res.send('Bot is running (webhook mode)!');
+    });
 
   app.get('/verify', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'verify.html'));
