@@ -279,17 +279,6 @@ async function createAllTablesInPool(dbPool, dbName) {
         `);
 
 
-// --- 💡 NEW: WHATSAPP SESSION TABLES 💡 ---
-await client.query(`
-  CREATE TABLE IF NOT EXISTS wa_sessions (
-    session_id TEXT PRIMARY KEY,
-    phone_number TEXT UNIQUE,
-    telegram_chat_id TEXT,
-    last_login TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    creds JSONB,
-    keys JSONB
-  );
-`);
 
   // In createAllTablesInPool (bot.js), add this new table definition:
 await client.query(`
@@ -302,14 +291,13 @@ await client.query(`
 `);
 // NOTE: Make sure this is added to both pools if they are used for recovery tracking.
 // Assuming for simplicity, only the 'pool' (main database) tracks the schedule.
-      
-
-await client.query(`
+      await client.query(`
   CREATE TABLE IF NOT EXISTS wa_settings (
     phone_number TEXT PRIMARY KEY,
-    anti_msg_enabled BOOLEAN DEFAULT FAL
+    anti_msg_enabled BOOLEAN DEFAULT FALSE
   );
 `);
+
 // --- END WHATSAPP SESSION TABLES ---
 
       
