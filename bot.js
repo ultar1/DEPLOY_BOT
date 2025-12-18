@@ -372,7 +372,8 @@ await client.query(`
             PRIMARY KEY (user_id, app_name)
           );
         `);
-      await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id INTEGER DEFAULT '1';`);
+
+        await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS neon_account_id INTEGER DEFAULT 1;`);
 
       // In bot.js, inside createAllTablesInPool, after the user_deployments table definition:
 
