@@ -280,8 +280,7 @@ async function createAllTablesInPool(dbPool, dbName) {
 
 
 
-  // In createAllTablesInPool (bot.js), add this new table definition:
-await client.query(`
+  await client.query(`
   CREATE TABLE IF NOT EXISTS recovery_schedule (
       id SERIAL PRIMARY KEY,
       task_name TEXT NOT NULL,
@@ -289,6 +288,7 @@ await client.query(`
       status TEXT DEFAULT 'PENDING'
   );
 `);
+
 // NOTE: Make sure this is added to both pools if they are used for recovery tracking.
 // Assuming for simplicity, only the 'pool' (main database) tracks the schedule.
       await client.query(`
