@@ -4077,10 +4077,6 @@ bot.on('left_chat_member', handleLeftMembers);
           console.error('[WA-SYSTEM] CRITICAL FAILURE loading clients after timeout:', e);
       }
   }, 5000); // Wait 5 seconds
-  //
-  
-  setInterval(checkHerokuApiKey, 1 * 60 * 1000);
-    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
   setInterval(checkNeonCapacity, CAPACITY_CHECK_INTERVAL_MS);
     console.log(`[Capacity Check] Proactive Neon capacity monitor scheduled every 6 hours.`);
