@@ -3987,6 +3987,40 @@ async function triggerRenderRestart() {
 }
 
 
+// In bot.js (REPLACE the checkHerokuApiKey function)
+
+async function checkHerokuApiKey() {
+    if (!HEROKU_API_KEY) {
+        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
+        return;
+    }
+
+    try {
+        await axios.get('https://api.heroku.com/account', {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        });
+        
+        console.log('[API Check] Periodic check: Heroku API key is valid.');
+
+    } catch (error) {
+        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+            
+            const status = error.response.status;
+            const reason = status === 403 ? 'Forbidden/Suspended' : 'Unauthorized';
+            
+            console.error(`[API Check] Status ${status} (${reason}): Triggering recovery workflow...`);
+            
+            // Trigger the auto-replacement logic (where the DB logic resides)
+            await handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
+
+        } else {
+            console.error(`[API Check] An unexpected error occurred during periodic check:`, error.message);
+        }
+    }
+}
 
 
 // In bot_services.js (Add this function)
@@ -4453,11 +4487,6 @@ bot.on('left_chat_member', handleLeftMembers);
       }
   }, 5000); // Wait 5 seconds
   //
-  
-  setInterval(checkHerokuApiKey, 1 * 60 * 1000);
-    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
-
-    // In bot.js (inside your main startup block near other intervals)
 
 // Schedule the DB-backed recovery check every minute
 setInterval(runScheduledRecoveryCheck, 60 * 1000); 
