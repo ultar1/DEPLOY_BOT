@@ -7420,6 +7420,39 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const dbName = match[1].trim();
+    const dbPass = `Ultardatabase${dbName}`;
+    const workingMsg = await bot.sendMessage(cid, `Fetching connection string for *${dbName}*...`, { parse_mode: 'Markdown' });
+
+    // These should match your manager script constants
+    const PUBLIC_HOST = process.env.PUBLIC_HOST || 'localhost';
+    const PUBLIC_DB_PORT = process.env.PUBLIC_DB_PORT || 5432;
+
+    try {
+        const connString = `postgres://${dbName}:${dbPass}@${PUBLIC_HOST}:${PUBLIC_DB_PORT}/${dbName}?sslmode=disable`;
+
+        await bot.editMessageText(
+            `**Database Credentials Found**\n\n` +
+            `*DB Name:* \`${dbName}\`\n` +
+            `*Password:* \`${dbPass}\`\n\n` +
+            `**Connection String:**\n\`${connString}\``,
+            {
+                chat_id: cid,
+                message_id: workingMsg.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+    } catch (e) {
+        await bot.editMessageText(`Error: ${e.message}`, {
+            chat_id: cid,
+            message_id: workingMsg.message_id
+        });
+    }
+});
 
 
 bot.onText(/^\/apilist$/, async (msg) => {
