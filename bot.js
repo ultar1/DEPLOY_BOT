@@ -8241,6 +8241,130 @@ bot.onText(/^\/addexp (\d+) (\d+)$/, async (msg, match) => {
     }
 });
 
+// In bot.js (REPLACE the entire /dbstats function)
+
+bot.onText(/^\/dbstatss$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const workingMsg = await bot.sendMessage(adminId, "Fetching database lists (AWS + Neon)...");
+
+    try {
+        // --- 0. DATA PREPARATION ---
+        const allBotsResult = await pool.query(`
+            SELECT bot_name, user_id FROM user_bots
+            UNION 
+            SELECT app_name AS bot_name, user_id FROM user_deployments
+        `);
+        
+        const botList = allBotsResult.rows.map(bot => ({
+            canonical: bot.bot_name.replace(/-/g, '_'),
+            userId: bot.user_id
+        }));
+
+        function findOwnerByName(dbName) {
+            const dbNameClean = dbName.replace(/-/g, '_');
+            const match = botList.find(b => b.canonical === dbNameClean || dbNameClean.startsWith(b.canonical.replace(/_[a-f0-9]{4,}$/, '') + '_'));
+            return match ? match.userId : 'Unknown';
+        }
+
+        // --- BATCHING LOGIC ---
+        let currentMessage = "";
+        const MAX_LENGTH = 3500; // Limit for a single message
+
+        async function addToReport(text) {
+            if ((currentMessage + text).length > MAX_LENGTH) {
+                await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
+                currentMessage = "DATABASE STATS (CONTINUED):\n\n";
+            }
+            currentMessage += text;
+        }
+
+        // --- 1. AWS SELF-HOSTED REPORT ---
+        let awsSection = "AWS SELF-HOSTED REPORT\n";
+        if (process.env.SELF_HOSTED_DB_URL) {
+            try {
+                const res = await axios.get(`${process.env.SELF_HOSTED_DB_URL}/list`, {
+                    headers: { 'x-api-key': process.env.SELF_HOSTED_DB_SECRET },
+                    timeout: 5000
+                });
+
+                if (res.data.success) {
+                    awsSection += `Status: Online | DBs: ${res.data.databases.length}\n\n`;
+                    for (const [index, db] of res.data.databases.entries()) {
+                        const owner = findOwnerByName(db.name);
+                        awsSection += `#${index + 1} <code>${escapeHTML(db.name)}</code> | ${db.size} | <code>${owner}</code>\n`;
+                    }
+                }
+            } catch (e) {
+                awsSection += `Status: Offline | Error: ${e.message}\n`;
+            }
+        } else {
+            awsSection += `Status: Not Configured\n`;
+        }
+        await addToReport(awsSection + "\n----------------------------------------\n\n");
+
+        // --- 2. NEON ACCOUNTS REPORT ---
+        await addToReport("NEON ACCOUNTS REPORT\n\n");
+        
+        let totalStorageUsedMB = 0;
+        let totalUserDBs = 0;
+        let dbCounter = 1;
+
+        for (const accountConfig of NEON_ACCOUNTS) {
+            const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}`;
+            const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
+
+            try {
+                const [dbsResponse, branchResponse] = await Promise.all([
+                    axios.get(`${apiUrl}/databases`, { headers }),
+                    axios.get(apiUrl, { headers })
+                ]);
+
+                const userDBs = dbsResponse.data.databases.filter(db => db.name !== 'neondb');
+                const sizeMB = branchResponse.data.branch.logical_size ? (branchResponse.data.branch.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
+                
+                totalUserDBs += userDBs.length;
+                totalStorageUsedMB += parseFloat(sizeMB);
+
+                let accountLine = `Acc ${accountConfig.id}: (${userDBs.length}/2) | ${sizeMB} MB\n`;
+                for (const db of userDBs) {
+                    const owner = findOwnerByName(db.name);
+                    accountLine += `#${dbCounter++} <code>${escapeHTML(db.name)}</code> | <code>${owner}</code>\n`;
+                }
+                await addToReport(accountLine + "\n");
+            } catch (error) {
+                await addToReport(`Acc ${accountConfig.id}: Failed (${error.message.substring(0, 30)}...)\n\n`);
+            }
+        }
+
+        // --- 3. FINAL SUMMARY ---
+        const totalMaxStorage = NEON_ACCOUNTS.length * 512;
+        const summary = `\n========================================\n` +
+                        `RESOURCES SUMMARY\n` +
+                        `Total Neon DBs: ${totalUserDBs}\n` +
+                        `Total Neon Storage: ${totalStorageUsedMB.toFixed(2)} / ${totalMaxStorage} MB\n` +
+                        `========================================`;
+        
+        await addToReport(summary);
+
+        // Finalize
+        if (currentMessage.length > 0) {
+            await bot.deleteMessage(adminId, workingMsg.message_id).catch(() => {});
+            await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
+        }
+
+    } catch (err) {
+        console.error("Failed /dbstats:", err);
+        await bot.editMessageText("Error: Could not format all stats. Check logs.", {
+            chat_id: adminId,
+            message_id: workingMsg.message_id
+        });
+    }
+});
+
+
+
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
 
 // Updated regex to capture optional text after the user ID: /send <user_id> <optional_text>
