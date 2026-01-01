@@ -7275,7 +7275,74 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     }
 });
 
-  
+  bot.onText(/^\/getallaws$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const workingMsg = await bot.sendMessage(adminId, "Fetching AWS database names...");
+
+    try {
+        const apiUrl = process.env.SELF_HOSTED_DB_URL;
+        const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+        if (!apiUrl || !apiKey) {
+            return bot.editMessageText("AWS Configuration missing (URL or Secret).", {
+                chat_id: adminId,
+                message_id: workingMsg.message_id
+            });
+        }
+
+        const res = await axios.get(`${apiUrl}/list`, {
+            headers: { 'x-api-key': apiKey },
+            timeout: 10000
+        });
+
+        if (res.data.success) {
+            const databases = res.data.databases;
+
+            if (databases.length === 0) {
+                return bot.editMessageText("No databases found on the AWS server.", {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id
+                });
+            }
+
+            // --- BATCHING & NAMES ONLY LOGIC ---
+            let currentMessage = `<b>AWS Database Names (${databases.length}):</b>\n\n`;
+            const MAX_LENGTH = 3800;
+
+            // Delete the "Fetching..." message to keep chat clean
+            await bot.deleteMessage(adminId, workingMsg.message_id).catch(() => {});
+
+            for (const [index, db] of databases.entries()) {
+                const nameLine = `${index + 1}. <code>${escapeHTML(db.name)}</code>\n`;
+
+                // If adding this line exceeds limit, send current batch and start new one
+                if ((currentMessage + nameLine).length > MAX_LENGTH) {
+                    await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
+                    currentMessage = "<b>AWS Database Names (Continued):</b>\n\n";
+                }
+                currentMessage += nameLine;
+            }
+
+            // Send the final batch
+            await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
+
+        } else {
+            throw new Error("AWS server returned success: false");
+        }
+
+    } catch (e) {
+        console.error("Failed /getallaws:", e.message);
+        const errorMsg = e.message || "Unknown Error";
+        await bot.editMessageText(`<b>Error fetching AWS names:</b>\n${escapeHTML(errorMsg)}`, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'HTML'
+        });
+    }
+});
+
 
 
 bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
