@@ -8243,7 +8243,7 @@ bot.onText(/^\/addexp (\d+) (\d+)$/, async (msg, match) => {
 
 // In bot.js (REPLACE the entire /dbstats function)
 
-bot.onText(/^\/dbstatss$/, async (msg) => {
+bot.onText(/^\/dbstat$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
