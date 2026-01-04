@@ -5944,6 +5944,45 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
     }
 });
 
+// ADMIN COMMAND: /restartaws (Strict Rebuild Only)
+bot.onText(/^\/restartaws$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+    if (!apiUrl || !apiKey) {
+        return bot.sendMessage(adminId, "Config Missing: Ensure SELF_HOSTED_DB_URL and SELF_HOSTED_DB_SECRET are set.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, "🏗️ **Sending Rebuild Signal to AWS...**");
+
+    try {
+        const response = await axios.post(`${apiUrl}/rebuild`, {}, {
+            headers: { 'x-api-key': apiKey },
+            timeout: 60000 
+        });
+
+        if (response.data.success) {
+            await bot.editMessageText(
+                "**AWS Rebuild Successful**\n\nThe EC2 infrastructure is rebuilding.",
+                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+            );
+        } else {
+            throw new Error(response.data.error || "EC2 failed to initiate rebuild.");
+        }
+
+    } catch (error) {
+        const errorMsg = error.response?.data?.error || error.message;
+        await bot.editMessageText(`**Rebuild Failed**\n\nReason: \`${errorMsg}\``, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+});
+
 
 // --- Command: /createawsdb <dbname> ---
 bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
