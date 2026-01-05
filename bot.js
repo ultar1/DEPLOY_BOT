@@ -148,7 +148,7 @@ const {
 
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7788409928:AAFw7A2Pr7lVJUWTQJlYWIKKwDveQPF9-ZI';
 const TELEGRAM_USER_ID = '7302005705';
-const TELEGRAM_CHANNEL_ID = '-1002892034574';
+const TELEGRAM_CHANNEL_ID = '-1003620973489';
 
 const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
