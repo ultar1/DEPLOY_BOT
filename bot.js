@@ -472,6 +472,19 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
             welcome_enabled BOOLEAN DEFAULT FALSE
           );
         `);
+
+
+        await client.query(`
+  CREATE TABLE IF NOT EXISTS reminders (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    target_number TEXT NOT NULL,
+    remind_at TIMESTAMP NOT NULL,
+    hours_duration INTEGER NOT NULL,
+    is_sent BOOLEAN DEFAULT FALSE
+  );
+`);
+
       
 
         await client.query(`
@@ -1213,6 +1226,22 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         );
     }
 }
+
+
+async function sendReminder(number, userId, hours) {
+    try {
+        // 1. Send the message to you
+        await bot.sendMessage(userId, `Timer up for number:\n\n\`${number}\`\n\nTime elapsed: ${hours} hour(s).`, { parse_mode: 'Markdown' });
+        
+        // 2. Permanently delete from the database
+        await pool.query("DELETE FROM reminders WHERE target_number = $1 AND user_id = $2", [number, userId]);
+        
+        console.log(`[AA Reminder] Sent and deleted record for ${number}`);
+    } catch (e) {
+        console.error("Error sending reminder:", e.message);
+    }
+}
+
 
 /**
  * DYNAMIC GEMINI BRAIN UPDATE
@@ -6028,6 +6057,58 @@ bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
     }
 });
 
+
+bot.onText(/^\/aa (\d+) (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const targetNumber = match[1];
+    const hours = parseInt(match[2], 10);
+    const remindAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+
+    try {
+        await pool.query(
+            "INSERT INTO reminders (user_id, target_number, remind_at, hours_duration) VALUES ($1, $2, $3, $4)",
+            [adminId, targetNumber, remindAt, hours]
+        );
+
+        const timeString = remindAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        await bot.sendMessage(adminId, `Timer saved for ${targetNumber}. I will remind you in ${hours} hour(s) (at ${timeString}).`);
+        
+        // Start a timeout for the current session
+        setTimeout(() => sendReminder(targetNumber, adminId, hours), hours * 60 * 60 * 1000);
+
+    } catch (e) {
+        console.error("Failed to save reminder:", e);
+        await bot.sendMessage(adminId, "Failed to save reminder to database.");
+    }
+});
+
+bot.onText(/^\/aalist$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    try {
+        const result = await pool.query("SELECT target_number, remind_at FROM reminders ORDER BY remind_at ASC");
+        
+        if (result.rows.length === 0) {
+            return bot.sendMessage(adminId, "You have no active timers.");
+        }
+
+        let listMsg = "*Active Number Timers:*\n\n";
+        result.rows.forEach((row, index) => {
+            const timeStr = new Date(row.remind_at).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+            listMsg += `${index + 1}. \`${row.target_number}\`\n   Due: ${timeStr}\n\n`;
+        });
+
+        await bot.sendMessage(adminId, listMsg, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error("Error fetching aalist:", e);
+        await bot.sendMessage(adminId, "Error retrieving timer list.");
+    }
+});
+
+
 // --- Command: /deleteawsdb <dbname> ---
 bot.onText(/^\/deleteawsdb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -8303,49 +8384,67 @@ bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
     }
 });
 
-// /addexp <user_id> <days> - Add days to ALL bots of a specific user (Admin only)
-bot.onText(/^\/addexp (\d+) (\d+)$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
-    
-    const targetUserId = match[1];
-    const daysToAdd = parseInt(match[2], 10);
+/bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
+    const userId = msg.chat.id.toString();
+    const daysToAdd = parseInt(match[1], 10);
     
     if (daysToAdd <= 0 || daysToAdd > 3650) {
-        return bot.sendMessage(adminId, "Invalid number of days. Please use a value between 1 and 3650.");
+        return bot.sendMessage(userId, "Invalid number of days. Use a value between 1 and 3650.");
     }
     
+    const checkingMsg = await bot.sendMessage(userId, "Checking your active bots on Heroku...");
+    
     try {
+        // 1. Get bots from local DB
         const result = await pool.query(
-            `UPDATE user_deployments 
-             SET expiration_date = expiration_date + INTERVAL '${daysToAdd} days'
-             WHERE user_id = $1 AND expiration_date IS NOT NULL AND deleted_from_heroku_at IS NULL
-             RETURNING app_name, expiration_date`,
-            [targetUserId]
+            `SELECT app_name, expiration_date FROM user_deployments 
+             WHERE user_id = $1 AND deleted_from_heroku_at IS NULL
+             ORDER BY app_name`,
+            [userId]
         );
         
-        const updated = result.rowCount;
-        let summary = `✅ Added ${daysToAdd} days to ${updated} bot(s) of user ${targetUserId}.\n\n`;
-        
-        if (result.rows.length > 0) {
-            summary += `Updated:\n`;
-            result.rows.forEach((row, idx) => {
-                const newDate = new Date(row.expiration_date).toLocaleDateString();
-                summary += `${idx + 1}. ${row.app_name} → ${newDate}\n`;
-            });
+        if (result.rows.length === 0) {
+            return bot.editMessageText("You have no active bots to extend.", { chat_id: userId, message_id: checkingMsg.message_id });
+        }
+
+        // 2. Filter against Heroku API to ensure they actually exist
+        const activeBots = [];
+        for (const row of result.rows) {
+            try {
+                await herokuApi.get(`/apps/${row.app_name}`, {
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
+                });
+                activeBots.push(row);
+            } catch (e) {
+                // If 404, mark as deleted in DB so it doesn't show up next time
+                if (e.response && e.response.status === 404) {
+                    await dbServices.markDeploymentDeletedFromHeroku(userId, row.app_name);
+                }
+            }
+        }
+
+        if (activeBots.length === 0) {
+            return bot.editMessageText("No bots found on Heroku platform.", { chat_id: userId, message_id: checkingMsg.message_id });
         }
         
-        await bot.sendMessage(adminId, summary);
+        const buttons = activeBots.map(bot => ({
+            text: `${bot.app_name} (${new Date(bot.expiration_date).toLocaleDateString()})`,
+            callback_data: `addexp_select:${bot.app_name}:${daysToAdd}`
+        }));
         
-        // Notify the user
-        if (updated > 0) {
-            await bot.sendMessage(targetUserId, `✅ Admin added ${daysToAdd} day(s) to ${updated} of your bot(s)!`).catch(()=>{});
-        }
+        const keyboard = chunkArray(buttons, 2);
+        
+        await bot.editMessageText(`Select an active bot to add ${daysToAdd} day(s):`, {
+            chat_id: userId,
+            message_id: checkingMsg.message_id,
+            reply_markup: { inline_keyboard: keyboard }
+        });
     } catch (error) {
-        console.error('[AddExp Admin] Error:', error);
-        await bot.sendMessage(adminId, `Error updating expirations: ${error.message}`);
+        console.error('[AddExp] Error:', error);
+        await bot.sendMessage(userId, `Error fetching bots: ${error.message}`);
     }
 });
+
 
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
 
