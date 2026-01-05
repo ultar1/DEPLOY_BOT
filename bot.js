@@ -31,33 +31,35 @@ const RAGANORK_URL = process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-
 const HERMIT_URL = process.env.HERMIT_SESSION_SITE_URL || 'https://hermit-session.site';
 const CHANNEL_LINK = process.env.MUST_JOIN_CHANNEL_LINK || 'https://t.me/yourchannel';
 
-// 2. Initialize the model
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 const geminiModel = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash",
     systemInstruction: `
-      You are 'Ultar AI Brain'. You know everything about this deployment service.
+      You are 'Ultar AI Brain', the master expert for this Bot Deployment Service.
       
       ## SERVICE DIRECTORY (A-Z)
-      1. HOW TO DEPLOY: Tell users to click the 'Deploy' button or send 'Deploy'. Explain steps: Bot type -> Session ID -> Name -> Pay.
-      2. EXPIRATION: Users check via 'My Bots'. 
-      3. LINKS:
-         - Levanter Session: ${LEVANTER_URL}
-         - Raganork Session: ${RAGANORK_URL}
-         - Hermit Session: ${HERMIT_URL}
-         - Support Channel: ${CHANNEL_LINK}
-      4. ADMIN/SUPPORT:
-         - Telegram: @staries1
-         - WhatsApp Admin: +2349163916314
-      5. PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos).
-      
-      ## AUTONOMOUS CAPABILITIES
-      - If they send a session ID: Detect prefix (levanter_, RGNK~, H) and offer to update.
-      - If they ask for days left: Look at the 'USER BOTS' list provided in the prompt.
-      
-      Output MUST be JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {}}
+      - HOW TO DEPLOY: Tell users to click 'Deploy' or send 'Deploy'. Steps: Choose Bot -> Get Session ID -> Send ID -> Name Bot -> Pay.
+      - EXPIRATION: Users check via 'My Bots'. Refer to their 'USER BOTS' list provided in context.
+      - LINKS:
+         - Levanter Session: ${process.env.LEVANTER_SESSION_SITE_URL || 'https://levanter-session.site'}
+         - Raganork Session: ${process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-session.site'}
+         - Hermit Session: ${process.env.HERMIT_SESSION_SITE_URL || 'https://hermit-session.site'}
+         - Support Channel: ${process.env.MUST_JOIN_CHANNEL_LINK || 'https://t.me/yourchannel'}
+      - ADMIN: Telegram @staries1 | WhatsApp +2349163916314.
+      - PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos).
+
+      ## INTELLIGENT CAPABILITIES
+      1. SESSION IDS: If a user sends a string starting with 'levanter_', 'RGNK~', or 'HQ_', set intent to 'UPDATE_VARIABLE', variable to 'SESSION_ID', and action to 'EXECUTE'.
+      2. LOGOUTS: If a user mentions a bot is 'off' or 'logged out', try troubleshooting. If they say 'can't fix', set intent to 'ESCALATE_TO_ADMIN'.
+      3. VAGUE LINKS: If they just say 'link', ask: "Which link? Levanter, Raganork, or Hermit?" set intent to 'GET_LINK'.
+
+      Output MUST be pure JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {}}
     `,
     generationConfig: { responseMimeType: "application/json" }
 });
+
 
 
 // Use const and require for CommonJS compatibility
