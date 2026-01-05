@@ -15172,68 +15172,69 @@ if (action === 'change_session') {
     const appName = payload;
     const targetUserId = extra;
     const cid = q.message.chat.id.toString();
-    const messageIdToDelete = q.message.message_id; // Get the ID of the message to delete
+    const messageIdToDelete = q.message.message_id;
 
     if (cid !== targetUserId) {
-        await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
+        await bot.sendMessage(cid, "You can only change the session ID for your own bots.");
         return;
     }
-    // Clear current state and set up for session ID input
-    delete userStates[cid];
-    const botTypeForChangeSession = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
-    
-    // --- START OF UPDATED IMAGE/PHOTO LOGIC ---
-    let imageGuideUrl;
-    let sessionSiteUrl;
-    let prefix;
 
-    if (botTypeForChangeSession === 'raganork') {
-        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; // Raganork Image URL
-        sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
-        prefix = RAGANORK_SESSION_PREFIX;
-    } else if (botTypeForChangeSession === 'hermit') {
-        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; // Using Levanter image as a placeholder for Hermit
-        sessionSiteUrl = HERMIT_SESSION_SITE_URL;
-        prefix = HERMIT_SESSION_PREFIX;
-    } else { // Default to Levanter
-        imageGuideUrl = 'https.files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
-        sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
-        prefix = LEVANTER_SESSION_PREFIX;
-    }
-    // --- END OF UPDATED IMAGE/PHOTO LOGIC ---
-        
-    const sessionPrompt = `Please send the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
-    
+    // Set state immediately to prevent race conditions or session timeouts
     userStates[cid] = {
         step: 'SETVAR_ENTER_VALUE',
         data: {
             APP_NAME: appName,
             VAR_NAME: 'SESSION_ID',
             targetUserId: targetUserId,
-            isFreeTrial: false, 
-            botType: botTypeForChangeSession
+            isFreeTrial: false
         }
     };
-    
-    // 1. Send the new image/instructions message
-    await bot.sendPhoto(cid, imageGuideUrl, { 
-        caption: sessionPrompt, // Use the prompt as the caption
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: "Don't have the new session? (Click Here)", url: sessionSiteUrl }
-                ]
-            ]
+
+    try {
+        // Fetch bot type to determine the correct guide and prefix
+        const dbRes = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName]);
+        const botType = dbRes.rows[0]?.bot_type || 'levanter';
+        userStates[cid].data.botType = botType;
+
+        let imageGuideUrl;
+        let sessionSiteUrl;
+        let prefix;
+
+        if (botType === 'raganork') {
+            imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg';
+            sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
+            prefix = RAGANORK_SESSION_PREFIX;
+        } else if (botType === 'hermit') {
+            imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg';
+            sessionSiteUrl = HERMIT_SESSION_SITE_URL;
+            prefix = HERMIT_SESSION_PREFIX;
+        } else {
+            imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg';
+            sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
+            prefix = LEVANTER_SESSION_PREFIX;
         }
-    });
-    
-    // 2. Delete the original message that contained the button
-    await bot.deleteMessage(cid, messageIdToDelete)
-        .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
-    
-    // --- END OF FIXED IMAGE/PHOTO LOGIC ---
-    
+
+        const sessionPrompt = `Please send the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
+
+        // Send the instruction photo first
+        await bot.sendPhoto(cid, imageGuideUrl, {
+            caption: sessionPrompt,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Get New Session ID", url: sessionSiteUrl }]
+                ]
+            }
+        });
+
+        // Delete the original button message only after the instruction is sent
+        await bot.deleteMessage(cid, messageIdToDelete).catch(() => {});
+
+    } catch (error) {
+        console.error("Error in change_session callback:", error);
+        // Fallback message if the photo fails to send
+        await bot.sendMessage(cid, "Please send your new session ID now.");
+    }
     return;
 }
 
