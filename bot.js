@@ -100,7 +100,7 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 // The bot MUST be an administrator in this channel for verification to work.
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
 
-const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [chatId]);
+
 const botList = userBots.rows.map(b => b.bot_name).join(', ');
 
 const promptWithKnowledge = `User owns these bots: [${botList}]. ${prompt}`;
@@ -1122,6 +1122,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
     try {
         // 1. Gather Context (Knowledge Injection)
+        const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [chatId]);
         const [bots, deployments] = await Promise.all([
             pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
             pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
