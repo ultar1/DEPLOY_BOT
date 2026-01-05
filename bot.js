@@ -8403,7 +8403,7 @@ bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
     }
 });
 
-/bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
+bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
     const userId = msg.chat.id.toString();
     const daysToAdd = parseInt(match[1], 10);
     
