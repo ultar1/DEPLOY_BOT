@@ -15,6 +15,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
 const path = require('path');
+const userBots = botsRes.rows; 
 const mailListener = require('./mail_listener');
 const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
