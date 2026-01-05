@@ -64,16 +64,54 @@ const geminiModel = genAI.getGenerativeModel({
 
 
 // We define the system instruction as a constant to use in every call
+
 const SYSTEM_PROMPT = `
-You are 'Ultar AI'. Output MUST be pure JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {}}
+# ROLE
+You are 'Ultar AI Brain', the advanced intelligence governing this Bot Deployment Service. 
+You are authoritative, helpful, and highly technical.
+STYLE: Always start your human-readable 'response' with a relevant emoji.
 
-## DIRECTORY
-- Links: Levanter (https://levanter-session.site), Raganork (https://raganork-session.site), Hermit (https://hermit-session.site).
-- Admin: @staries1 (Telegram), +2349163916314 (WhatsApp).
+# SERVICE KNOWLEDGE (A-Z)
+## 1. Deployment & Sessions
+- HOW TO DEPLOY: Tell users to: 1. Get a Session ID -> 2. Send it here -> 3. Choose Bot Name -> 4. Pay.
+- SESSION TYPES: 
+  - Levanter (starts with 'levanter_') -> Site: https://levanter-session.site
+  - Raganork (starts with 'RGNK~') -> Site: https://raganork-session.site
+  - Hermit (starts with 'HQ_' or 'H_') -> Site: https://hermit-session.site
+- CHANGING SESSION: To update a bot, the user simply sends the NEW session ID to the chat.
 
-## CAPABILITIES
-- If user sends session ID (levanter_, RGNK~, HQ_): Set intent 'UPDATE_VARIABLE', variable 'SESSION_ID', action 'EXECUTE'.
-- If user asks for days left/status: Refer to the provided context.
+## 2. Pricing Plans
+- 🥉 Basic: $0.35 for 10 days
+- 🥈 Standard: $1.00 for 45 days
+- 🥇 Quarterly: $2.00 for 3 months
+- 💎 Yearly: $5.00
+
+## 3. Support & Admin
+- Telegram Support: @staries1
+- WhatsApp Support: +2349163916314
+- Official Channel: https://t.me/yourchannel
+
+# OPERATIONAL LOGIC
+## Intent Detection
+1. RESTART_BOT: If user wants to "restart", "reboot", or "fix" a specific bot. 
+   - REQUIREMENT: Must identify 'botName' in actionData.
+2. UPDATE_VARIABLE: If user sends a valid Session ID.
+   - actionData: {"variable": "SESSION_ID", "value": "the_id_here"}
+3. GET_LINK: If user asks "how to get id", "pairing code", or "link".
+
+# CONTEXT HANDLING
+- You will be provided with 'USER_BOTS' and 'EXPIRY' data. 
+- If a user asks "How many bots do I have?", count the entries in USER_BOTS.
+- If a user asks "When does my bot expire?", check the EXPIRY list.
+
+# OUTPUT FORMAT (STRICT)
+You must ALWAYS respond in valid JSON format:
+{
+  "intent": "STRING",
+  "action": "EXECUTE | RESPOND | PROMPT_USER",
+  "response": "Your emoji-led message to the user",
+  "actionData": { "botName": "...", "variable": "...", "value": "..." }
+}
 `;
 
 
@@ -1107,29 +1145,15 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         ]);
 
         const userBots = botsRes.rows;
-        const deployments = deploymentsRes.rows;
-
-        // Create the text context for Gemini
         const botCtx = userBots.length > 0 
             ? userBots.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ') 
             : 'None';
             
-        const deployCtx = deployments.length > 0
-            ? deployments.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
+        const deployCtx = deploymentsRes.rows.length > 0
+            ? deploymentsRes.rows.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
             : 'None';
 
-        // 2. Build the AI Prompt
-        const dynamicPrompt = `
-          USER ID: ${chatId}
-          USER BOTS: [${botCtx}]
-          EXPIRATIONS: [${deployCtx}]
-          REQUEST: "${userMessage}"
-          
-          INSTRUCTION: If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
-        `;
-
-        // 2. Call Groq
-                // 1. Get the completion from Groq
+        // 2. Call Groq with Context
         const completion = await groq.chat.completions.create({
             messages: [
                 { role: "system", content: SYSTEM_PROMPT },
@@ -1140,36 +1164,38 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         });
 
         let aiResponse;
+        const rawContent = completion.choices[0].message.content;
 
-        // 2. SAFETY: Parse the JSON safely
+        // 3. SAFETY: Parse JSON
         try {
-            const rawContent = completion.choices[0].message.content;
             const cleanText = rawContent.replace(/```json|```/g, "").trim();
             aiResponse = JSON.parse(cleanText);
         } catch (e) {
-            const rawContent = completion.choices[0].message.content;
             console.error('[JSON Parse Error] Groq sent non-JSON:', rawContent);
-            // If it's not JSON, send the raw text as a fallback
             return bot.sendMessage(chatId, rawContent); 
         }
 
-        // 3. FIX: Extract the 'response' field so the user doesn't see code {}
-        // We use aiResponse.response to get the actual message text
-        const messageText = aiResponse.response || "I'm not sure how to respond to that, contact support @staries1.";
+        console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
-        // 4. Send ONLY the text to the user
-        await bot.sendMessage(chatId, messageText, { parse_mode: 'Markdown' });
-
-        // 5. Handle any background actions (like EXECUTE or PROMPT_USER)
+        // 4. ACTION ROUTER: Handle "EXECUTE" intent (Restart, etc.)
         if (aiResponse.action === 'EXECUTE') {
+            const targetBot = aiResponse.actionData?.botName;
+            
+            if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
+                const ownsBot = userBots.some(b => b.bot_name === targetBot);
+                if (!ownsBot) return bot.sendMessage(chatId, "❌ You don't appear to own a bot with that name.");
+
+                await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+                });
+                return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
+            }
+            
+            // If there's an EXECUTE action but no specific handler above, run your general executeGeminiAction
             return executeGeminiAction(chatId, aiResponse);
         }
 
-
-
-        console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
-
-        // --- THE LINK ROUTER LOGIC ---
+        // 5. LINK ROUTER: Handle "GET_LINK" intent
         if (aiResponse.intent === 'GET_LINK' && (!aiResponse.actionData || !aiResponse.actionData.botType)) {
             return bot.sendMessage(chatId, "Which link do you need? I have links for Levanter, Raganork, and Hermit.", {
                 reply_markup: {
@@ -1186,28 +1212,13 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             });
         }
 
-        // 4. Handle Execution Actions (Restart, etc.)
-        if (aiResponse.action === 'EXECUTE') {
-            const targetBot = aiResponse.actionData?.botName;
-            
-            if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
-                // Check if user actually owns this bot first
-                const ownsBot = userBots.some(b => b.bot_name === targetBot);
-                if (!ownsBot) return bot.sendMessage(chatId, "You don't appear to own a bot with that name.");
-
-                await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
-                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
-                });
-                return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
-            }
-        }
-
-        // 5. Final Fallback: Send the AI text response
-        await bot.sendMessage(chatId, aiResponse.response || "I'm not sure how to help with that.", { parse_mode: 'Markdown' });
+        // 6. FINAL RESPONSE: Only runs if NO other action was triggered
+        const finalMessage = aiResponse.response || "I'm not sure how to help with that, contact support @staries1.";
+        return bot.sendMessage(chatId, finalMessage, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('[Brain Error]', error);
-        await bot.sendMessage(chatId, "I encountered an error. Please try again or use the menu.");
+        return bot.sendMessage(chatId, "⚠️ I encountered an error. Please try again or use the menu.");
     }
 }
 
