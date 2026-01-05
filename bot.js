@@ -1129,33 +1129,42 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         `;
 
         // 2. Call Groq
+                // 1. Get the completion from Groq
         const completion = await groq.chat.completions.create({
             messages: [
                 { role: "system", content: SYSTEM_PROMPT },
                 { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
             ],
-            model: "llama-3.3-70b-versatile", // Powerful and free
-            response_format: { type: "json_object" } // Forces JSON output
+            model: "llama-3.3-70b-versatile",
+            response_format: { type: "json_object" } 
         });
 
-        const aiResponse = JSON.parse(completion.choices[0].message.content);
+        let aiResponse;
 
-        
-        // SAFETY: Handle cases where Gemini might not return valid JSON
+        // 2. SAFETY: Parse the JSON safely
         try {
-    // 1. Get the raw text from the Groq completion object
-    // Use completion.choices[0].message.content instead of result.response.text()
-    const rawContent = completion.choices[0].message.content;
-    
-    // 2. Clean and Parse
-    const cleanText = rawContent.replace(/```json|```/g, "").trim();
-    aiResponse = JSON.parse(cleanText);
-} catch (e) {
-    // Fallback if JSON parsing fails
-    const rawContent = completion.choices[0].message.content;
-    console.error('[JSON Parse Error] Groq sent non-JSON:', rawContent);
-    return bot.sendMessage(chatId, rawContent); 
-}
+            const rawContent = completion.choices[0].message.content;
+            const cleanText = rawContent.replace(/```json|```/g, "").trim();
+            aiResponse = JSON.parse(cleanText);
+        } catch (e) {
+            const rawContent = completion.choices[0].message.content;
+            console.error('[JSON Parse Error] Groq sent non-JSON:', rawContent);
+            // If it's not JSON, send the raw text as a fallback
+            return bot.sendMessage(chatId, rawContent); 
+        }
+
+        // 3. FIX: Extract the 'response' field so the user doesn't see code {}
+        // We use aiResponse.response to get the actual message text
+        const messageText = aiResponse.response || "I'm not sure how to respond to that, contact support @staries1.";
+
+        // 4. Send ONLY the text to the user
+        await bot.sendMessage(chatId, messageText, { parse_mode: 'Markdown' });
+
+        // 5. Handle any background actions (like EXECUTE or PROMPT_USER)
+        if (aiResponse.action === 'EXECUTE') {
+            return executeGeminiAction(chatId, aiResponse);
+        }
+
 
 
         console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
