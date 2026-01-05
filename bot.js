@@ -15,7 +15,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
 const path = require('path');
-const userBots = botsRes.rows; 
 const mailListener = require('./mail_listener');
 const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
@@ -109,11 +108,6 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 // ⚠️ IMPORTANT: Replace the placeholder ID below with the correct numeric ID of your channel.
 // The bot MUST be an administrator in this channel for verification to work.
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
-
-
-const botList = userBots.rows.map(b => b.bot_name).join(', ');
-
-const promptWithKnowledge = `User owns these bots: [${botList}]. ${prompt}`;
 
 
 let botUsername = 'ultarbotdeploybot'; // Add this new global variable
@@ -1088,49 +1082,53 @@ const allowedVariables = [
 
 
 async function handleFallbackWithGemini(chatId, userMessage) {
-    // Show that the bot is thinking
     bot.sendChatAction(chatId, 'typing');
 
     try {
-    // 1. Gather Context (Knowledge Injection) - Optimized to a single Promise.all
-    const [botsRes, deploymentsRes] = await Promise.all([
-        pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
-        pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
-    ]);
+        // 1. Gather Context (Knowledge Injection)
+        const [botsRes, deploymentsRes] = await Promise.all([
+            pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
+            pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
+        ]);
 
-    // Define variables clearly from the query results
-    const userBots = botsRes.rows; // This defines the userBots variable safely
-    const deployments = deploymentsRes.rows;
+        const userBots = botsRes.rows;
+        const deployments = deploymentsRes.rows;
 
-    // Create the text context for Gemini
-    const botCtx = userBots.length > 0 
-        ? userBots.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ') 
-        : 'None';
-        
-    const deployCtx = deployments.length > 0
-        ? deployments.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
-        : 'None';
+        // Create the text context for Gemini
+        const botCtx = userBots.length > 0 
+            ? userBots.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ') 
+            : 'None';
+            
+        const deployCtx = deployments.length > 0
+            ? deployments.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
+            : 'None';
 
-    // 2. Build the AI Prompt
-    const dynamicPrompt = `
-      USER ID: ${chatId}
-      USER BOTS: [${botCtx}]
-      EXPIRATIONS: [${deployCtx}]
-      REQUEST: "${userMessage}"
-      
-      INSTRUCTION: If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
-    `;
-
+        // 2. Build the AI Prompt
+        const dynamicPrompt = `
+          USER ID: ${chatId}
+          USER BOTS: [${botCtx}]
+          EXPIRATIONS: [${deployCtx}]
+          REQUEST: "${userMessage}"
+          
+          INSTRUCTION: If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
+        `;
 
         // 3. Get AI Response
         const result = await geminiModel.generateContent(dynamicPrompt);
-        const aiResponse = JSON.parse(result.response.text());
+        let aiResponse;
+        
+        // SAFETY: Handle cases where Gemini might not return valid JSON
+        try {
+            const cleanText = result.response.text().replace(/```json|```/g, "").trim();
+            aiResponse = JSON.parse(cleanText);
+        } catch (e) {
+            console.error('[JSON Parse Error] AI sent non-JSON:', result.response.text());
+            return bot.sendMessage(chatId, result.response.text()); // Fallback to plain text
+        }
 
         console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
         // --- THE LINK ROUTER LOGIC ---
-        
-        // Check if the AI identified a general 'GET_LINK' intent without a specific bot type
         if (aiResponse.intent === 'GET_LINK' && (!aiResponse.actionData || !aiResponse.actionData.botType)) {
             return bot.sendMessage(chatId, "Which link do you need? I have links for Levanter, Raganork, and Hermit.", {
                 reply_markup: {
@@ -1147,11 +1145,15 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             });
         }
 
-        // 4. Handle Execution Actions (Restart, Logs, etc.)
+        // 4. Handle Execution Actions (Restart, etc.)
         if (aiResponse.action === 'EXECUTE') {
             const targetBot = aiResponse.actionData?.botName;
             
             if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
+                // Check if user actually owns this bot first
+                const ownsBot = userBots.some(b => b.bot_name === targetBot);
+                if (!ownsBot) return bot.sendMessage(chatId, "You don't appear to own a bot with that name.");
+
                 await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
                     headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
                 });
@@ -1160,26 +1162,14 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         }
 
         // 5. Final Fallback: Send the AI text response
-        await bot.sendMessage(chatId, aiResponse.response, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, aiResponse.response || "I'm not sure how to help with that.", { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('[Brain Error]', error);
-        await bot.sendMessage(chatId, "I encountered an error while processing your request. Please use the menu buttons to continue.");
+        await bot.sendMessage(chatId, "I encountered an error. Please try again or use the menu.");
     }
 }
 
-
-async function sendReminder(number, userId, hours) {
-    try {
-        await bot.sendMessage(userId, `Timer up for number:\n\n\`${number}\`\n\nTime elapsed: ${hours} hour(s).`, { parse_mode: 'Markdown' });
-        
-        // Delete from database so it doesn't trigger again on next restart
-        await pool.query("DELETE FROM reminders WHERE target_number = $1 AND user_id = $2", [number, userId]);
-        console.log(`[AA Reminder] Sent and deleted: ${number}`);
-    } catch (e) {
-        console.error("Error sending reminder:", e.message);
-    }
-}
 
 
 async function recoverReminders() {
