@@ -154,7 +154,7 @@ const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https:
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
 const GITHUB_HERMIT_REPO_URL = 'https://github.com/ultar1/hermit-bot'; 
 
-const SUPPORT_USERNAME = '@staries1';
+const SUPPORT_USERNAME = 'staries1';
 const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
 const LEVANTER_SESSION_PREFIX = 'levanter_';
 const RAGANORK_SESSION_PREFIX = 'RGNK~';
