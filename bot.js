@@ -1078,16 +1078,6 @@ const allowedVariables = [
     'SUDO' 
 ];
 
-
-
-
-
-// --- ENHANCED GEMINI INTEGRATION WITH AUTONOMY ---
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 /**
  * AUTONOMOUS GEMINI BRAIN - Enhanced to handle requests without user intervention
  * - Aware of all bot core logic (deployment, verification, payments, etc.)
