@@ -1230,17 +1230,36 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
 async function sendReminder(number, userId, hours) {
     try {
-        // 1. Send the message to you
         await bot.sendMessage(userId, `Timer up for number:\n\n\`${number}\`\n\nTime elapsed: ${hours} hour(s).`, { parse_mode: 'Markdown' });
         
-        // 2. Permanently delete from the database
+        // Delete from database so it doesn't trigger again on next restart
         await pool.query("DELETE FROM reminders WHERE target_number = $1 AND user_id = $2", [number, userId]);
-        
-        console.log(`[AA Reminder] Sent and deleted record for ${number}`);
+        console.log(`[AA Reminder] Sent and deleted: ${number}`);
     } catch (e) {
         console.error("Error sending reminder:", e.message);
     }
 }
+
+
+async function recoverReminders() {
+    const now = new Date();
+    try {
+        const pending = await pool.query("SELECT * FROM reminders");
+        for (const row of pending.rows) {
+            const timeDiff = new Date(row.remind_at) - now;
+            if (timeDiff <= 0) {
+                // Time already passed while bot was off
+                await sendReminder(row.target_number, row.user_id, row.hours_duration);
+            } else {
+                // Resume countdown
+                setTimeout(() => sendReminder(row.target_number, row.user_id, row.hours_duration), timeDiff);
+            }
+        }
+    } catch (e) {
+        console.error("Error recovering reminders:", e);
+    }
+}
+
 
 
 /**
