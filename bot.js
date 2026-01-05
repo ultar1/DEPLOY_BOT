@@ -9033,7 +9033,7 @@ if (userActivity.rows.length > 0) {
     }
 }
 
-const text = msg.text || "";
+
 const isSessionID = /^(levanter_|RGNK~|HQ_)/.test(text); // Detects your 3 bot types
 
 if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
