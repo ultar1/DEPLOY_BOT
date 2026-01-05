@@ -594,6 +594,7 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
         await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
         await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS last_email_notification_at TIMESTAMP WITH TIME ZONE;`);
         await client.query(`ALTER TABLE deploy_keys ADD COLUMN IF NOT EXISTS user_id TEXT;`);
+        await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS last_logout_alert_at TIMESTAMP;`);
         await client.query(`ALTER TABLE user_referrals ADD COLUMN IF NOT EXISTS inviter_reward_pending BOOLEAN DEFAULT FALSE;`);
         await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS keyboard_version INTEGER DEFAULT 0;`);
         await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS last_reward_at DATE, ADD COLUMN IF NOT EXISTS reward_streak INTEGER DEFAULT 0;`);
@@ -2382,12 +2383,49 @@ async function deleteDatabaseGlobally(dbName) {
     };
 }
 
-// In bot_services.js (REPLACE the entire changeBotDatabase function)
 
 /**
- * Migrates a bot to a new database (AWS or Neon), ensuring the old database 
- * is targeted for deletion before a new one is created.
+ * Scans for logged-out bots and initiates AI-driven recovery conversations.
  */
+async function checkAndNotifyLoggedOutBots() {
+    console.log('[Monitor] Checking for logged-out bots...');
+    try {
+        // Find bots that are logged_out but haven't been notified today
+        const result = await pool.query(`
+            SELECT ub.user_id, ub.bot_name, v.email 
+            FROM user_bots ub
+            LEFT JOIN email_verification v ON ub.user_id = v.user_id
+            WHERE ub.status = 'logged_out' 
+            AND (ub.last_logout_alert_at IS NULL OR ub.last_logout_alert_at < NOW() - INTERVAL '24 hours')
+        `);
+
+        for (const row of result.rows) {
+            const { user_id, bot_name } = row;
+
+            // Update the alert timestamp immediately to prevent double-alerts
+            await pool.query('UPDATE user_bots SET last_logout_alert_at = NOW() WHERE bot_name = $1', [bot_name]);
+
+            // Create a specific state for the AI to handle this conversation
+            userStates[user_id] = { 
+                step: 'LOGOUT_RECOVERY_CHAT', 
+                data: { botName: bot_name } 
+            };
+
+            // Proactive AI Message
+            const message = `Hello! I noticed your bot **${bot_name}** has logged out. 
+Is everything okay, or are you having trouble re-linking it? I'm here to help you get it back online!`;
+            
+            await bot.sendMessage(user_id, message, { parse_mode: 'Markdown' });
+        }
+    } catch (e) {
+        console.error('[Monitor Error]', e.message);
+    }
+}
+
+// Run the check every 4 hours
+setInterval(checkAndNotifyLoggedOutBots, 4 * 60 * 60 * 1000);
+
+
 async function changeBotDatabase(appName) {
     console.log(`[ChangeDB] Starting database swap for ${appName}...`);
     
@@ -9105,6 +9143,66 @@ if (userActivity.rows.length > 0) {
       }
       return;
   }
+
+
+if (st && st.step === 'LOGOUT_RECOVERY_CHAT') {
+    bot.sendChatAction(cid, 'typing');
+
+    // Track how many attempts the AI has made to help the user
+    st.data.attempts = (st.data.attempts || 0) + 1;
+
+    const prompt = `
+      The user's bot '${st.data.botName}' is logged out.
+      User message: "${text}"
+      Attempt number: ${st.data.attempts}
+      
+      ## YOUR INSTRUCTIONS:
+      1. If the user says the issue is NOT solved, they "tried it and it failed", or if this is Attempt #3, set intent to 'ESCALATE_TO_ADMIN'.
+      2. If the user is asking a question, try to solve it simply.
+      3. If the issue is solved, set intent to 'SOLVED'.
+      
+      Output JSON only: {"intent": "...", "response": "..."}
+    `;
+
+    try {
+        const result = await geminiModel.generateContent(prompt);
+        const aiResponse = JSON.parse(result.response.text());
+
+        // --- CASE 1: ESCALATION TO ADMIN ---
+        if (aiResponse.intent === 'ESCALATE_TO_ADMIN' || st.data.attempts >= 3) {
+            delete userStates[cid]; // End the AI session
+
+            // 1. Notify Admin with Context
+            const adminAlert = `
+**ADMIN HELP REQUIRED**
+User ID: \`${cid}\`
+Bot Name: \`${st.data.botName}\`
+Status: AI Troubleshooting Failed after ${st.data.attempts} attempts.
+User Message: _"${text}"_
+
+_Reply to this message to chat with the user._
+            `;
+            await bot.sendMessage(ADMIN_ID, adminAlert, { parse_mode: 'Markdown' });
+
+            // 2. Inform User
+            return bot.sendMessage(cid, "I'm sorry I couldn't resolve this for you. I have escalated this issue to our Admin. They will review your logs and message you directly here shortly.");
+        }
+
+        // --- CASE 2: ISSUE SOLVED ---
+        if (aiResponse.intent === 'SOLVED') {
+            delete userStates[cid];
+            return bot.sendMessage(cid, "Great! I'm glad we could get your bot back on track. Let me know if you need anything else!");
+        }
+
+        // --- CASE 3: CONTINUE TROUBLESHOOTING ---
+        await bot.sendMessage(cid, aiResponse.response, { parse_mode: 'Markdown' });
+
+    } catch (err) {
+        console.error('[Escalation Error]', err);
+        delete userStates[cid];
+    }
+    return;
+}
 
 
 // REPLACE your existing 'AWAITING_EMAIL' handler with this one.
