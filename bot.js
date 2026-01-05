@@ -35,7 +35,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const geminiModel = genAI.getGenerativeModel({ 
-    model: "gemini-2.5-flash",
+    model: "gemini-2.5-pro",
     systemInstruction: `
       You are 'Ultar AI Brain', the master expert for this Bot Deployment Service.
       
@@ -8859,6 +8859,7 @@ bot.onText(/^\/restartall$/, async (msg) => {
 
 // REPLACE your entire bot.on('message', ...) function with this:
 bot.on('message', async msg => {
+    const text = msg.text || "";
     const cid = msg.chat.id.toString();
 
   if (msg.text && msg.text.startsWith('/')) {
