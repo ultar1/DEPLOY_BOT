@@ -166,34 +166,6 @@ try {
 }
 // --- END OF NEW BLOCK ---
 
-// Put this near the start of your message listener
-const text = msg.text || "";
-const isSessionID = /^(levanter_|RGNK~|HQ_)/.test(text); // Detects your 3 bot types
-
-if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
-    const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [cid]);
-
-    if (userBots.rows.length === 1) {
-        const appName = userBots.rows[0].bot_name;
-        // Auto-process the update for the single bot
-        await bot.sendMessage(cid, `Detected Session ID. Updating **${appName}**...`, { parse_mode: 'Markdown' });
-        
-        // Call your existing update logic
-        await handleVariableUpdate(cid, appName, 'SESSION_ID', text); 
-        return;
-    } else if (userBots.rows.length > 1) {
-        // Save the ID in temporary state and ask which bot to apply it to
-        userStates[cid] = {
-            step: 'AWAITING_BOT_SELECTION_FOR_ID',
-            data: { pendingID: text }
-        };
-        const buttons = userBots.rows.map(b => [{ text: b.bot_name, callback_data: `apply_id:${b.bot_name}` }]);
-        return bot.sendMessage(cid, "I see you sent a Session ID. Which bot should I apply this to?", {
-            reply_markup: { inline_keyboard: buttons }
-        });
-    }
-}
-
 
 // 3) Environment config
 const {
@@ -9059,6 +9031,33 @@ if (userActivity.rows.length > 0) {
     const userVersion = userActivity.rows[0].keyboard_version || 0;
     if (userVersion < KEYBOARD_VERSION) {
         await sendLatestKeyboard(cid);
+    }
+}
+
+const text = msg.text || "";
+const isSessionID = /^(levanter_|RGNK~|HQ_)/.test(text); // Detects your 3 bot types
+
+if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
+    const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [cid]);
+
+    if (userBots.rows.length === 1) {
+        const appName = userBots.rows[0].bot_name;
+        // Auto-process the update for the single bot
+        await bot.sendMessage(cid, `Detected Session ID. Updating **${appName}**...`, { parse_mode: 'Markdown' });
+        
+        // Call your existing update logic
+        await handleVariableUpdate(cid, appName, 'SESSION_ID', text); 
+        return;
+    } else if (userBots.rows.length > 1) {
+        // Save the ID in temporary state and ask which bot to apply it to
+        userStates[cid] = {
+            step: 'AWAITING_BOT_SELECTION_FOR_ID',
+            data: { pendingID: text }
+        };
+        const buttons = userBots.rows.map(b => [{ text: b.bot_name, callback_data: `apply_id:${b.bot_name}` }]);
+        return bot.sendMessage(cid, "I see you sent a Session ID. Which bot should I apply this to?", {
+            reply_markup: { inline_keyboard: buttons }
+        });
     }
 }
   const st = userStates[cid];
