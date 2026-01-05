@@ -1091,23 +1091,35 @@ async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
     try {
-        // 1. Gather Context (Knowledge Injection)
-        const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [chatId]);
-        const [bots, deployments] = await Promise.all([
-            pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
-            pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
-        ]);
+    // 1. Gather Context (Knowledge Injection) - Optimized to a single Promise.all
+    const [botsRes, deploymentsRes] = await Promise.all([
+        pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
+        pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
+    ]);
 
-        const botCtx = bots.rows.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ');
+    // Define variables clearly from the query results
+    const userBots = botsRes.rows; // This defines the userBots variable safely
+    const deployments = deploymentsRes.rows;
+
+    // Create the text context for Gemini
+    const botCtx = userBots.length > 0 
+        ? userBots.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ') 
+        : 'None';
         
-        // 2. Build the AI Prompt
-        const dynamicPrompt = `
-          USER ID: ${chatId}
-          USER BOTS: [${botCtx || 'None'}]
-          REQUEST: "${userMessage}"
-          
-          If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
-        `;
+    const deployCtx = deployments.length > 0
+        ? deployments.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
+        : 'None';
+
+    // 2. Build the AI Prompt
+    const dynamicPrompt = `
+      USER ID: ${chatId}
+      USER BOTS: [${botCtx}]
+      EXPIRATIONS: [${deployCtx}]
+      REQUEST: "${userMessage}"
+      
+      INSTRUCTION: If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
+    `;
+
 
         // 3. Get AI Response
         const result = await geminiModel.generateContent(dynamicPrompt);
