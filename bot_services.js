@@ -279,35 +279,20 @@ async function getLoggedOutBots() {
     }
 }
 
-
-// In bot_services.js
-// In bot_services.js (REPLACE the processBotSwitch function)
-
 /**
- * Handles switching a bot from one type to another.
- * Deletes old app, Renames the bot (to avoid conflicts), and Redeploys.
+ * Handles switching a bot with a CLEAN SLATE on AWS.
+ * Deletes old Heroku app, Deletes AWS Database, and Redeploys fresh.
  */
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
-    console.log(`[Switch] Starting switch for ${appName} to ${targetType}...`);
+    console.log(`[Switch] Starting AWS clean slate switch for ${appName} to ${targetType}...`);
     
     try {
-        // 1. Get current config (WE NEED THE DATABASE_URL)
-        // We try to get it from Heroku first.
-        let databaseUrl;
-        try {
-            const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, {
-                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            databaseUrl = configRes.data.DATABASE_URL;
-        } catch (e) {
-            console.warn(`[Switch] Could not fetch vars from Heroku for ${appName} (maybe suspended). Trying local DB.`);
-            // Fallback: Try to get DB URL from local records if Heroku fails
-            const localRecord = await pool.query('SELECT config_vars FROM user_deployments WHERE app_name = $1', [appName]);
-            if (localRecord.rows.length > 0) {
-                databaseUrl = localRecord.rows[0].config_vars.DATABASE_URL;
-            }
+        // 1. Remove user from waiting state immediately
+        if (moduleParams.userStates && moduleParams.userStates[userId]) {
+            delete moduleParams.userStates[userId];
+            console.log(`[Switch] User ${userId} removed from waiting state.`);
         }
-        
+
         // 2. Delete the OLD App from Heroku
         try {
             await herokuApi.delete(`/apps/${appName}`, {
@@ -315,23 +300,30 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
             });
             console.log(`[Switch] Deleted old Heroku app: ${appName}`);
         } catch (e) {
-            if (e.response && e.response.status === 404) {
-                console.log(`[Switch] Old app ${appName} was already deleted.`);
-            } else {
-                console.warn(`[Switch] Warning: Failed to delete old app ${appName}:`, e.message);
-            }
+            console.log(`[Switch] Heroku app ${appName} already deleted or inaccessible.`);
         }
 
-        // --- 💡 FIX: GENERATE NEW UNIQUE NAME ---
-        // This prevents "Name already taken" errors
-        const randomSuffix = require('crypto').randomBytes(2).toString('hex');
-        const newAppName = `${appName}-${randomSuffix}`;
+        // 3. AWS DATABASE DELETE LOGIC (Clean Slate)
+        const dbNameForDeletion = appName.replace(/-/g, '_');
+        console.log(`[Switch] Requesting AWS deletion for DB: ${dbNameForDeletion}`);
         
-        console.log(`[Switch] Renaming bot from ${appName} -> ${newAppName}`);
+        // Specifically call the AWS delete logic
+        const awsDeleteResult = await deleteSelfHostedDatabase(dbNameForDeletion);
+        if (awsDeleteResult.success) {
+            console.log(`[Switch] AWS Database ${dbNameForDeletion} deleted successfully.`);
+        } else {
+            console.warn(`[Switch] AWS Delete warning: ${awsDeleteResult.error}`);
+        }
 
-        // 3. Update Local DB Records (Rename the bot in your database)
+        // 4. Generate new unique name to avoid Heroku caching/taken errors
+        const randomSuffix = require('crypto').randomBytes(2).toString('hex');
+        const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
+        
+        console.log(`[Switch] Renaming bot: ${appName} -> ${newAppName}`);
+
+        // 5. Update Local DB Records with the new name and type
         await pool.query(
-            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3 WHERE bot_name = $4 AND user_id = $5`,
+            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3, status = 'online' WHERE bot_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
         
@@ -340,30 +332,25 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
             [newAppName, targetType, newSessionId, appName, userId]
         );
 
-        // 4. Prepare New Config
+        // 6. Prepare New Config (No DATABASE_URL included to force new creation)
         const targetDefaults = defaultEnvVars[targetType] || {};
-        
         const newVars = {
-            ...targetDefaults,          // Defaults for new bot type
-            DATABASE_URL: databaseUrl,  // PRESERVE THE DATABASE
-            SESSION_ID: newSessionId,   // New Session
-            APP_NAME: newAppName        // <--- USE NEW NAME
+            ...targetDefaults,
+            SESSION_ID: newSessionId,
+            APP_NAME: newAppName
         };
 
-        // 5. Trigger Build
-        // We pass 'true' for isRestore so it doesn't try to create a NEW database
-        await buildWithProgress(userId, newVars, false, true, targetType);
+        // 7. Trigger Fresh Build
+        // isRestore = false ensures it goes through the "Creating NEW database" logic in AWS
+        await buildWithProgress(userId, newVars, false, false, targetType);
         
     } catch (error) {
-        console.error(`[Switch] Error switching bot ${appName}:`, error);
+        console.error(`[Switch] Error during AWS clean switch for ${appName}:`, error);
         moduleParams.bot.sendMessage(userId, `Switch failed: ${error.message}. Please contact support.`);
     }
 }
 
 
-// ... (Your existing bot_services.js content)
-
-// Add this function to the module's scope in bot_services.js
 
 /**
  * Fetches the AWS database connection string from the local deployment record.
