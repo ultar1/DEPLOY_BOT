@@ -8362,107 +8362,61 @@ bot.onText(/^\/addexpall (\d+)$/, async (msg, match) => {
     }
 });
 
-// /addexp <days> - Show YOUR bots, select one to add days
 bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
     const userId = msg.chat.id.toString();
     const daysToAdd = parseInt(match[1], 10);
     
-    if (daysToAdd <= 0 || daysToAdd > 3650) {
-        return bot.sendMessage(userId, "Invalid number of days. Please use a value between 1 and 3650.");
+    if (isNaN(daysToAdd) || daysToAdd <= 0) {
+        return bot.sendMessage(userId, "Please provide a valid number of days.");
     }
     
+    const checkingMsg = await bot.sendMessage(userId, "Scanning Heroku for all active bots...");
+    
     try {
-        const result = await pool.query(
-            `SELECT app_name, expiration_date FROM user_deployments 
-             WHERE user_id = $1 AND expiration_date IS NOT NULL AND deleted_from_heroku_at IS NULL
-             ORDER BY app_name`,
-            [userId]
-        );
-        
-        if (result.rows.length === 0) {
-            return bot.sendMessage(userId, "You have no active bots to extend.");
-        }
-        
-        const buttons = result.rows.map(bot => ({
-            text: `${bot.app_name} (${new Date(bot.expiration_date).toLocaleDateString()})`,
-            callback_data: `addexp_select:${bot.app_name}:${daysToAdd}`
-        }));
-        
-        // Split into columns of 2
-        const keyboard = [];
-        for (let i = 0; i < buttons.length; i += 2) {
-            keyboard.push(buttons.slice(i, i + 2));
-        }
-        
-        await bot.sendMessage(userId, `Select a bot to add ${daysToAdd} day(s):`, {
-            reply_markup: { inline_keyboard: keyboard }
+        // 1. Fetch ALL apps from Heroku API
+        const herokuAppsRes = await herokuApi.get('/apps', {
+            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
         });
-    } catch (error) {
-        console.error('[AddExp] Error:', error);
-        await bot.sendMessage(userId, `Error fetching bots: ${error.message}`);
-    }
-});
-
-bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
-    const userId = msg.chat.id.toString();
-    const daysToAdd = parseInt(match[1], 10);
-    
-    if (daysToAdd <= 0 || daysToAdd > 3650) {
-        return bot.sendMessage(userId, "Invalid number of days. Use a value between 1 and 3650.");
-    }
-    
-    const checkingMsg = await bot.sendMessage(userId, "Checking your active bots on Heroku...");
-    
-    try {
-        // 1. Get bots from local DB
-        const result = await pool.query(
-            `SELECT app_name, expiration_date FROM user_deployments 
-             WHERE user_id = $1 AND deleted_from_heroku_at IS NULL
-             ORDER BY app_name`,
-            [userId]
-        );
         
-        if (result.rows.length === 0) {
-            return bot.editMessageText("You have no active bots to extend.", { chat_id: userId, message_id: checkingMsg.message_id });
-        }
+        const allApps = herokuAppsRes.data;
+        const buttons = [];
 
-        // 2. Filter against Heroku API to ensure they actually exist
-        const activeBots = [];
-        for (const row of result.rows) {
-            try {
-                await herokuApi.get(`/apps/${row.app_name}`, {
-                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
+        // 2. Filter for apps owned by this user (or all apps if admin)
+        // Note: Since Heroku doesn't know your TG IDs, we cross-reference with your DB
+        for (const app of allApps) {
+            const appName = app.name;
+            
+            // Cross-check owner in DB
+            const ownerCheck = await pool.query("SELECT user_id FROM user_deployments WHERE app_name = $1", [appName]);
+            const ownerId = ownerCheck.rows[0]?.user_id;
+
+            // Show if user is admin OR if user owns the bot
+            if (userId === ADMIN_ID || ownerId === userId) {
+                buttons.push({
+                    text: appName,
+                    callback_data: `addexp_select:${appName}:${daysToAdd}`
                 });
-                activeBots.push(row);
-            } catch (e) {
-                // If 404, mark as deleted in DB so it doesn't show up next time
-                if (e.response && e.response.status === 404) {
-                    await dbServices.markDeploymentDeletedFromHeroku(userId, row.app_name);
-                }
             }
         }
 
-        if (activeBots.length === 0) {
-            return bot.editMessageText("No bots found on Heroku platform.", { chat_id: userId, message_id: checkingMsg.message_id });
+        if (buttons.length === 0) {
+            return bot.editMessageText("No active bots found on your Heroku account.", { chat_id: userId, message_id: checkingMsg.message_id });
         }
-        
-        const buttons = activeBots.map(bot => ({
-            text: `${bot.app_name} (${new Date(bot.expiration_date).toLocaleDateString()})`,
-            callback_data: `addexp_select:${bot.app_name}:${daysToAdd}`
-        }));
-        
+
         const keyboard = chunkArray(buttons, 2);
         
-        await bot.editMessageText(`Select an active bot to add ${daysToAdd} day(s):`, {
+        await bot.editMessageText(`Select a bot to add ${daysToAdd} days to:`, {
             chat_id: userId,
             message_id: checkingMsg.message_id,
             reply_markup: { inline_keyboard: keyboard }
         });
+
     } catch (error) {
-        console.error('[AddExp] Error:', error);
-        await bot.sendMessage(userId, `Error fetching bots: ${error.message}`);
+        console.error('[AddExp] Error:', error.message);
+        await bot.sendMessage(userId, "Failed to fetch apps from Heroku.");
     }
 });
+
 
 
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
@@ -10737,34 +10691,50 @@ if (action === 'bapp_select_type') {
     await sendBappList(cid, q.message.message_id, botTypeToManage);
 }
 
-// --- ADD EXP SELECT: Extend a bot's expiration ---
 if (action === 'addexp_select') {
-    const [appName, daysToAdd] = payload.split(':');
+    // FIX: Payload is the appName, Extra is the daysToAdd
+    const appName = payload; 
+    const daysToAdd = parseInt(extra, 10);
     const userId = cid;
-    const days = parseInt(daysToAdd, 10);
-    
+
+    if (isNaN(daysToAdd)) {
+        return bot.answerCallbackQuery(q.id, { text: "Error: Invalid day count.", show_alert: true });
+    }
+
     try {
+        // Update the expiration in the database
         const result = await pool.query(
             `UPDATE user_deployments 
-             SET expiration_date = expiration_date + INTERVAL '${days} days'
-             WHERE user_id = $1 AND app_name = $2
+             SET expiration_date = COALESCE(expiration_date, NOW()) + ($1 * INTERVAL '1 day')
+             WHERE app_name = $2
              RETURNING expiration_date`,
-            [userId, appName]
+            [daysToAdd, appName]
         );
         
         if (result.rowCount > 0) {
-            const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString();
-            await bot.answerCallbackQuery(q.id, `✅ Added ${days} day(s) to ${appName}`, true);
+            const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString('en-GB');
+            await bot.answerCallbackQuery(q.id, { text: `Success: Added ${daysToAdd} days to ${appName}` });
             await bot.editMessageText(
-                `✅ Successfully added ${days} day(s) to ${appName}!\n\nNew expiration: ${newDate}`,
-                { chat_id: userId, message_id: q.message.message_id }
+                `Successfully added **${daysToAdd} days** to \`${appName}\`.\n\nNew Expiration: **${newDate}**`,
+                { chat_id: userId, message_id: q.message.message_id, parse_mode: 'Markdown' }
             );
         } else {
-            await bot.answerCallbackQuery(q.id, 'Bot not found or already deleted', true);
+            // If not in deployments table, create the record
+            await bot.answerCallbackQuery(q.id, { text: "Bot record updated in system.", show_alert: true });
+            const newDate = new Date(Date.now() + (daysToAdd * 24 * 60 * 60 * 1000));
+            
+            await pool.query(
+                `INSERT INTO user_deployments (user_id, app_name, expiration_date, deploy_date) 
+                 VALUES ($1, $2, $3, NOW()) ON CONFLICT (user_id, app_name) 
+                 DO UPDATE SET expiration_date = user_deployments.expiration_date + ($4 * INTERVAL '1 day')`,
+                [userId, appName, newDate, daysToAdd]
+            );
+            
+            await bot.editMessageText(`Bot record was missing but has been created/updated with ${daysToAdd} days.`, { chat_id: userId, message_id: q.message.message_id });
         }
     } catch (error) {
         console.error('[AddExp Callback] Error:', error);
-        await bot.answerCallbackQuery(q.id, `Error: ${error.message}`, true);
+        await bot.sendMessage(cid, `Database Error: ${error.message}`);
     }
     return;
 }
