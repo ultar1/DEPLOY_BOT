@@ -15,6 +15,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
 const path = require('path');
+const Groq = require('groq-sdk');
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const mailListener = require('./mail_listener');
 const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
@@ -60,6 +62,19 @@ const geminiModel = genAI.getGenerativeModel({
     generationConfig: { responseMimeType: "application/json" }
 });
 
+
+// We define the system instruction as a constant to use in every call
+const SYSTEM_PROMPT = `
+You are 'Ultar AI'. Output MUST be pure JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {}}
+
+## DIRECTORY
+- Links: Levanter (https://levanter-session.site), Raganork (https://raganork-session.site), Hermit (https://hermit-session.site).
+- Admin: @staries1 (Telegram), +2349163916314 (WhatsApp).
+
+## CAPABILITIES
+- If user sends session ID (levanter_, RGNK~, HQ_): Set intent 'UPDATE_VARIABLE', variable 'SESSION_ID', action 'EXECUTE'.
+- If user asks for days left/status: Refer to the provided context.
+`;
 
 
 // Use const and require for CommonJS compatibility
@@ -1113,9 +1128,18 @@ async function handleFallbackWithGemini(chatId, userMessage) {
           INSTRUCTION: If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
         `;
 
-        // 3. Get AI Response
-        const result = await geminiModel.generateContent(dynamicPrompt);
-        let aiResponse;
+        // 2. Call Groq
+        const completion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
+            ],
+            model: "llama-3.3-70b-versatile", // Powerful and free
+            response_format: { type: "json_object" } // Forces JSON output
+        });
+
+        const aiResponse = JSON.parse(completion.choices[0].message.content);
+
         
         // SAFETY: Handle cases where Gemini might not return valid JSON
         try {
