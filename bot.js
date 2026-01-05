@@ -8859,7 +8859,7 @@ bot.onText(/^\/restartall$/, async (msg) => {
 
 // REPLACE your entire bot.on('message', ...) function with this:
 bot.on('message', async msg => {
-    const text = msg.text || "";
+    const text = msg.text?.trim() || ""; 
     const cid = msg.chat.id.toString();
 
   if (msg.text && msg.text.startsWith('/')) {
@@ -8996,8 +8996,6 @@ bot.on('message', async msg => {
 
     // --- Step 3: Handle Regular Text-Based Commands ---
     // This only runs if the message was not from the Mini App.
-    const text = msg.text?.trim();
-
     // If the message has no text (e.g., a sticker, photo), ignore it.
     if (!text) 
         return;
