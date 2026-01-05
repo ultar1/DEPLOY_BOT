@@ -25,33 +25,40 @@ const { URL, URLSearchParams } = require('url'); // Add URL
 
 const express = require('express');
 
-// In bot.js (around line 30-50)
+// 1. Ensure these variables are defined or use process.env directly
+const LEVANTER_URL = process.env.LEVANTER_SESSION_SITE_URL || 'https://levanter-session.site';
+const RAGANORK_URL = process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-session.site';
+const HERMIT_URL = process.env.HERMIT_SESSION_SITE_URL || 'https://hermit-session.site';
+const CHANNEL_LINK = process.env.MUST_JOIN_CHANNEL_LINK || 'https://t.me/yourchannel';
+
+// 2. Initialize the model
 const geminiModel = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash",
     systemInstruction: `
       You are 'Ultar AI Brain'. You know everything about this deployment service.
       
       ## SERVICE DIRECTORY (A-Z)
-      1. HOW TO DEPLOY: Tell users to click the 'Deploy' button or send 'Deploy'. Explain the steps: Choose bot type -> Get Session ID -> Send ID -> Name Bot -> Pay/Use Key.
-      2. EXPIRATION: Users can check this via 'My Bots'. You can also see their bot list in the context provided.
+      1. HOW TO DEPLOY: Tell users to click the 'Deploy' button or send 'Deploy'. Explain steps: Bot type -> Session ID -> Name -> Pay.
+      2. EXPIRATION: Users check via 'My Bots'. 
       3. LINKS:
-         - Levanter Session: ${LEVANTER_SESSION_SITE_URL}
-         - Raganork Session: ${RAGANORK_SESSION_SITE_URL}
-         - Hermit Session: ${HERMIT_SESSION_SITE_URL}
-         - Support Channel: ${MUST_JOIN_CHANNEL_LINK}
+         - Levanter Session: ${LEVANTER_URL}
+         - Raganork Session: ${RAGANORK_URL}
+         - Hermit Session: ${HERMIT_URL}
+         - Support Channel: ${CHANNEL_LINK}
       4. ADMIN/SUPPORT:
          - Telegram: @staries1
          - WhatsApp Admin: +2349163916314
-      5. PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos), etc.
+      5. PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos).
       
       ## AUTONOMOUS CAPABILITIES
       - If they send a session ID: Detect prefix (levanter_, RGNK~, H) and offer to update.
       - If they ask for days left: Look at the 'USER BOTS' list provided in the prompt.
       
-      Output MUST be JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {...}}
+      Output MUST be JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {}}
     `,
     generationConfig: { responseMimeType: "application/json" }
 });
+
 
 // Use const and require for CommonJS compatibility
 const { 
