@@ -26,6 +26,32 @@ const { URL, URLSearchParams } = require('url'); // Add URL
 const express = require('express');
 
 // In bot.js (around line 30-50)
+const geminiModel = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    systemInstruction: `
+      You are 'Ultar AI Brain'. You know everything about this deployment service.
+      
+      ## SERVICE DIRECTORY (A-Z)
+      1. HOW TO DEPLOY: Tell users to click the 'Deploy' button or send 'Deploy'. Explain the steps: Choose bot type -> Get Session ID -> Send ID -> Name Bot -> Pay/Use Key.
+      2. EXPIRATION: Users can check this via 'My Bots'. You can also see their bot list in the context provided.
+      3. LINKS:
+         - Levanter Session: ${LEVANTER_SESSION_SITE_URL}
+         - Raganork Session: ${RAGANORK_SESSION_SITE_URL}
+         - Hermit Session: ${HERMIT_SESSION_SITE_URL}
+         - Support Channel: ${MUST_JOIN_CHANNEL_LINK}
+      4. ADMIN/SUPPORT:
+         - Telegram: @staries1
+         - WhatsApp Admin: +2349163916314
+      5. PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos), etc.
+      
+      ## AUTONOMOUS CAPABILITIES
+      - If they send a session ID: Detect prefix (levanter_, RGNK~, H) and offer to update.
+      - If they ask for days left: Look at the 'USER BOTS' list provided in the prompt.
+      
+      Output MUST be JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {...}}
+    `,
+    generationConfig: { responseMimeType: "application/json" }
+});
 
 // Use const and require for CommonJS compatibility
 const { 
@@ -73,6 +99,12 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 // ⚠️ IMPORTANT: Replace the placeholder ID below with the correct numeric ID of your channel.
 // The bot MUST be an administrator in this channel for verification to work.
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
+
+const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [chatId]);
+const botList = userBots.rows.map(b => b.bot_name).join(', ');
+
+const promptWithKnowledge = `User owns these bots: [${botList}]. ${prompt}`;
+
 
 let botUsername = 'ultarbotdeploybot'; // Add this new global variable
 
@@ -133,6 +165,34 @@ try {
   console.warn('[Config] Could not load fallback env vars from app.json2 for Hermit:', e.message);
 }
 // --- END OF NEW BLOCK ---
+
+// Put this near the start of your message listener
+const text = msg.text || "";
+const isSessionID = /^(levanter_|RGNK~|HQ_)/.test(text); // Detects your 3 bot types
+
+if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
+    const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [cid]);
+
+    if (userBots.rows.length === 1) {
+        const appName = userBots.rows[0].bot_name;
+        // Auto-process the update for the single bot
+        await bot.sendMessage(cid, `Detected Session ID. Updating **${appName}**...`, { parse_mode: 'Markdown' });
+        
+        // Call your existing update logic
+        await handleVariableUpdate(cid, appName, 'SESSION_ID', text); 
+        return;
+    } else if (userBots.rows.length > 1) {
+        // Save the ID in temporary state and ask which bot to apply it to
+        userStates[cid] = {
+            step: 'AWAITING_BOT_SELECTION_FOR_ID',
+            data: { pendingID: text }
+        };
+        const buttons = userBots.rows.map(b => [{ text: b.bot_name, callback_data: `apply_id:${b.bot_name}` }]);
+        return bot.sendMessage(cid, "I see you sent a Session ID. Which bot should I apply this to?", {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+}
 
 
 // 3) Environment config
@@ -1045,7 +1105,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 /**
  * AUTONOMOUS GEMINI BRAIN - Enhanced to handle requests without user intervention
@@ -1053,177 +1113,73 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
  * - Can execute actions autonomously (restart bots, handle errors, etc.)
  * - Does NOT reveal sensitive info (platform names, secrets, API keys)
  */
+
+
 async function handleFallbackWithGemini(chatId, userMessage) {
+    // Show that the bot is thinking
     bot.sendChatAction(chatId, 'typing');
 
-    // ENHANCED PROMPT - Gemini now has comprehensive bot knowledge for autonomous action
-    const professionalPrompt = `
-      You are 'Ultar AI Brain', the AUTONOMOUS intelligent system for Ultar Bot Deployment Service.
-      You have complete awareness of ALL bot core logic A-Z, but NEVER reveal sensitive secrets.
-      
-      YOUR MODE: AUTONOMOUS EXECUTION
-      - You should execute user requests directly without asking for confirmation
-      - You can restart bots, manage deployments, check status, and handle errors
-      - You have access to database, deployment systems, and service status
-      - You should provide clear feedback about what you've done
-
-      USER ID: ${chatId}
-      USER REQUEST: "${userMessage}"
-
-      ---
-      ## COMPREHENSIVE BOT KNOWLEDGE BASE ##
-      
-      ### CORE SERVICES & FEATURES ###
-      1. **Bot Deployment System**
-         - Supports 3 WhatsApp bot types: Levanter, Raganork, Hermit
-         - Each has unique Session ID format (Levanter: levanter_xxxx | Raganork: RGNK~xxxx | Hermit: HQ_xxxx)
-         - Deployment requires valid Session ID linked to WhatsApp account
-         - Bots hosted on managed infrastructure with auto-restart & monitoring
-         - Deployment takes 1-2 minutes after payment verification
-
-      2. **Bot Management ('My Bots')**
-         - List all user's deployed bots with status (Online/Offline/Logged Out/Error)
-         - Restart bots: Immediately resets connection and reloads handlers
-         - Check logs: Real-time view of bot activity and errors
-         - Set variables: Update SESSION_ID, AUTO_READ_STATUS, ALWAYS_ONLINE, HANDLERS, ANTI_DELETE, SUDO
-         - Delete bot: Permanent removal with data cleanup
-         - Renew subscription: Extend bot runtime by days
-
-      3. **Bot Status & Health**
-         - Online: Bot is connected and processing messages
-         - Offline: Bot disconnected but can auto-reconnect
-         - Logged Out: Session ID expired - needs refresh via 'Get Session ID'
-         - Error: Critical issue - check logs, may need restart
-         - Auto-restart: System automatically restarts failed bots every 5 min
-
-      4. **Payment & Subscription System**
-         - Payment methods: Flutterwave, Paystack, NOWPayments (Crypto), Telegram Stars
-         - All amounts stored in Kobo (₦1 = 100 Kobo)
-         - Plans: Basic (₦500/10 days), Standard (₦1500/30 days), Premium (₦3000/60 days)
-         - Free Trial: 7-30 days for new users (one-time, requires channel join, IP verification)
-         - Referral system: Earn 10% commission on referred deployments
-         - Early renewal allowed, adds days to existing deployment
-
-      5. **Security & Fraud Prevention**
-         - Free Trial: IP address collection + Geolocation verification to prevent abuse
-         - Country blocking: India, Pakistan NOT allowed (only Nigeria verified)
-         - Cooldown system: One Free Trial per 30 days per user/IP
-         - Session verification: All operations require valid Session ID
-         - Admin actions: All tracked with audit logs
-
-      6. **Database & Persistence**
-         - PostgreSQL with 10+ tables (users, bots, payments, sessions, etc.)
-         - Real-time status updates
-         - Encrypted credentials storage
-         - Automated backups
-
-      ### AUTONOMOUS ACTIONS YOU CAN PERFORM ###
-      1. **Restart Bot**: Kill process, reset memory, reload handlers → Online within 30sec
-      2. **Update Variables**: Modify SESSION_ID, SUDO, HANDLERS, etc. → Effect in <10sec
-      3. **Check Status**: Query database, get live bot health
-      4. **Handle Errors**: Diagnose issues, suggest fixes, attempt auto-recovery
-      5. **Process Renewals**: Validate payment, extend subscription immediately
-      6. **Manage Free Trial**: Verify IP/location, check cooldown, approve/reject
-      7. **Send Notifications**: Alert user of actions taken
-      
-      ### CRITICAL SECURITY RULES ###
-      ❌ NEVER mention: Heroku, Render, AWS, or ANY hosting platform name
-      ❌ NEVER reveal: API keys, database credentials, SECRET_TOKENS, platform configs
-      ❌ NEVER expose: Internal IP addresses, server architecture, deployment methods
-      ✅ DO discuss: Service features, bot capabilities, deployment benefits, pricing
-      
-      ### INTENT CLASSIFICATION & AUTONOMOUS EXECUTION ###
-      Based on the user's request and knowledge base, classify intent AND execute:
-
-      - "DEPLOY": User wants to create, make, build, or deploy a new bot → TRIGGER: deploy_first_bot
-      - "GET_SESSION": User asking for session ID/pairing → TRIGGER: get_session_start_flow  
-      - "LIST_BOTS": User wants to see their bots → TRIGGER: my_bots_start
-      - "RESTART_BOT": User wants to restart a bot → EXECUTE: Kill & restart bot process
-      - "UPDATE_VARIABLE": User wants to change SESSION_ID or other vars → EXECUTE: Update immediately
-      - "CHECK_STATUS": User asking if bot is online/working → EXECUTE: Query status & return
-      - "MANAGE_BOT": General bot management/troubleshooting → TRIGGER: my_bots_start
-      - "FREE_TRIAL": User asking about free trial → EXECUTE: Check eligibility & process
-      - "PRICING": User asking about cost/plans → RESPOND: Show pricing info
-      - "SUPPORT": User needs admin help → RESPOND: Direct to support contact
-      - "GENERAL_QUERY": General questions → RESPOND: Helpful answer
-
-      ---
-      ## AUTONOMOUS EXECUTION RULES ##
-      YOUR RESPONSE MUST ALWAYS BE THIS JSON FORMAT:
-      {
-        "intent": "ONE_OF_ABOVE",
-        "action": "EXECUTE|TRIGGER|RESPOND",
-        "response": "Message to show user",
-        "actionData": {"key": "value"} // Optional, depends on action
-      }
-
-      ACTION TYPES:
-      - "EXECUTE": You perform the action immediately and report results
-      - "TRIGGER": Send button/callback to trigger bot function  
-      - "RESPOND": Send informational response only
-
-      EXAMPLES:
-      - {"intent": "DEPLOY", "action": "TRIGGER", "response": "Let's deploy your new bot!", "actionData": {"button": "deploy_first_bot"}}
-      - {"intent": "RESTART_BOT", "action": "EXECUTE", "response": "Restarting your bot now...", "actionData": {"botName": "extracted_from_request"}}
-      - {"intent": "CHECK_STATUS", "action": "EXECUTE", "response": "Your bot is online ✓", "actionData": {"botName": "extracted"}}
-      - {"intent": "PRICING", "action": "RESPOND", "response": "Plans: Basic ₦500/10d, Standard ₦1500/30d"}
-
-      NOW ANALYZE THE USER REQUEST AND PROVIDE RESPONSE:
-
-      Now, analyze the user's request and provide the JSON output.
-    `;
-    
     try {
-        // DYNAMIC BRAIN UPDATE: Refresh Gemini with latest user/bot state
-        // Temporarily disabled to avoid database errors - will be re-enabled once all tables are verified
-        const brainContext = null; // await updateGeminiBrain(chatId);
-        const contextPrompt = brainContext ? `\n[Real-time System State: ${JSON.stringify(brainContext)}]` : '';
-        const fullPrompt = professionalPrompt + contextPrompt;
+        // 1. Gather Context (Knowledge Injection)
+        const [bots, deployments] = await Promise.all([
+            pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
+            pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
+        ]);
+
+        const botCtx = bots.rows.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ');
         
-        const result = await geminiModel.generateContent(fullPrompt);
-        const responseText = result.response.text();
-        const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const aiResponse = JSON.parse(jsonString);
+        // 2. Build the AI Prompt
+        const dynamicPrompt = `
+          USER ID: ${chatId}
+          USER BOTS: [${botCtx || 'None'}]
+          REQUEST: "${userMessage}"
+          
+          If the user asks for a link, pairing, or session site without specifying the bot type, set intent to 'GET_LINK' and leave botType empty in actionData.
+        `;
 
-        console.log('[Gemini Autonomous] Intent:', aiResponse.intent, '| Action:', aiResponse.action);
+        // 3. Get AI Response
+        const result = await geminiModel.generateContent(dynamicPrompt);
+        const aiResponse = JSON.parse(result.response.text());
 
-        // EXECUTE AUTONOMOUS ACTIONS
-        switch (aiResponse.action) {
-            case 'EXECUTE':
-                // AI executes action immediately
-                await executeGeminiAction(chatId, aiResponse);
-                break;
+        console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
-            case 'TRIGGER':
-                // Send button to trigger bot function
-                if (aiResponse.actionData?.button) {
-                    const buttonMap = {
-                        'deploy_first_bot': { text: 'Start Deployment', callback_data: 'deploy_first_bot' },
-                        'get_session_start_flow': { text: 'Get Session ID', callback_data: 'get_session_start_flow' },
-                        'my_bots_start': { text: 'View My Bots', callback_data: 'my_bots_start' }
-                    };
-                    const button = buttonMap[aiResponse.actionData.button];
-                    await bot.sendMessage(chatId, aiResponse.response, {
-                        reply_markup: { inline_keyboard: [[button]] }
-                    });
-                } else {
-                    await bot.sendMessage(chatId, aiResponse.response);
+        // --- THE LINK ROUTER LOGIC ---
+        
+        // Check if the AI identified a general 'GET_LINK' intent without a specific bot type
+        if (aiResponse.intent === 'GET_LINK' && (!aiResponse.actionData || !aiResponse.actionData.botType)) {
+            return bot.sendMessage(chatId, "Which link do you need? I have links for Levanter, Raganork, and Hermit.", {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: 'Levanter', callback_data: 'select_get_session_type:levanter' }, 
+                            { text: 'Raganork', callback_data: 'select_get_session_type:raganork' }
+                        ],
+                        [
+                            { text: 'Hermit', callback_data: 'select_get_session_type:hermit' }
+                        ]
+                    ]
                 }
-                break;
-
-            case 'RESPOND':
-            default:
-                // Send response only
-                await bot.sendMessage(chatId, aiResponse.response);
-                break;
+            });
         }
 
+        // 4. Handle Execution Actions (Restart, Logs, etc.)
+        if (aiResponse.action === 'EXECUTE') {
+            const targetBot = aiResponse.actionData?.botName;
+            
+            if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
+                await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+                });
+                return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
+            }
+        }
+
+        // 5. Final Fallback: Send the AI text response
+        await bot.sendMessage(chatId, aiResponse.response, { parse_mode: 'Markdown' });
+
     } catch (error) {
-        console.error('[Gemini] Error:', error);
-        await bot.sendMessage(chatId, 
-            'I encountered an error processing your request. Please try again or contact support.',
-            { reply_markup: { inline_keyboard: [[{ text: 'Contact Support', url: `https://t.me/${SUPPORT_USERNAME}` }]] } }
-        );
+        console.error('[Brain Error]', error);
+        await bot.sendMessage(chatId, "I encountered an error while processing your request. Please use the menu buttons to continue.");
     }
 }
 
@@ -1268,54 +1224,67 @@ async function recoverReminders() {
  */
 async function updateGeminiBrain(userId) {
     try {
-        // Fetch user data from user_activity instead of non-existent 'users' table
+        // 1. Fetch user data using correct column 'last_seen'
         const activityRes = await pool.query(
-            'SELECT last_action, last_active FROM user_activity WHERE user_id = $1',
+            'SELECT last_seen FROM user_activity WHERE user_id = $1',
             [userId]
         );
         
+        // 2. Fetch user bots
         const botsRes = await pool.query(
-            'SELECT bot_name, status, deploy_date FROM user_bots WHERE user_id = $1 ORDER BY deploy_date DESC',
+            'SELECT bot_name, status, created_at FROM user_bots WHERE user_id = $1 ORDER BY created_at DESC',
             [userId]
         );
         
+        // 3. Fetch deployment details
         const deployRes = await pool.query(
-            'SELECT app_name, is_free_trial, expiration_date FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC LIMIT 5',
+            'SELECT app_name, is_free_trial, expiration_date, deploy_date FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC LIMIT 5',
             [userId]
         );
         
-        // Build real-time context for Gemini
+        const now = new Date();
+        
+        // 4. Build real-time context
         const brainUpdate = {
-            timestamp: new Date().toISOString(),
+            timestamp: now.toISOString(),
             user: {
                 id: userId,
-                lastAction: activityRes.rows[0]?.last_action || 'Unknown',
-                lastActive: activityRes.rows[0]?.last_active || 'Never'
+                lastSeen: activityRes.rows[0]?.last_seen || 'Never'
             },
-            bots: botsRes.rows.map(b => ({
-                name: b.bot_name,
-                status: b.status,
-                createdDays: Math.floor((new Date() - new Date(b.deploy_date)) / (1000 * 60 * 60 * 24))
-            })),
-            deployments: deployRes.rows.map(d => ({
-                name: d.app_name,
-                isTrial: d.is_free_trial,
-                expiresIn: d.expiration_date ? Math.floor((new Date(d.expiration_date) - new Date()) / (1000 * 60 * 60 * 24)) : 'expired'
-            })),
+            bots: botsRes.rows.map(b => {
+                const createdDate = b.created_at ? new Date(b.created_at) : now;
+                return {
+                    name: b.bot_name,
+                    status: b.status || 'unknown',
+                    ageDays: Math.floor((now - createdDate) / (1000 * 60 * 60 * 24))
+                };
+            }),
+            deployments: deployRes.rows.map(d => {
+                const expDate = d.expiration_date ? new Date(d.expiration_date) : null;
+                const daysLeft = expDate ? Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)) : 'N/A';
+                
+                return {
+                    name: d.app_name,
+                    isTrial: d.is_free_trial || false,
+                    status: (expDate && expDate < now) ? 'expired' : `${daysLeft} days left`
+                };
+            }),
             systemStatus: {
-                maintenanceMode: isMaintenanceMode,
-                currentTime: new Date().toLocaleString(),
-                freeTrialActive: deployRes.rows.some(d => d.is_free_trial && new Date(d.expiration_date) > new Date())
+                maintenanceMode: typeof isMaintenanceMode !== 'undefined' ? isMaintenanceMode : false,
+                currentTime: now.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }),
+                activeTrials: deployRes.rows.filter(d => d.is_free_trial && new Date(d.expiration_date) > now).length
             }
         };
         
-        console.log('[Gemini Brain] Updated with latest state:', brainUpdate);
+        console.log(`[Gemini Brain] Context synced for user ${userId}`);
         return brainUpdate;
+
     } catch (err) {
-        console.error('[Gemini Brain Update Error]', err);
+        console.error('[Gemini Brain Update Error]:', err.message);
         return null;
     }
 }
+
 
 /**
  * AUTONOMOUS ACTION EXECUTOR
@@ -1328,76 +1297,73 @@ async function executeGeminiAction(chatId, aiResponse) {
     try {
         switch (action) {
             case 'RESTART_BOT':
-                // Auto-restart the specified bot
                 const botNameRestart = data.botName || extractBotNameFromMessage(aiResponse.response);
                 if (botNameRestart) {
                     const restartMsg = await bot.sendMessage(chatId, `Restarting bot: *${botNameRestart}*...`, { parse_mode: 'Markdown' });
-                    // Trigger actual restart
                     await restartBotProcess(botNameRestart, chatId);
-                    await bot.editMessageText(`Bot *${botNameRestart}* restarted successfully! ✓\n\nIt should be back online in 30 seconds.`, {
+                    await bot.editMessageText(`Bot *${botNameRestart}* restarted successfully! ✓`, {
                         chat_id: chatId,
                         message_id: restartMsg.message_id,
                         parse_mode: 'Markdown'
                     });
                 } else {
-                    await bot.sendMessage(chatId, 'Please specify which bot to restart or use the My Bots menu.');
+                    await bot.sendMessage(chatId, 'Please specify which bot to restart.');
                 }
                 break;
 
             case 'CHECK_STATUS':
-                // Query bot status automatically
                 const botNameStatus = data.botName || extractBotNameFromMessage(aiResponse.response);
                 if (botNameStatus) {
                     const status = await getBotStatusAuto(botNameStatus, chatId);
-                    await bot.sendMessage(chatId, `Bot: *${botNameStatus}*\nStatus: *${status.status}*\nLast Active: ${status.lastActive}`, 
-                        { parse_mode: 'Markdown' }
-                    );
+                    await bot.sendMessage(chatId, `**Bot:** ${botNameStatus}\n**Status:** ${status.status}\n**Last Active:** ${status.lastActive}`, { parse_mode: 'Markdown' });
                 } else {
                     await dbServices.sendAppList(chatId);
                 }
                 break;
 
             case 'UPDATE_VARIABLE':
-                // Update bot variables automatically
                 const botNameVar = data.botName || extractBotNameFromMessage(aiResponse.response);
-                const varName = data.variable || extractVariableFromMessage(aiResponse.response);
+                const varName = (data.variable || extractVariableFromMessage(aiResponse.response))?.toUpperCase();
                 const varValue = data.value || extractValueFromMessage(aiResponse.response);
                 
+                // 🛡️ SECURITY: Whitelist check for column names
+                const allowedVars = ['SESSION_ID', 'AUTO_READ_STATUS', 'ALWAYS_ONLINE', 'HANDLERS', 'ANTI_DELETE', 'SUDO'];
+                
                 if (botNameVar && varName && varValue) {
-                    const updateMsg = await bot.sendMessage(chatId, 
-                        `Updating *${varName}* for bot *${botNameVar}*...`, 
-                        { parse_mode: 'Markdown' }
-                    );
-                    // Update in database
+                    if (!allowedVars.includes(varName)) {
+                        return bot.sendMessage(chatId, `Error: Variable \`${varName}\` is not allowed to be updated.`);
+                    }
+
+                    const updateMsg = await bot.sendMessage(chatId, `Updating \`${varName}\` for **${botNameVar}**...`, { parse_mode: 'Markdown' });
+
+                    // ✅ FIXED SQL: Injecting whitelisted column name directly
                     await pool.query(
-                        'UPDATE user_bots SET "$1" = $2 WHERE user_id = $3 AND bot_name = $4',
-                        [varName, varValue, chatId, botNameVar]
+                        `UPDATE user_bots SET "${varName}" = $1 WHERE user_id = $2 AND bot_name = $3`,
+                        [varValue, chatId, botNameVar]
                     );
-                    await bot.editMessageText(
-                        `Successfully updated *${varName}*!\n\nYour bot will apply the changes within 10 seconds.`,
-                        { chat_id: chatId, message_id: updateMsg.message_id, parse_mode: 'Markdown' }
-                    );
+
+                    await bot.editMessageText(`Successfully updated \`${varName}\`!`, {
+                        chat_id: chatId, message_id: updateMsg.message_id, parse_mode: 'Markdown'
+                    });
                 } else {
-                    await bot.sendMessage(chatId, 'Please provide bot name, variable name, and new value.');
+                    await bot.sendMessage(chatId, 'I need the bot name, variable name, and the new value to proceed.');
                 }
                 break;
 
             case 'FREE_TRIAL':
-                // Check and auto-process free trial eligibility
                 const trialMsg = await bot.sendMessage(chatId, 'Checking free trial eligibility...');
                 const eligibility = await checkFreeTrialEligibility(chatId);
                 
                 if (eligibility.eligible) {
-                    await bot.editMessageText(aiResponse.response + '\n\nYou are eligible for the free trial!', {
+                    await bot.editMessageText(`You are eligible!\n\n${aiResponse.response}`, {
                         chat_id: chatId,
                         message_id: trialMsg.message_id,
                         reply_markup: { inline_keyboard: [[{ text: 'Claim Free Trial', callback_data: 'free_trial_start' }]] }
                     });
                 } else {
-                    await bot.editMessageText(
-                        aiResponse.response + `\n\n❌ Not eligible: ${eligibility.reason}`,
-                        { chat_id: chatId, message_id: trialMsg.message_id, parse_mode: 'Markdown' }
-                    );
+                    await bot.editMessageText(`Not eligible: ${eligibility.reason}`, {
+                        chat_id: chatId, message_id: trialMsg.message_id, parse_mode: 'Markdown'
+                    });
                 }
                 break;
 
@@ -1405,33 +1371,18 @@ async function executeGeminiAction(chatId, aiResponse) {
                 await bot.sendMessage(chatId, aiResponse.response);
         }
     } catch (err) {
-        console.error('[Autonomous Action] Error:', err);
-        await bot.sendMessage(chatId, `Error executing action: ${err.message}`);
+        console.error('[Action Error]', err);
+        await bot.sendMessage(chatId, `Sorry, I couldn't complete that action: ${err.message}`);
     }
 }
 
-/**
- * Helper functions for autonomous execution
- */
 function extractBotNameFromMessage(message) {
-    // Simple extraction - can be enhanced with NLP
-    const match = message.match(/\*([a-z0-9\-_]+)\*/);
+    // Matches text inside ** or `` (Markdown style)
+    const match = message.match(/[*`]{1,2}([a-z0-9\-_]+)[*`]{1,2}/i);
     return match ? match[1] : null;
 }
 
-function extractVariableFromMessage(message) {
-    const variables = ['SESSION_ID', 'AUTO_READ_STATUS', 'ALWAYS_ONLINE', 'HANDLERS', 'ANTI_DELETE', 'SUDO'];
-    for (const v of variables) {
-        if (message.includes(v)) return v;
-    }
-    return null;
-}
 
-function extractValueFromMessage(message) {
-    // Extract quoted or backtick-wrapped values
-    const match = message.match(/[`"](.*?)["` ]/);
-    return match ? match[1] : null;
-}
 
 async function restartBotProcess(botName, userId) {
     // Execute restart via deployment system
@@ -6878,6 +6829,31 @@ bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
 });
 
 
+// Command: /aa mode
+bot.onText(/^\/aa mode$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    // Set the state
+    userStates[adminId] = {
+        step: 'AA_CONTINUOUS_MODE',
+        data: { startTime: Date.now() }
+    };
+
+    // Auto-exit timer (15 minutes)
+    const exitTimer = setTimeout(async () => {
+        if (userStates[adminId] && userStates[adminId].step === 'AA_CONTINUOUS_MODE') {
+            delete userStates[adminId];
+            await bot.sendMessage(adminId, "AA Mode expired due to 15 minutes of inactivity.");
+        }
+    }, 15 * 60 * 1000);
+
+    userStates[adminId].data.timeoutId = exitTimer;
+
+    await bot.sendMessage(adminId, "AA Mode active. Just send: number time\nExample: 2349012345678 2\n\nType 'exit' to stop.");
+});
+
+
 // In bot.js
 
 bot.onText(/^\/dellogout$/, async (msg) => {
@@ -9641,6 +9617,58 @@ if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
     return;
 }
 
+if (st && st.step === 'AA_CONTINUOUS_MODE') {
+    const input = text.trim();
+
+    // Allow manual exit
+    if (input.toLowerCase() === 'exit') {
+        clearTimeout(st.data.timeoutId);
+        delete userStates[cid];
+        return bot.sendMessage(cid, "AA Mode deactivated.");
+    }
+
+    // Reset the 15-min timer on every message
+    clearTimeout(st.data.timeoutId);
+    st.data.timeoutId = setTimeout(async () => {
+        if (userStates[cid] && userStates[cid].step === 'AA_CONTINUOUS_MODE') {
+            delete userStates[cid];
+            await bot.sendMessage(cid, "AA Mode expired due to inactivity.");
+        }
+    }, 15 * 60 * 1000);
+
+    // Parse the input: Expecting "number hours"
+    const parts = input.split(' ');
+    if (parts.length < 2) {
+        return bot.sendMessage(cid, "Invalid input. Send: number time (e.g. 234901234567 2)");
+    }
+
+    const targetNumber = parts[0];
+    const hours = parseInt(parts[1], 10);
+
+    if (isNaN(hours) || hours <= 0) {
+        return bot.sendMessage(cid, "Invalid time. Please provide hours as a number.");
+    }
+
+    const remindAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+
+    try {
+        // Save to Database (Persistent)
+        await pool.query(
+            "INSERT INTO reminders (user_id, target_number, remind_at, hours_duration) VALUES ($1, $2, $3, $4)",
+            [cid, targetNumber, remindAt, hours]
+        );
+
+        // Start the timeout
+        setTimeout(() => sendReminder(targetNumber, cid, hours), hours * 60 * 60 * 1000);
+
+        const timeString = remindAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        await bot.sendMessage(cid, `Timer saved for ${targetNumber}. Due at ${timeString}.\n\nKeep sending or type 'exit'.`);
+    } catch (e) {
+        console.error("AA Mode DB Error:", e);
+        await bot.sendMessage(cid, "Failed to save timer to database.");
+    }
+    return; // Stop processing further
+}
 
   
 
@@ -10250,6 +10278,16 @@ if (text === 'More Features') {
 }
 
 
+// Add this inside your bot.on('message') handler
+if (text === 'Support') {
+    return bot.sendMessage(cid, "Contact our official support here: @staries1", {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Message Support', url: 'https://t.me/staries1' }]
+            ]
+        }
+    });
+}
 
 
 
