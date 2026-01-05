@@ -1143,12 +1143,20 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         
         // SAFETY: Handle cases where Gemini might not return valid JSON
         try {
-            const cleanText = result.response.text().replace(/```json|```/g, "").trim();
-            aiResponse = JSON.parse(cleanText);
-        } catch (e) {
-            console.error('[JSON Parse Error] AI sent non-JSON:', result.response.text());
-            return bot.sendMessage(chatId, result.response.text()); // Fallback to plain text
-        }
+    // 1. Get the raw text from the Groq completion object
+    // Use completion.choices[0].message.content instead of result.response.text()
+    const rawContent = completion.choices[0].message.content;
+    
+    // 2. Clean and Parse
+    const cleanText = rawContent.replace(/```json|```/g, "").trim();
+    aiResponse = JSON.parse(cleanText);
+} catch (e) {
+    // Fallback if JSON parsing fails
+    const rawContent = completion.choices[0].message.content;
+    console.error('[JSON Parse Error] Groq sent non-JSON:', rawContent);
+    return bot.sendMessage(chatId, rawContent); 
+}
+
 
         console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
