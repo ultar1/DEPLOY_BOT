@@ -404,6 +404,17 @@ await client.query(`
 `);
 
         await client.query(`
+         CREATE TABLE IF NOT EXISTS bot_news (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+`);
+
+        await client.query(`
           CREATE TABLE IF NOT EXISTS deploy_keys (
             key        TEXT PRIMARY KEY,
             uses_left  INTEGER NOT NULL,
@@ -1799,6 +1810,16 @@ cron.schedule('0 0 * * *', async () => {
         scheduled: true,
         timezone: "Africa/Lagos"
     });
+
+// Add this in your global scope or startup block
+setInterval(async () => {
+    try {
+        await pool.query("DELETE FROM bot_news WHERE expires_at <= NOW()");
+    } catch (e) {
+        console.error("[News Cleanup] Error:", e.message);
+    }
+}, 15 * 60 * 1000); // Check every 15 minutes
+
 
 
 // A reusable function to format a more precise countdown for the single bot menu.
@@ -6596,6 +6617,42 @@ bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
         await bot.sendMessage(cid, "An error occurred while fetching the bot list.");
     }
 });
+
+
+bot.onText(/^\/postnews (\d+)\s*\|(.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    if (!msg.reply_to_message) {
+        return bot.sendMessage(adminId, "Please reply to the message you want to post as news.");
+    }
+
+    const hours = parseInt(match[1]);
+    const title = match[2].trim();
+    
+    // Get the content from the replied message (text or caption)
+    const content = msg.reply_to_message.text || msg.reply_to_message.caption;
+
+    if (!content) {
+        return bot.sendMessage(adminId, "The replied message has no text content to post.");
+    }
+    
+    const expiresAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+
+    try {
+        await pool.query(
+            "INSERT INTO bot_news (title, content, expires_at) VALUES ($1, $2, $3)",
+            [title, content, expiresAt]
+        );
+        
+        const timeStr = expiresAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        await bot.sendMessage(adminId, `News posted! Body taken from reply. Auto-delete at: ${timeStr}`);
+    } catch (e) {
+        console.error("Error posting news:", e.message);
+        await bot.sendMessage(adminId, "Failed to post news. Ensure database table 'bot_news' exists.");
+    }
+});
+
 
 // In bot.js, with your other admin commands
 
