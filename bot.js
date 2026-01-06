@@ -1240,15 +1240,29 @@ async function recoverReminders() {
         for (const row of pending.rows) {
             const timeDiff = new Date(row.remind_at) - now;
             if (timeDiff <= 0) {
-                // Time already passed while bot was off
+                // Timer expired while bot was off - Send now and delete
                 await sendReminder(row.target_number, row.user_id, row.hours_duration);
             } else {
-                // Resume countdown
+                // Resume countdown for future timers
                 setTimeout(() => sendReminder(row.target_number, row.user_id, row.hours_duration), timeDiff);
             }
         }
     } catch (e) {
         console.error("Error recovering reminders:", e);
+    }
+}
+
+
+
+async function sendReminder(targetNumber, userId, hours) {
+    try {
+        await bot.sendMessage(userId, `*REMINDER:* The timer for \`${targetNumber}\` (${hours}h) is UP!`, { parse_mode: 'Markdown' });
+        
+        // Delete from DB immediately after sending so /aalist stays clean
+        await pool.query("DELETE FROM reminders WHERE target_number = $1 AND user_id = $2", [targetNumber, userId]);
+        console.log(`[Timer] Reminder sent and deleted for ${targetNumber}`);
+    } catch (e) {
+        console.error("Error sending/deleting reminder:", e);
     }
 }
 
@@ -4597,6 +4611,8 @@ bot.on('new_chat_members', handleNewMembers);
 bot.on('left_chat_member', handleLeftMembers);
 
 
+// Add this inside your main startup block
+await recoverReminders();
 
     await loadMaintenanceStatus(); // Load initial maintenance status
 // In bot.js, inside the main (async () => { ... })(); startup block
@@ -6187,6 +6203,7 @@ bot.onText(/^\/aalist$/, async (msg) => {
     if (adminId !== ADMIN_ID) return;
 
     try {
+        // This query only gets active timers because sent ones are deleted
         const result = await pool.query("SELECT target_number, remind_at FROM reminders ORDER BY remind_at ASC");
         
         if (result.rows.length === 0) {
@@ -6196,7 +6213,7 @@ bot.onText(/^\/aalist$/, async (msg) => {
         let listMsg = "*Active Number Timers:*\n\n";
         result.rows.forEach((row, index) => {
             const timeStr = new Date(row.remind_at).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-            listMsg += `${index + 1}. \`${row.target_number}\`\n   Due: ${timeStr}\n\n`;
+            listMsg += `${index + 1}. \`${row.target_number}\`\n   ⏳ Due: ${timeStr}\n\n`;
         });
 
         await bot.sendMessage(adminId, listMsg, { parse_mode: 'Markdown' });
