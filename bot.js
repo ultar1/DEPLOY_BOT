@@ -4038,7 +4038,7 @@ async function streamLiveLogs(chatId, appName, messageId) {
         // 1. Create a Tail Log Session
         const session = await axios.post(
             `https://api.heroku.com/apps/${appName}/log-sessions`,
-            { lines: 10, tail: true }, // tail: true keeps the session alive
+            { lines: 10, tail: true }, 
             {
                 headers: {
                     'Accept': 'application/vnd.heroku+json; version=3',
@@ -4056,37 +4056,50 @@ async function streamLiveLogs(chatId, appName, messageId) {
         });
 
         let logBuffer = [];
-        
+        let lastMessageText = ""; // Track the last text sent to avoid redundant edits
+
         // 3. Listen for data and update Telegram
         streamResponse.data.on('data', async (chunk) => {
             const lines = chunk.toString().split('\n').filter(l => l.trim());
-            logBuffer = [...logBuffer, ...lines].slice(-15); // Keep only last 15 lines
+            if (lines.length === 0) return;
 
+            logBuffer = [...logBuffer, ...lines].slice(-15); 
             const logText = `**Live Log Stream for ${appName}:**\n\n\`\`\`\n${logBuffer.join('\n')}\n\`\`\``;
 
+            // Only attempt to edit if the content is actually different
+            if (logText === lastMessageText) return;
+
             try {
-                // Edit the same message with new logs
                 await bot.editMessageText(logText, {
                     chat_id: chatId,
                     message_id: messageId,
                     parse_mode: 'Markdown'
                 });
+                lastMessageText = logText; // Update the tracker
             } catch (e) {
-                // Ignore "message not modified" errors to prevent crashing
+                // Specific fix for the "message is not modified" error
+                if (e.message.includes("message is not modified")) {
+                    // Do nothing, this is normal when logs haven't moved
+                } else if (e.message.includes("429")) {
+                    console.warn("[Live Logs] Rate limited by Telegram. Waiting...");
+                } else {
+                    console.error("Live log edit error:", e.message);
+                }
             }
         });
 
         // Auto-stop after 2 minutes to save resources/API limits
         setTimeout(() => {
-            streamResponse.data.destroy();
-            bot.sendMessage(chatId, "**Live log session ended.** Click the button again to resume.");
+            if (streamResponse.data) streamResponse.data.destroy();
+            bot.sendMessage(chatId, "Live log session ended. Click the button again to resume.");
         }, 120000);
 
     } catch (error) {
         console.error("Live Stream Error:", error.message);
-        bot.sendMessage(chatId, "Error connecting to live logs.");
+        bot.sendMessage(chatId, "Error connecting to live logs. Ensure the bot is running.");
     }
 }
+
 
 // REPLACE WITH THIS
 async function loadMaintenanceStatus() {
@@ -14764,7 +14777,7 @@ if (action === 'info') {
     }
 
     const messageId = q.message.message_id;
-    await bot.editMessageText(`**Live Logs for ${payload} (Active for 60s):**\nConnecting...`, { 
+    await bot.editMessageText(`Logs for ${payload} :\nConnecting...`, { 
         chat_id: cid, 
         message_id: messageId 
     });
@@ -14783,7 +14796,7 @@ if (action === 'info') {
             const logs = logRes.data.trim().slice(-3800); // Telegram limit is ~4000
 
             // 3. Edit message with the live data
-            await bot.editMessageText(`**Live Logs for "*${payload}*":**\n\`\`\`\n${logs || 'Waiting for activity...'}\n\`\`\``, {
+            await bot.editMessageText(`Logs for "*${payload}*":\n\`\`\`\n${logs || 'Waiting for activity...'}\n\`\`\``, {
                 chat_id: cid,
                 message_id: messageId,
                 parse_mode: 'Markdown',
