@@ -5441,23 +5441,35 @@ app.post('/flutterwave/webhook', async (req, res) => {
         const { 
             user_id: userId, 
             bot_type, 
-            app_name, // Member count (e.g., '50') or Renewal Name
-            session_id, // Group link or Session ID
+            app_name, 
+            session_id, 
             email: pendingEmail 
         } = pendingPayment.rows[0];
 
         // Determine the intent flags
-        const isGroupFiller = bot_type === 'group_filler'; // 💡 NEW CHECK
+        const isGroupFiller = bot_type === 'group_filler';
         const isSwitch = bot_type && bot_type.startsWith('switch-'); 
-        const isRenewal = bot_type === 'renewal'; // We should rely on bot_type for intent
+        const isRenewal = bot_type === 'renewal';
         
-        // Calculate days based on NGN amount (This must match your pricing tiers)
+        // --- 💡 DYNAMIC DURATION LOGIC 💡 ---
+        // Convert NGN to USD to determine the correct plan duration
+        const currentRate = parseInt(process.env.DOLLAR_RATE || '1500', 10);
+        const amountPaidUsd = amount_ngn / currentRate;
+
         let days;
-        if (amount_ngn >= 8000) days = 365;
-        else if (amount_ngn >= 5000) days = 185;
-        else if (amount_ngn >= 3000) days = 92;
-        else if (amount_ngn >= 1500) days = 45; 
-        else days = 10;
+        if (amountPaidUsd >= 5.0) {
+            days = 365; // Annual ($5.35)
+        } else if (amountPaidUsd >= 3.0) {
+            days = 185; // Semi-Annual ($3.35)
+        } else if (amountPaidUsd >= 1.5) {
+            days = 92;  // Quarterly ($2.00)
+        } else if (amountPaidUsd >= 0.8) {
+            days = 45;  // Standard ($1.00)
+        } else {
+            days = 10;  // Basic ($0.35)
+        }
+
+        console.log(`[Payment Logic] NGN: ${amount_ngn} | Rate: ${currentRate} | USD: $${amountPaidUsd.toFixed(2)} | Result: ${days} days`);
 
         try {
             // 4. Check if already processed (Idempotency)
@@ -5485,13 +5497,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
             // --- 5. EXECUTION LOGIC (Ordered by Intent) ---
 
             if (isGroupFiller) {
-                // --- 🎯 GROUP FILLER LOGIC 🎯 ---
-                const link = session_id; // Group link stored in session_id
-                const members = parseInt(app_name, 10); // Member count stored in app_name
+                const link = session_id; 
+                const members = parseInt(app_name, 10); 
                 
                 await bot.sendMessage(userId, `**Payment Confirmed!** The job to add **${members} members** to your group has started. Hold on...`, { parse_mode: 'Markdown' });
                 
-                // Call External Group Filler API
                 try {
                      const fillResponse = await axios.post(
                          `${process.env.GROUP_FILLER_API_URL}/api/join`, 
@@ -5500,7 +5510,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
                              amount: members,
                              link: link
                          },
-                         { timeout: 300000 } // 5 minutes timeout
+                         { timeout: 300000 }
                      );
 
                      const responseData = fillResponse.data;
@@ -5520,8 +5530,6 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 }
                 
             } else if (isRenewal) {
-                // --- RENEWAL LOGIC: ADJUST DATE ONLY ---
-                
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -5536,15 +5544,12 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 await bot.sendMessage(userId, `Payment confirmed! *${escapeMarkdown(app_name)}* has been successfully **renewed** for ${days} days.`, { parse_mode: 'Markdown' });
             
             } else if (isSwitch) {
-                // --- SWITCH LOGIC: DEPLOY NEW APP ---
                 await bot.sendMessage(userId, 'Payment confirmed! Processing your bot migration now...', { parse_mode: 'Markdown' });
                 const targetType = bot_type.replace('switch-', '');
                 await dbServices.processBotSwitch(userId, app_name, targetType, session_id);
                 await bot.sendMessage(ADMIN_ID, `*Bot Switch Paid (Flutterwave)*\nUser: \`${userId}\`\nApp: \`${app_name}\`\nTo: ${targetType.toUpperCase()}`, { parse_mode: 'Markdown' });
 
             } else { 
-                // --- NEW DEPLOYMENT LOGIC: START THE BUILD ---
-                
                 await bot.sendMessage(userId, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days }; 
                 
@@ -5558,7 +5563,6 @@ app.post('/flutterwave/webhook', async (req, res) => {
             // Clear Awaiting Key state if it exists
             if (userStates[userId]) delete userStates[userId];
 
-
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
             await bot.sendMessage(ADMIN_ID, `CRITICAL FLUTTERWAVE WEBHOOK ERROR for ref ${reference}. Manual review needed. Error: ${dbError.message}`);
@@ -5566,6 +5570,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
     }
     res.status(200).end();
 });
+
 
 
 
