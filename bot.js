@@ -1688,17 +1688,33 @@ function escapeMarkdown(text) {
 // A reusable function to format a concise countdown string for button lists.
 function formatTimeLeft(expirationDateStr) {
     if (!expirationDateStr) {
-        return ''; // Return empty string if no expiration date
+        return '';
     }
 
     const expirationDate = new Date(expirationDateStr);
     const now = new Date();
     const timeLeftMs = expirationDate.getTime() - now.getTime();
 
+    // --- GRACE PERIOD LOGIC ---
     if (timeLeftMs <= 0) {
-        return ' (Expired)';
+        const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
+        const graceLeftMs = GRACE_PERIOD_MS + timeLeftMs; // timeLeftMs is negative
+        
+        if (graceLeftMs <= 0) {
+            return ' (Deleting...)';
+        }
+
+        const hoursLeft = Math.floor(graceLeftMs / (1000 * 60 * 60));
+        const minsLeft = Math.floor((graceLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+
+        if (hoursLeft > 0) {
+            return ` (Suspended - ${hoursLeft}h left)`;
+        } else {
+            return ` (Suspended - ${minsLeft}m left)`;
+        }
     }
 
+    // --- NORMAL COUNTDOWN LOGIC ---
     const days = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
     const hours = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -1717,6 +1733,7 @@ function formatTimeLeft(expirationDateStr) {
 
     return ` (${timeLeftStr.trim()} left)`;
 }
+
 
 // --- Automated Daily Tasks Scheduler ---
 function startScheduledTasks() {
@@ -14018,9 +14035,6 @@ if (action === 'cancel_payment_and_deploy') {
 }
 
 
-
-// REPLACE the existing "if (action === 'selectapp' || action === 'selectbot')" block with this one
-
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
@@ -14031,8 +14045,6 @@ if (action === 'selectapp' || action === 'selectbot') {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     });
     
-    // Get bot status from all our DB tables
-    // 💡 ADDED ub.bot_type to the query
     const dbBotInfo = (await pool.query(
         'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
         'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
@@ -14042,60 +14054,71 @@ if (action === 'selectapp' || action === 'selectbot') {
 
     const dynoStatus = await dbServices.getDynoStatus(appName);
     if (dynoStatus === 'deleted' || dynoStatus === 'error') {
-        // This is an error state, so we don't use text art
         return bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
             chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
         });
     }
 
-    let finalStatusText;
-    // Standardize expiration display across all commands
-    let expirationCountdown = 'Not Set';
-    if (dbBotInfo?.expiration_date) {
-        const expiration = new Date(dbBotInfo.expiration_date);
-        const now = new Date();
-        const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-        expirationCountdown = daysLeft > 0 ? `${daysLeft} days remaining` : 'Expired';
-    }
-    const keyboard = [];
-    
-    // 💡 Get bot_type for the header
     const botType = (dbBotInfo?.bot_type || 'Bot').toUpperCase();
-    let message; // This will hold our new text-art message
+    const expirationDate = dbBotInfo?.expiration_date ? new Date(dbBotInfo.expiration_date) : null;
+    const now = new Date();
+    const keyboard = [];
+    let message = "";
 
-    if (dbBotInfo?.paused_at) {
-        // --- Bot is PAUSED ---
-        finalStatusText = 'Paused';
-        expirationCountdown += ' (Paused)';
-        
-        // --- 🎨 DESIGN UPDATE ---
+    // --- 💡 GRACE PERIOD LOGIC 💡 ---
+    const isExpired = expirationDate && expirationDate < now;
+    const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
+
+    if (isExpired) {
+        const timeSinceExpiry = now - expirationDate.getTime();
+        const hoursRemaining = Math.max(0, Math.round((GRACE_PERIOD_MS - timeSinceExpiry) / (1000 * 60 * 60)));
+
+        message = "```\n";
+        message += ` ═══ SUSPENDED ═══⊷\n`;
+        message += ` ┃❃╭──────────────\n`;
+        message += ` ┃❃│ Bot Name : ${appName}\n`;
+        message += ` ┃❃│ Status   : Expired\n`;
+        message += ` ┃❃│ Deletion : in ${hoursRemaining} hours\n`;
+        message += ` ┃❃╰───────────────\n\n`;
+        message += ` This bot is suspended. Renew now to restore it before it is permanently deleted.`;
+        message += "\n```";
+
+        keyboard.push(
+            [{ text: 'Renew Bot', callback_data: `renew_bot:${appName}` }],
+            [{ text: 'Delete Bot', callback_data: `userdelete:${appName}` }]
+        );
+
+    } else if (dbBotInfo?.paused_at) {
+        // --- Bot is PAUSED (Manual) ---
+        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+        const expStatus = expirationDate ? `${daysLeft} days remaining (Paused)` : 'Not Set';
+
         message = "```\n";
         message += ` ═══ ${botType} ═══⊷\n`;
         message += ` ┃❃╭──────────────\n`;
         message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
+        message += ` ┃❃│ Status   : Paused\n`;
+        message += ` ┃❃│ Expires  : ${expStatus}\n`;
         message += ` ┃❃╰───────────────\n\n`;
         message += ` This bot is turned off and its timer is paused.`;
         message += "\n```";
-        // --- 🎨 END DESIGN ---
 
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
         
     } else if (dynoStatus === 'on') {
-        // --- Bot is ON ---
-        finalStatusText = (dbBotInfo?.wpp_status === 'logged_out') ? 'Logged Out' : 'Connected';
+        // --- Bot is ON (Active) ---
+        const finalStatusText = (dbBotInfo?.wpp_status === 'logged_out') ? 'Logged Out' : 'Connected';
+        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+        const expStatus = expirationDate ? `${daysLeft} days remaining` : 'Not Set';
         
-        // --- 🎨 DESIGN UPDATE ---
         message = "```\n";
         message += ` ═══ ${botType} ═══⊷\n`;
         message += ` ┃❃╭──────────────\n`;
         message += ` ┃❃│ Bot Name : ${appName}\n`;
         message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
+        message += ` ┃❃│ Expires  : ${expStatus}\n`;
         message += ` ┃❃╰───────────────`;
         message += "\n```";
-        // --- 🎨 END DESIGN ---
         
         const mainRow = [
             { text: 'Info', callback_data: `info:${appName}` },
@@ -14103,15 +14126,12 @@ if (action === 'selectapp' || action === 'selectbot') {
             { text: 'Logs', callback_data: `logs:${appName}` }
         ];
 
-        if (dbBotInfo && dbBotInfo.expiration_date) {
-            const daysLeft = Math.ceil((new Date(dbBotInfo.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
-            if (daysLeft <= 7) {
-                mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
-            }
+        if (daysLeft <= 7) {
+            mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
         }
         
-        keyboard.push(mainRow);
-                keyboard.push(
+        keyboard.push(
+            mainRow,
             [
                 { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
                 { text: 'Delete', callback_data: `userdelete:${appName}` },
@@ -14119,27 +14139,25 @@ if (action === 'selectapp' || action === 'selectbot') {
             ],
             [
                 { text: 'Backup', callback_data: `backup_app:${appName}` },
-                { text: 'Switch To Another Bot', callback_data: `switch_bot_start:${appName}` }, // <--- NEW BUTTON
-                { text: 'Turn Bot Off (Pause)', callback_data: `toggle_dyno:off:${appName}` }
+                { text: 'Switch Bot', callback_data: `switch_bot_start:${appName}` },
+                { text: 'Turn Off (Pause)', callback_data: `toggle_dyno:off:${appName}` }
             ]
         );
 
-
     } else { 
         // --- Bot is OFF (but not paused, e.g., crashed) ---
-        finalStatusText = 'Off';
-        
-        // --- 🎨 DESIGN UPDATE ---
+        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+        const expStatus = expirationDate ? `${daysLeft} days remaining` : 'Not Set';
+
         message = "```\n";
         message += ` ═══ ${botType} ═══⊷\n`;
         message += ` ┃❃╭──────────────\n`;
         message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
+        message += ` ┃❃│ Status   : Off\n`;
+        message += ` ┃❃│ Expires  : ${expStatus}\n`;
         message += ` ┃❃╰───────────────\n\n`;
         message += ` This bot is currently turned off.`;
         message += "\n```";
-        // --- 🎨 END DESIGN ---
 
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
     }
@@ -14149,16 +14167,13 @@ if (action === 'selectapp' || action === 'selectbot') {
     return bot.editMessageText(message, {
       chat_id: cid,
       message_id: messageId,
-      parse_mode: 'Markdown', // This is required for the code block
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: keyboard
       }
     });
 }
 
-
-
-// In bot.js (inside bot.on('callback_query'))
 
 // 1. START SWITCH: Show available types
 if (action === 'switch_bot_start') {
@@ -16145,131 +16160,124 @@ const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 async function checkAndManageExpirations() {
     console.log('[Expiration] Running daily check for expiring and expired bots...');
     const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+    const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000; // 48 Hours
 
     // 1. Handle Warnings for Soon-to-Expire Bots
-    const expiringBots = await dbServices.getExpiringBackups(); // This now gets bots at level 0 or 7
+    const expiringBots = await dbServices.getExpiringBackups(); 
     
     for (const botInfo of expiringBots) {
         const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
-        
-        let warningToSend = null; // 7, 3, 1, or null
+        let warningToSend = null; 
         let newWarningLevel = 0;
 
-        // --- Multi-Stage Warning Logic: 7 days, 3 days, and LAST DAY ---
         if (botInfo.warning_level === 0 && daysLeft <= 7) {
-            // Bot is at level 0 and is 7 days (or less) from expiring. Send 7-day warning.
             warningToSend = 7;
             newWarningLevel = 7;
         } else if (botInfo.warning_level === 7 && daysLeft <= 3) {
-            // Bot is at level 7 and is 3 days (or less) from expiring. Send 3-day warning.
             warningToSend = 3;
             newWarningLevel = 3;
         } else if (botInfo.warning_level === 3 && daysLeft <= 1) {
-            // Bot is at level 3 and is 1 day (or less) from expiring. Send LAST DAY warning.
             warningToSend = 1;
             newWarningLevel = 1;
         }
-        // --- End of Multi-Stage Logic ---
 
-        // If a warning needs to be sent
         if (warningToSend) {
             let warningMessageText = '';
-            
-            // Customize message based on days left
             if (warningToSend === 7) {
-                warningMessageText = `⏰ Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
+                warningMessageText = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent suspension.`;
             } else if (warningToSend === 3) {
-                warningMessageText = `🔴 URGENT: Your bot *${escapeMarkdown(botInfo.app_name)}* expires in *${daysLeft} day(s)* only! Renew now or it will be deleted.`;
+                warningMessageText = `URGENT: Your bot *${escapeMarkdown(botInfo.app_name)}* expires in *${daysLeft} day(s)* only! Renew now or it will be suspended.`;
             } else if (warningToSend === 1) {
-                warningMessageText = `🚨 CRITICAL: Your bot *${escapeMarkdown(botInfo.app_name)}* expires *TODAY/TOMORROW*! This is your LAST CHANCE to renew before permanent deletion!`;
+                warningMessageText = `CRITICAL: Your bot *${escapeMarkdown(botInfo.app_name)}* expires TODAY/TOMORROW! This is your last chance to renew before suspension and eventual deletion.`;
             }
             
             console.log(`[Expiration] Sending ${warningToSend}-day warning for ${botInfo.app_name}.`);
             
             try {
-                // --- A) Send Telegram Message ---
                 await bot.sendMessage(botInfo.user_id, warningMessageText, {
                     parse_mode: 'Markdown',
                     reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: `🔄 Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
-                            ]
-                        ]
+                        inline_keyboard: [[{ text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }]]
                     }
                 });
 
-                // --- B) Send Email ---
                 try {
                     const ownerInfoResult = await pool.query(
                         `SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE`,
                         [botInfo.user_id]
                     );
                     if (ownerInfoResult.rows.length > 0 && ownerInfoResult.rows[0].email) {
-                        const email = ownerInfoResult.rows[0].email;
-                        console.log(`[Expiration] Sending ${warningToSend}-day expiration email for ${botInfo.app_name} to ${email}.`);
-                        await sendExpirationReminder(email, botInfo.app_name, botUsername, daysLeft);
+                        await sendExpirationReminder(ownerInfoResult.rows[0].email, botInfo.app_name, botUsername, daysLeft);
                     }
                 } catch (emailError) {
-                    console.error(`[Expiration] Failed to send email for ${botInfo.app_name}:`, emailError.message);
+                    console.error(`[Expiration] Email error for ${botInfo.app_name}:`, emailError.message);
                 }
 
-                // --- C) Update Database Warning Level ---
                 await dbServices.setBackupWarningLevel(botInfo.user_id, botInfo.app_name, newWarningLevel);
-                console.log(`[Expiration] Warning for ${botInfo.app_name} sent. Level set to ${newWarningLevel}.`);
-            
             } catch (error) {
-                // This catches errors in the main loop (e.g., Telegram message failed)
-                console.error(`[Expiration] Failed to send ${warningToSend}-day warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
+                console.error(`[Expiration] Failed to send ${warningToSend}-day warning to user ${botInfo.user_id}:`, error.message);
             }
         }
     }
 
-    // 2. Handle Deletion of Expired Bots
-    // (This part of your function remains unchanged)
+    // 2. Handle Suspension and Deletion of Expired Bots
     const expiredBots = await dbServices.getExpiredBackups();
     for (const botInfo of expiredBots) {
         try {
-            console.log(`[Expiration] Bot ${botInfo.app_name} for user ${botInfo.user_id} has expired. Deleting now.`);
-            
-            // Send notice to user
-            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' })
-                .catch(err => console.error(`[Expiration] Failed to send deletion notice to user ${botInfo.user_id}:`, err.message));
-            
-            // Delete from Heroku
-            console.log(`[Expiration] Deleting Heroku app: ${botInfo.app_name}`);
-            await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
-            
-            // Delete its Neon database
-            console.log(`[Expiration] Deleting associated Neon database: ${botInfo.app_name}`);
-            let accountIdToDelete = '1';
-            try {
-                 const deployInfo = await pool.query('SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2', [botInfo.user_id, botInfo.app_name]);
-                 if (deployInfo.rows.length > 0 && deployInfo.rows[0].neon_account_id) {
-                     accountIdToDelete = deployInfo.rows[0].neon_account_id;
-                 }
-            } catch(e) { /* default to 1 */ }
-            
-            const deleteResult = await deleteNeonDatabase(botInfo.app_name, accountIdToDelete); 
-            if (!deleteResult.success) {
-                console.error(`[Expiration] Failed to delete Neon database ${botInfo.app_name}: ${deleteResult.error}`);
+            const expiryTime = new Date(botInfo.expiration_date).getTime();
+            const timeSinceExpiry = Date.now() - expiryTime;
+
+            if (timeSinceExpiry < GRACE_PERIOD_MS) {
+                // --- PHASE A: WITHIN GRACE PERIOD (SUSPEND) ---
+                if (!botInfo.paused_at) {
+                    console.log(`[Grace Period] Suspending ${botInfo.app_name}.`);
+                    
+                    // Pause on Heroku
+                    await herokuApi.patch(`/apps/${botInfo.app_name}/formation/web`, 
+                        { quantity: 0 },
+                        { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                    ).catch(() => {});
+
+                    // Record suspension in DB
+                    await pool.query("UPDATE user_deployments SET paused_at = NOW() WHERE app_name = $1", [botInfo.app_name]);
+
+                    const hoursLeft = Math.round((GRACE_PERIOD_MS - timeSinceExpiry) / (1000 * 60 * 60));
+                    await bot.sendMessage(botInfo.user_id, 
+                        `Notice: Bot Suspended - ${escapeMarkdown(botInfo.app_name)}\n\n` +
+                        `Your subscription has expired. The bot is now offline.\n` +
+                        `You have ${hoursLeft} hours to renew before the bot and its data are permanently deleted.`,
+                        { 
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: [[{ text: 'Renew Now', callback_data: `renew_bot:${botInfo.app_name}` }]] }
+                        }
+                    ).catch(() => {});
+                }
+            } else {
+                // --- PHASE B: GRACE PERIOD ENDED (DELETE) ---
+                console.log(`[Expiration] Grace period ended for ${botInfo.app_name}. Deleting.`);
+                
+                await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                }).catch(() => {});
+                
+                let accountIdToDelete = '1';
+                try {
+                     const deployInfo = await pool.query('SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2', [botInfo.user_id, botInfo.app_name]);
+                     if (deployInfo.rows.length > 0) accountIdToDelete = deployInfo.rows[0].neon_account_id;
+                } catch(e) {}
+                
+                await deleteNeonDatabase(botInfo.app_name, accountIdToDelete).catch(() => {});
+                await dbServices.permanentlyDeleteBotRecord(botInfo.user_id, botInfo.app_name);
+
+                await bot.sendMessage(botInfo.user_id, `Final Notice: Your bot ${escapeMarkdown(botInfo.app_name)} has been permanently deleted because the grace period ended.`, { parse_mode: 'Markdown' }).catch(() => {});
+                await bot.sendMessage(ADMIN_ID, `Bot ${escapeMarkdown(botInfo.app_name)} for user ${botInfo.user_id} was deleted after grace period.`).catch(() => {});
             }
-
-            // Delete from all local database tables
-            await dbServices.permanentlyDeleteBotRecord(botInfo.user_id, botInfo.app_name);
-
-            // Send alert to admin
-            await bot.sendMessage(ADMIN_ID, `Bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\` expired and was auto-deleted from Heroku and Neon.`, { parse_mode: 'Markdown' })
-                .catch(err => console.error(`[Expiration] Failed to send admin alert for ${botInfo.app_name}:`, err.message));
-
         } catch (error) {
-            console.error(`[Expiration] Failed to delete expired bot ${botInfo.app_name} for user ${botInfo.user_id}:`, error.message);
-            await monitorSendTelegramAlert(`Failed to auto-delete expired bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\`. Please check logs.`, ADMIN_ID);
+            console.error(`[Expiration Critical] Error managing ${botInfo.app_name}:`, error.message);
         }
     }
 }
+
 
 
 // Run the check once every day
