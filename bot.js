@@ -11,6 +11,7 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 
 require('dotenv').config();
 const axios = require('axios');
+const ndjson = require('ndjson'); 
 const TelegramBot = require('node-telegram-bot-api');
 const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
@@ -4017,6 +4018,61 @@ function generateKey() {
     .join('');
 }
 
+
+async function streamLiveLogs(chatId, appName, messageId) {
+    try {
+        // 1. Create a Tail Log Session
+        const session = await axios.post(
+            `https://api.heroku.com/apps/${appName}/log-sessions`,
+            { lines: 10, tail: true }, // tail: true keeps the session alive
+            {
+                headers: {
+                    'Accept': 'application/vnd.heroku+json; version=3',
+                    'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        // 2. Open the Logplex Stream
+        const streamResponse = await axios({
+            method: 'get',
+            url: session.data.logplex_url,
+            responseType: 'stream'
+        });
+
+        let logBuffer = [];
+        
+        // 3. Listen for data and update Telegram
+        streamResponse.data.on('data', async (chunk) => {
+            const lines = chunk.toString().split('\n').filter(l => l.trim());
+            logBuffer = [...logBuffer, ...lines].slice(-15); // Keep only last 15 lines
+
+            const logText = `**Live Log Stream for ${appName}:**\n\n\`\`\`\n${logBuffer.join('\n')}\n\`\`\``;
+
+            try {
+                // Edit the same message with new logs
+                await bot.editMessageText(logText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                });
+            } catch (e) {
+                // Ignore "message not modified" errors to prevent crashing
+            }
+        });
+
+        // Auto-stop after 2 minutes to save resources/API limits
+        setTimeout(() => {
+            streamResponse.data.destroy();
+            bot.sendMessage(chatId, "**Live log session ended.** Click the button again to resume.");
+        }, 120000);
+
+    } catch (error) {
+        console.error("Live Stream Error:", error.message);
+        bot.sendMessage(chatId, "Error connecting to live logs.");
+    }
+}
 
 // REPLACE WITH THIS
 async function loadMaintenanceStatus() {
@@ -14684,47 +14740,66 @@ if (action === 'info') {
 
   if (action === 'logs') {
     const st = userStates[cid];
-    // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid]; // Clear invalid state
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots'.");
+        delete userStates[cid];
         return;
     }
+
     const messageId = q.message.message_id;
+    await bot.editMessageText(`**Live Logs for ${payload} (Active for 60s):**\nConnecting...`, { 
+        chat_id: cid, 
+        message_id: messageId 
+    });
 
-    await bot.sendChatAction(cid, 'typing');
-    await bot.editMessageText('Fetching logs...', { chat_id: cid, message_id: messageId });
-    try {
-      const sess = await herokuApi.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
-        { tail: false, lines: 100 },
-        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-      );
-      const logRes = await axios.get(sess.data.logplex_url);
-      const logs = logRes.data.trim().slice(-4000);
+    // Create a function to fetch and update
+    const refreshLogs = async () => {
+        try {
+            // 1. Get Log Session
+            const sess = await herokuApi.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
+                { tail: false, lines: 30 }, // Get last 30 lines
+                { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+            );
 
-      return bot.editMessageText(`Logs for "*${payload}*":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+            // 2. Fetch log text
+            const logRes = await axios.get(sess.data.logplex_url);
+            const logs = logRes.data.trim().slice(-3800); // Telegram limit is ~4000
+
+            // 3. Edit message with the live data
+            await bot.editMessageText(`**Live Logs for "*${payload}*":**\n\`\`\`\n${logs || 'Waiting for activity...'}\n\`\`\``, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Stop Stream', callback_data: `selectapp:${payload}` }]
+                    ]
+                }
+            });
+        } catch (e) {
+            console.error("Live log error:", e.message);
         }
-      });
-    } catch (e) {
-      if (e.response && e.response.status === 404) {
-          await dbServices.handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // Use dbServices
-          return;
-      }
-      const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
-        chat_id: cid,
-        message_id: messageId,
-        reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
-        }
-      });
-    }
-  }
+    };
+
+    // --- LIVE UPDATING LOGIC ---
+    // Update every 3 seconds
+    const intervalId = setInterval(refreshLogs, 3000); 
+
+    // Auto-stop after 1 minute to save your Heroku/Render resources
+    setTimeout(() => {
+        clearInterval(intervalId);
+        bot.editMessageText(`**Log Session Ended for ${payload}.**`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+            }
+        });
+    }, 60000); 
+
+    return; // Function continues in background via interval
+}
+
 
   if (action === 'delete' || action === 'userdelete') {
     const st = userStates[cid];
