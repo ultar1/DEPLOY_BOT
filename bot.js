@@ -9007,7 +9007,7 @@ bot.onText(/^\/restartall$/, async (msg) => {
 bot.on('message', async msg => {
     const text = msg.text?.trim() || ""; 
     const cid = msg.chat.id.toString();
-
+    const st = userStates[cid];
   if (msg.text && msg.text.startsWith('/')) {
   return; 
 }
@@ -9206,7 +9206,7 @@ if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
         });
     }
 }
-  const st = userStates[cid];
+  
   const isAdmin = cid === ADMIN_ID;
 
   if (isAdmin && st && st.step === 'AWAITING_ADMIN_PAIRING_CODE_INPUT') {
