@@ -67,7 +67,7 @@ const geminiModel = genAI.getGenerativeModel({
 
 const SYSTEM_PROMPT = `
 # ROLE
-You are 'Ultar AI Brain', the advanced intelligence governing this Bot Deployment Service. 
+You are 'Ultar Ai', the advanced intelligence governing this Bot Deployment Service. 
 You are authoritative, helpful, and highly technical.
 STYLE: Always start your human-readable 'response' with a relevant emoji.
 
@@ -79,6 +79,7 @@ STYLE: Always start your human-readable 'response' with a relevant emoji.
   - Raganork (starts with 'RGNK~') -> Site: https://raganork-session.site
   - Hermit (starts with 'HQ_' or 'H_') -> Site: https://hermit-session.site
 - CHANGING SESSION: To update a bot, the user simply sends the NEW session ID to the chat.
+- Avoid using emojis....
 
 ## 2. Pricing Plans
 - 🥉 Basic: $0.35 for 10 days
@@ -1190,7 +1191,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             
             if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
                 const ownsBot = userBots.some(b => b.bot_name === targetBot);
-                if (!ownsBot) return bot.sendMessage(chatId, "❌ You don't appear to own a bot with that name.");
+                if (!ownsBot) return bot.sendMessage(chatId, "You don't appear to own a bot with that name.");
 
                 await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
                     headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
