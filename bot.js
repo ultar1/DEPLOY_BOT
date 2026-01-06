@@ -7436,7 +7436,7 @@ bot.onText(/^\/getallaws$/, async (msg) => {
             return bot.editMessageText("AWS Configuration missing.", { chat_id: adminId, message_id: workingMsg.message_id });
         }
 
-        // 1. Fetch AWS Databases and Heroku Apps simultaneously
+        // 1. Fetch data from both platforms
         const [awsRes, herokuRes] = await Promise.all([
             axios.get(`${apiUrl}/list`, { headers: { 'x-api-key': apiKey }, timeout: 15000 }),
             herokuApi.get('/apps', { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })
@@ -7444,43 +7444,38 @@ bot.onText(/^\/getallaws$/, async (msg) => {
 
         if (awsRes.data.success) {
             const allAwsDbs = awsRes.data.databases;
-            // Create a set of Heroku app names, converting dashes to underscores for matching
             const herokuAppNames = new Set(herokuRes.data.map(app => app.name.replace(/-/g, '_')));
 
-            // 2. Filter: Only keep AWS DBs that DON'T have a matching app on Heroku
+            // 2. Filter for databases not matched to any Heroku app
             const unownedDbs = allAwsDbs.filter(db => {
                 const dbName = db.name.replace(/-/g, '_');
-                // Ignore system DB and only keep orphans
                 return !herokuAppNames.has(dbName) && dbName !== 'neondb' && dbName !== 'postgres';
             });
 
-            // --- CRITICAL FIX FOR THE ERROR ---
-            // Safely delete the "Scanning" message
-            try {
-                await bot.deleteMessage(adminId, workingMsg.message_id);
-            } catch (e) {
-                console.log("[/getallaws] Could not delete scan message, skipping...");
-            }
+            // Remove the scanning message
+            await bot.deleteMessage(adminId, workingMsg.message_id).catch(() => {});
 
             if (unownedDbs.length === 0) {
-                return bot.sendMessage(adminId, "**Clean!** All AWS databases are currently owned by active Heroku bots.");
+                return bot.sendMessage(adminId, "Clean: All AWS databases are matched to Heroku bots.", { parse_mode: 'HTML' });
             }
 
-            // 3. Prepare and Send Results
-            let currentMessage = `**Unowned AWS Databases (${unownedDbs.length}):**\n_These have no matching bot on Heroku_\n\n`;
+            // 3. Build the response with escaping for every database name
+            let currentMessage = "Unowned AWS Databases (" + unownedDbs.length + "):\n\n";
             const MAX_LENGTH = 3500;
 
             for (const [index, db] of unownedDbs.entries()) {
-                const nameLine = `${index + 1}. <code>${escapeHTML(db.name)}</code>\n`;
+                // This escaping prevents the 'can't parse entities' error
+                const safeName = escapeHTML(db.name); 
+                const nameLine = (index + 1) + ". <code>" + safeName + "</code>\n";
 
                 if ((currentMessage + nameLine).length > MAX_LENGTH) {
                     await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
-                    currentMessage = "<b>Unowned AWS Databases (Continued):</b>\n\n";
+                    currentMessage = "Unowned AWS Databases (Continued):\n\n";
                 }
                 currentMessage += nameLine;
             }
 
-            currentMessage += `\n*Use* \`/deleteawsdb <name>\` *to remove any of these.*`;
+            currentMessage += "\nUse /deleteawsdb &lt;name&gt; to remove.";
             await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
 
         } else {
@@ -7489,18 +7484,11 @@ bot.onText(/^\/getallaws$/, async (msg) => {
 
     } catch (e) {
         console.error("Failed /getallaws:", e.message);
-        // Fallback: If editing the original message fails, send a fresh message
-        try {
-            await bot.editMessageText(`**Error:**\n${escapeHTML(e.message)}`, {
-                chat_id: adminId,
-                message_id: workingMsg.message_id,
-                parse_mode: 'HTML'
-            });
-        } catch (editErr) {
-            await bot.sendMessage(adminId, `**Error:**\n${escapeHTML(e.message)}`, { parse_mode: 'HTML' });
-        }
+        const safeError = escapeHTML(e.message);
+        await bot.sendMessage(adminId, "Error:\n" + safeError, { parse_mode: 'HTML' }).catch(() => {});
     }
 });
+
 
 
 // In bot.js (REPLACE the entire /dbstats function)
