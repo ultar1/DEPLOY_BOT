@@ -5445,6 +5445,19 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
 
+
+app.get('/api/news', validateWebAppInitData, async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT title, content, created_at FROM bot_news WHERE expires_at > NOW() ORDER BY created_at DESC LIMIT 5"
+        );
+        res.json({ success: true, news: result.rows });
+    } catch (e) {
+        console.error("[API News] Error:", e.message);
+        res.status(500).json({ success: false, message: "Could not fetch news." });
+    }
+});
+
 // In bot.js (REPLACE the Flutterwave webhook)
 
 app.post('/flutterwave/webhook', async (req, res) => {
@@ -9210,6 +9223,32 @@ bot.on('message', async msg => {
         return; // Stop processing - callback will handle next steps
     }
 
+    const isSessionID = /^(levanter_|RGNK~|HQ_)/.test(text); // Detects your 3 bot types
+
+if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
+    const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [cid]);
+
+    if (userBots.rows.length === 1) {
+        const appName = userBots.rows[0].bot_name;
+        // Auto-process the update for the single bot
+        await bot.sendMessage(cid, `Detected Session ID. Updating **${appName}**...`, { parse_mode: 'Markdown' });
+        
+        // Call your existing update logic
+        await handleVariableUpdate(cid, appName, 'SESSION_ID', text); 
+        return;
+    } else if (userBots.rows.length > 1) {
+        // Save the ID in temporary state and ask which bot to apply it to
+        userStates[cid] = {
+            step: 'AWAITING_BOT_SELECTION_FOR_ID',
+            data: { pendingID: text }
+        };
+        const buttons = userBots.rows.map(b => [{ text: b.bot_name, callback_data: `apply_id:${b.bot_name}` }]);
+        return bot.sendMessage(cid, "I see you sent a Session ID. Which bot should I apply this to?", {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+}
+
     // --- Step 3: Handle Regular Text-Based Commands ---
     // This only runs if the message was not from the Mini App.
     // If the message has no text (e.g., a sticker, photo), ignore it.
@@ -9250,32 +9289,6 @@ if (userActivity.rows.length > 0) {
     }
 }
 
-
-const isSessionID = /^(levanter_|RGNK~|HQ_)/.test(text); // Detects your 3 bot types
-
-if (isSessionID && (!st || st.step !== 'SETVAR_ENTER_VALUE')) {
-    const userBots = await pool.query("SELECT bot_name FROM user_bots WHERE user_id = $1", [cid]);
-
-    if (userBots.rows.length === 1) {
-        const appName = userBots.rows[0].bot_name;
-        // Auto-process the update for the single bot
-        await bot.sendMessage(cid, `Detected Session ID. Updating **${appName}**...`, { parse_mode: 'Markdown' });
-        
-        // Call your existing update logic
-        await handleVariableUpdate(cid, appName, 'SESSION_ID', text); 
-        return;
-    } else if (userBots.rows.length > 1) {
-        // Save the ID in temporary state and ask which bot to apply it to
-        userStates[cid] = {
-            step: 'AWAITING_BOT_SELECTION_FOR_ID',
-            data: { pendingID: text }
-        };
-        const buttons = userBots.rows.map(b => [{ text: b.bot_name, callback_data: `apply_id:${b.bot_name}` }]);
-        return bot.sendMessage(cid, "I see you sent a Session ID. Which bot should I apply this to?", {
-            reply_markup: { inline_keyboard: buttons }
-        });
-    }
-}
   
   const isAdmin = cid === ADMIN_ID;
 
@@ -14097,6 +14110,12 @@ if (action === 'selectapp' || action === 'selectbot') {
     const appName = payload;
 
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
+    // Add this at the very beginning of your selectapp callback handler
+if (userStates[cid]?.data?.logInterval) {
+    clearInterval(userStates[cid].data.logInterval);
+    delete userStates[cid].data.logInterval;
+}
+
 
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
@@ -14845,57 +14864,131 @@ if (action === 'info') {
     }
 
     const messageId = q.message.message_id;
-    await bot.editMessageText(`Logs for ${payload} :\nConnecting...`, { 
+    
+    // BUG FIX: Clear any existing interval if the user clicks "Logs" multiple times
+    if (st.data.logInterval) {
+        clearInterval(st.data.logInterval);
+    }
+
+    await bot.editMessageText(`Logs for ${payload}:\nConnecting...`, { 
         chat_id: cid, 
         message_id: messageId 
     });
 
-    // Create a function to fetch and update
+    let lastText = ""; // To prevent "message not modified" errors
+
     const refreshLogs = async () => {
         try {
-            // 1. Get Log Session
             const sess = await herokuApi.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
-                { tail: false, lines: 30 }, // Get last 30 lines
+                { tail: false, lines: 30 },
                 { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
             );
 
-            // 2. Fetch log text
             const logRes = await axios.get(sess.data.logplex_url);
-            const logs = logRes.data.trim().slice(-3800); // Telegram limit is ~4000
+            const logs = logRes.data.trim().slice(-3000);
+            const logText = `Logs for "*${payload}*":\n\`\`\`\n${logs || 'Waiting for activity...'}\n\`\`\``;
 
-            // 3. Edit message with the live data
-            await bot.editMessageText(`Logs for "*${payload}*":\n\`\`\`\n${logs || 'Waiting for activity...'}\n\`\`\``, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Stop Stream', callback_data: `selectapp:${payload}` }]
-                    ]
-                }
-            });
+            // Only edit if the content actually changed
+            if (logText !== lastText) {
+                await bot.editMessageText(logText, {
+                    chat_id: cid,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Summarize with AI', callback_data: `ai_summary:${payload}` }],
+                            [{ text: 'Stop Stream', callback_data: `selectapp:${payload}` }]
+                        ]
+                    }
+                });
+                lastText = logText;
+            }
         } catch (e) {
-            console.error("Live log error:", e.message);
+            // Ignore common harmless Telegram errors
+            if (!e.message.includes("message is not modified") && !e.message.includes("message to edit not found")) {
+                console.error("Live log error:", e.message);
+            }
         }
     };
 
-    // --- LIVE UPDATING LOGIC ---
-    // Update every 3 seconds
-    const intervalId = setInterval(refreshLogs, 3000); 
+    // Store the interval in the state so we can stop it later
+    const intervalId = setInterval(refreshLogs, 4000);
+    st.data.logInterval = intervalId;
 
-    // Auto-stop after 1 minute to save your Heroku/Render resources
+    // Trigger first run immediately
+    refreshLogs();
+
+    // Auto-stop after 1 minute
     setTimeout(() => {
-        clearInterval(intervalId);
-        bot.editMessageText(`**Log Session Ended for ${payload}.**`, {
+        if (st.data && st.data.logInterval === intervalId) {
+            clearInterval(intervalId);
+            delete st.data.logInterval;
+            bot.editMessageText(`Log Session Ended for ${payload}.`, {
+                chat_id: cid,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Summarize with AI', callback_data: `ai_summary:${payload}` }],
+                        [{ text: 'Back', callback_data: `selectapp:${payload}` }]
+                    ]
+                }
+            }).catch(() => {});
+        }
+    }, 60000); 
+
+    return;
+}
+
+if (action === 'ai_summary') {
+    const appName = payload;
+    const messageId = q.message.message_id;
+    const st = userStates[cid];
+
+    // 1. Stop the log loop immediately to prevent the "jump back" bug
+    if (st && st.data && st.data.logInterval) {
+        clearInterval(st.data.logInterval);
+        delete st.data.logInterval;
+    }
+
+    await bot.editMessageText(`AI is analyzing logs for "${appName}"...`, { 
+        chat_id: cid, 
+        message_id: messageId 
+    });
+
+    try {
+        const sess = await herokuApi.post(`https://api.heroku.com/apps/${appName}/log-sessions`,
+            { tail: false, lines: 50 },
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        const logRes = await axios.get(sess.data.logplex_url);
+        
+        const prompt = `Analyze these logs for the bot "${appName}". Tell the user what happened in 2 simple sentences. If it's connected, say it's healthy. 
+        LOGS: ${logRes.data}`;
+
+        const result = await geminiModel.generateContent(prompt);
+        const explanation = result.response.text();
+
+        await bot.editMessageText(`AI Log Analysis:\n\n${explanation}`, {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
-                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+                inline_keyboard: [
+                    [{ text: 'Return to Logs', callback_data: `logs:${appName}` }],
+                    [{ text: 'Back to Menu', callback_data: `selectapp:${appName}` }]
+                ]
             }
         });
-    }, 60000); 
-
-    return; // Function continues in background via interval
+    } catch (error) {
+        console.error("AI Analysis Failed:", error.message);
+        await bot.editMessageText("Analysis failed. Please check raw logs.", {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back', callback_data: `logs:${appName}` }]]
+            }
+        });
+    }
+    return;
 }
 
 
