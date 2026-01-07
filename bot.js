@@ -14935,18 +14935,39 @@ if (action === 'ai_summary') {
     });
 
     try {
+        // 2. Fetch the last 50 lines of logs
         const sess = await herokuApi.post(`https://api.heroku.com/apps/${appName}/log-sessions`,
             { tail: false, lines: 50 },
             { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
         );
         const logRes = await axios.get(sess.data.logplex_url);
-        
-        const prompt = `Analyze these logs for the bot "${appName}". Tell the user what happened in 2 simple sentences. If it's connected, say it's healthy. 
-        LOGS: ${logRes.data}`;
+        const rawLogs = logRes.data;
 
-        const result = await geminiModel.generateContent(prompt);
-        const explanation = result.response.text();
+        // 3. Call Groq API
+        const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: "llama-3.3-70b-versatile", // Fast and smart model
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a technical support assistant. Summarize WhatsApp bot logs in 2 clear sentences. Identify if it is connected or show the specific error."
+                },
+                {
+                    role: "user",
+                    content: `Analyze these logs for bot "${appName}":\n${rawLogs}`
+                }
+            ],
+            temperature: 0.5,
+            max_tokens: 150
+        }, {
+            headers: {
+                'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        });
 
+        const explanation = groqRes.data.choices[0].message.content;
+
+        // 4. Show the result
         await bot.editMessageText(`AI Log Analysis:\n\n${explanation}`, {
             chat_id: cid,
             message_id: messageId,
@@ -14957,8 +14978,9 @@ if (action === 'ai_summary') {
                 ]
             }
         });
+
     } catch (error) {
-        console.error("AI Analysis Failed:", error.message);
+        console.error("Analysis Failed:", error.response?.data || error.message);
         await bot.editMessageText("Analysis failed. Please check raw logs.", {
             chat_id: cid,
             message_id: messageId,
@@ -14969,6 +14991,7 @@ if (action === 'ai_summary') {
     }
     return;
 }
+
 
 
   if (action === 'delete' || action === 'userdelete') {
