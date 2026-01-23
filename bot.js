@@ -9054,18 +9054,17 @@ bot.onText(/^\/restoreall$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
 
-    // This callback data 'restore_all_bots' will trigger the selection handler
-    await bot.sendMessage(cid, "Please select the bot type you wish to restore from the backup database:", {
+    await bot.sendMessage(cid, "Select the Bot Type you want to restore all instances of:", {
         reply_markup: {
             inline_keyboard: [
-                [
-                    { text: 'Levanter', callback_data: 'restore_all_bots:levanter' },
-                    { text: 'Raganork', callback_data: 'restore_all_bots:raganork' }
-                ]
+                [{ text: "Restore All Levanter", callback_data: "mass_restore:levanter" }],
+                [{ text: "Restore All Raganork", callback_data: "mass_restore:raganork" }],
+                [{ text: "Restore All Hermit", callback_data: "mass_restore:hermit" }]
             ]
         }
     });
 });
+
 
 
 // NEW COMMAND: /restartall - Restart all bots of a selected type
@@ -12209,6 +12208,59 @@ if (action === 'select_restore_app') {
     });
     return;
 }
+
+
+if (action === 'mass_restore') {
+    const botType = payload; // e.g., 'levanter'
+    const messageId = q.message.message_id;
+
+    try {
+        // 1. Fetch matching bots from DB
+        const result = await pool.query(
+            "SELECT bot_name FROM user_bots WHERE bot_type = $1", 
+            [botType]
+        );
+        const apps = result.rows;
+
+        if (apps.length === 0) {
+            return bot.editMessageText(`No ${botType} bots found to restore.`, { chat_id: cid, message_id: messageId });
+        }
+
+        await bot.editMessageText(`Found ${apps.length} ${botType} bots. Starting mass restoration with 1-min intervals...`, {
+            chat_id: cid,
+            message_id: messageId
+        });
+
+        // 2. The Sequential Loop
+        for (let i = 0; i < apps.length; i++) {
+            const appName = apps[i].bot_name;
+            
+            // Update UI
+            await bot.sendMessage(cid, `Step ${i + 1}/${apps.length}: Restoring **${appName}**...`);
+
+            // 3. Trigger the Restore logic (using your existing app-restore function)
+            try {
+                // We use the same function your manual "Restore" button uses
+                await triggerRestoreLogic(appName, botType); 
+            } catch (err) {
+                await bot.sendMessage(cid, `Failed to restore ${appName}: ${err.message}`);
+            }
+
+            // 4. Wait for 1 minute before the next one, unless it's the last app
+            if (i < apps.length - 1) {
+                await bot.sendMessage(cid, "Waiting 60 seconds before next restoration...");
+                await new Promise(resolve => setTimeout(resolve, 60000)); // 1 minute delay
+            }
+        }
+
+        await bot.sendMessage(cid, `Mass restoration for ${botType} completed.`);
+    } catch (e) {
+        console.error("Mass Restore Error:", e.message);
+        await bot.sendMessage(cid, "Error during mass restore process.");
+    }
+    return;
+}
+
 
   /// In bot.js, inside bot.on('callback_query', ...)
 
