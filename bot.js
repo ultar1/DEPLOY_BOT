@@ -5928,6 +5928,52 @@ bot.onText(/^\/apps$/i, async msg => {
   }
 });
 
+
+bot.onText(/^\/deploymsg$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    const isAdmin = cid === ADMIN_ID; // Security check
+
+    if (!isAdmin) return;
+
+    const appName = `msgbot-${Math.floor(Math.random() * 9000) + 1000}`; // Generate a random name
+    await bot.sendMessage(cid, `Initiating Instant Deployment...\n**App Name:** ${appName}\n**Addons:** Heroku Postgres`, { parse_mode: 'Markdown' });
+
+    try {
+        const body = {
+            source_blob: {
+                url: 'https://github.com/Ultar12/MESSAGEBOT/tarball/master'
+            },
+            app: {
+                name: appName,
+                region: 'us'
+            },
+            overrides: {
+                env: {
+                    "DATABASE_URL": "postgres", // Heroku fills this automatically
+                }
+            },
+            addons: [
+                { plan: "heroku-postgresql" } // Automated DB provisioning
+            ]
+        };
+
+        const res = await herokuApi.post('/app-setups', body);
+        
+        await bot.sendMessage(cid, `Deployment Started Successfully!\n\nTrack your build here: https://dashboard.heroku.com/apps/${appName}/activity`);
+        
+        // Save to your DB so it appears in /mybots or the Mini App
+        await pool.query(
+            "INSERT INTO user_bots (user_id, bot_name, bot_type, status) VALUES ($1, $2, $3, $4)",
+            [cid, appName, 'messagebot', 'Building']
+        );
+
+    } catch (e) {
+        console.error("Instant Deploy Error:", e.response?.data || e.message);
+        await bot.sendMessage(cid, "Deployment failed. Ensure your Heroku API Key is valid and the app name is not taken.");
+    }
+});
+
+
 // ADMIN COMMAND: /maintenance
 bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
