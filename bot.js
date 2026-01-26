@@ -6211,57 +6211,47 @@ bot.onText(/^\/dl (.+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     const url = match[1].trim();
 
-    // Removed satellite emoji
-    const waitingMsg = await bot.sendMessage(cid, "**Fetching media from external server...**", { parse_mode: 'Markdown' });
+    const waitingMsg = await bot.sendMessage(cid, "**Processing link with yt-dlp...**", { parse_mode: 'Markdown' });
 
     try {
-        const apiUrl = `https://api.vkrhost.info/api/download.php?url=${encodeURIComponent(url)}`;
-        
-        const response = await axios.get(apiUrl);
-        const data = response.data;
+        // -j: dump JSON
+        // --flat-playlist: don't expand playlists
+        // --no-warnings: keep logs clean
+        const { stdout } = await execPromise(`yt-dlp -j --flat-playlist --no-warnings "${url}"`);
+        const info = JSON.parse(stdout);
 
-        if (!data || !data.data) {
-            throw new Error("Could not extract media.");
-        }
-
-        const media = data.data;
-        let rawTitle = data.title || "Downloaded Media";
-        
-        // --- 🛠️ EMOJI REMOVAL LOGIC ---
-        // This regex removes all Unicode emojis from the title string
-        const title = rawTitle.replace(/(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/g, "").trim();
-
-        if (Array.isArray(media) && media.length > 1) {
-            const album = media.map(item => ({
+        // Handle Image Carousels (Instagram/TikTok slides)
+        if (info.entries || info.formats === undefined) {
+            const entries = info.entries || [info];
+            const mediaGroup = entries.map(e => ({
                 type: 'photo',
-                media: item.url
+                media: e.url || e.thumbnail
             })).slice(0, 10);
-            
-            await bot.sendMediaGroup(cid, album);
+
+            await bot.sendMediaGroup(cid, mediaGroup);
         } else {
-            const directUrl = Array.isArray(media) ? media[0].url : media.url;
-            const isVideo = directUrl.includes('.mp4') || directUrl.includes('video');
+            // Handle Single Video or Image
+            const mediaUrl = info.url;
+            const isVideo = info.vcodec !== 'none';
 
             if (isVideo) {
-                // Removed checkmark emoji
-                await bot.sendVideo(cid, directUrl, { caption: `**Video:** ${title}`, parse_mode: 'Markdown' });
+                await bot.sendVideo(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
             } else {
-                // Removed checkmark emoji
-                await bot.sendPhoto(cid, directUrl, { caption: `**Image:** ${title}`, parse_mode: 'Markdown' });
+                await bot.sendPhoto(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
             }
         }
 
-        await bot.deleteMessage(cid, waitingMsg.message_id).catch(() => {});
+        await bot.deleteMessage(cid, waitingMsg.message_id);
 
     } catch (error) {
-        console.error("[API DL Error]:", error.message);
-        // Removed cross emoji
-        await bot.editMessageText(`**Error:** Failed to reach download server. Try again later or check the link.`, {
+        console.error("[yt-dlp Error]:", error.message);
+        await bot.editMessageText("**Error:** link is private or yt-dlp needs an update.", {
             chat_id: cid,
             message_id: waitingMsg.message_id
         });
     }
 });
+
 
 
 
