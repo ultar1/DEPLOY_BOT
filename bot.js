@@ -578,7 +578,7 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
 
         await client.query(`
   CREATE TABLE IF NOT EXISTS reminders (
-    id SERIAL PRIMARY KEY,
+    id SERIAL PRIMARY KEY, -- Change this from INT to SERIAL
     user_id TEXT NOT NULL,
     target_number TEXT NOT NULL,
     remind_at TIMESTAMP NOT NULL,
@@ -586,6 +586,7 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
     is_sent BOOLEAN DEFAULT FALSE
   );
 `);
+
 
       
 
@@ -2845,10 +2846,12 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
 const herokuApi = axios.create({
     baseURL: 'https://api.heroku.com',
     headers: {
+        'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, // Add this line
         'Accept': 'application/vnd.heroku+json; version=3',
         'Content-Type': 'application/json'
     }
 });
+
 
 
 
