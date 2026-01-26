@@ -16,6 +16,9 @@ const TelegramBot = require('node-telegram-bot-api');
 const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
 const path = require('path');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const mailListener = require('./mail_listener');
@@ -6202,6 +6205,53 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
         });
     }
 });
+
+
+bot.onText(/^\/dl (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    const url = match[1].trim();
+
+    const waitingMsg = await bot.sendMessage(cid, "**Extracting media...** Please wait.", { parse_mode: 'Markdown' });
+
+    try {
+        // -j outputs raw JSON metadata, which tells us if it's an image or video
+        const { stdout } = await execPromise(`yt-dlp -j --no-warnings "${url}"`);
+        const info = JSON.parse(stdout);
+        
+        const title = info.title || "Downloaded Media";
+        const mediaUrl = info.url;
+
+        // 1. Check if it's a Video
+        const isVideo = info.vcodec !== 'none' || info.ext === 'mp4' || info.ext === 'mkv';
+        
+        // 2. Check if it's an Image (Instagram Photo, etc.)
+        const isImage = info.ext === 'jpg' || info.ext === 'png' || info.ext === 'webp' || info.protocol === 'https' && !isVideo;
+
+        if (isVideo) {
+            await bot.sendVideo(cid, mediaUrl, { caption: `**Video:** ${title}`, parse_mode: 'Markdown' });
+        } else if (isImage || info.format_id === 'photo') {
+            await bot.sendPhoto(cid, mediaUrl, { caption: `**Image:** ${title}`, parse_mode: 'Markdown' });
+        } else {
+            // Fallback for unknown formats
+            await bot.sendMessage(cid, `[File](${mediaUrl})\n\nI found the media but couldn't identify the type. Click the link above to view.`, { parse_mode: 'Markdown' });
+        }
+
+        await bot.deleteMessage(cid, waitingMsg.message_id).catch(() => {});
+
+    } catch (error) {
+        console.error("[DL Error]:", error.message);
+        let errorMsg = "Failed to download. The link might be private or unsupported.";
+        
+        if (error.message.includes('404')) errorMsg = "Media not found. Check the link.";
+        if (error.message.includes('Sign in')) errorMsg = "This content requires a login. I can't access it.";
+
+        await bot.editMessageText(`${errorMsg}`, {
+            chat_id: cid,
+            message_id: waitingMsg.message_id
+        });
+    }
+});
+
 
 // ADMIN COMMAND: /restartaws (Strict Rebuild Only)
 bot.onText(/^\/restartaws$/, async (msg) => {
