@@ -342,6 +342,20 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
 `);
 
 
+// Add this inside your createAllTablesInPool function
+await client.query(`
+    CREATE TABLE IF NOT EXISTS bot_news (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+    );
+`);
+console.log('[DB] bot_news table verified/created.');
+
+
+
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS heroku_api_keys (
