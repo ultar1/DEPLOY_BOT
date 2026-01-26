@@ -6211,46 +6211,58 @@ bot.onText(/^\/dl (.+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     const url = match[1].trim();
 
-    const waitingMsg = await bot.sendMessage(cid, "**Extracting media...** Please wait.", { parse_mode: 'Markdown' });
+    // Removed satellite emoji
+    const waitingMsg = await bot.sendMessage(cid, "**Fetching media from external server...**", { parse_mode: 'Markdown' });
 
     try {
-        // -j outputs raw JSON metadata, which tells us if it's an image or video
-        const { stdout } = await execPromise(`yt-dlp -j --no-warnings "${url}"`);
-        const info = JSON.parse(stdout);
+        const apiUrl = `https://api.vkrhost.info/api/download.php?url=${encodeURIComponent(url)}`;
         
-        const title = info.title || "Downloaded Media";
-        const mediaUrl = info.url;
+        const response = await axios.get(apiUrl);
+        const data = response.data;
 
-        // 1. Check if it's a Video
-        const isVideo = info.vcodec !== 'none' || info.ext === 'mp4' || info.ext === 'mkv';
+        if (!data || !data.data) {
+            throw new Error("Could not extract media.");
+        }
+
+        const media = data.data;
+        let rawTitle = data.title || "Downloaded Media";
         
-        // 2. Check if it's an Image (Instagram Photo, etc.)
-        const isImage = info.ext === 'jpg' || info.ext === 'png' || info.ext === 'webp' || info.protocol === 'https' && !isVideo;
+        // --- 🛠️ EMOJI REMOVAL LOGIC ---
+        // This regex removes all Unicode emojis from the title string
+        const title = rawTitle.replace(/(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/g, "").trim();
 
-        if (isVideo) {
-            await bot.sendVideo(cid, mediaUrl, { caption: `**Video:** ${title}`, parse_mode: 'Markdown' });
-        } else if (isImage || info.format_id === 'photo') {
-            await bot.sendPhoto(cid, mediaUrl, { caption: `**Image:** ${title}`, parse_mode: 'Markdown' });
+        if (Array.isArray(media) && media.length > 1) {
+            const album = media.map(item => ({
+                type: 'photo',
+                media: item.url
+            })).slice(0, 10);
+            
+            await bot.sendMediaGroup(cid, album);
         } else {
-            // Fallback for unknown formats
-            await bot.sendMessage(cid, `[File](${mediaUrl})\n\nI found the media but couldn't identify the type. Click the link above to view.`, { parse_mode: 'Markdown' });
+            const directUrl = Array.isArray(media) ? media[0].url : media.url;
+            const isVideo = directUrl.includes('.mp4') || directUrl.includes('video');
+
+            if (isVideo) {
+                // Removed checkmark emoji
+                await bot.sendVideo(cid, directUrl, { caption: `**Video:** ${title}`, parse_mode: 'Markdown' });
+            } else {
+                // Removed checkmark emoji
+                await bot.sendPhoto(cid, directUrl, { caption: `**Image:** ${title}`, parse_mode: 'Markdown' });
+            }
         }
 
         await bot.deleteMessage(cid, waitingMsg.message_id).catch(() => {});
 
     } catch (error) {
-        console.error("[DL Error]:", error.message);
-        let errorMsg = "Failed to download. The link might be private or unsupported.";
-        
-        if (error.message.includes('404')) errorMsg = "Media not found. Check the link.";
-        if (error.message.includes('Sign in')) errorMsg = "This content requires a login. I can't access it.";
-
-        await bot.editMessageText(`${errorMsg}`, {
+        console.error("[API DL Error]:", error.message);
+        // Removed cross emoji
+        await bot.editMessageText(`**Error:** Failed to reach download server. Try again later or check the link.`, {
             chat_id: cid,
             message_id: waitingMsg.message_id
         });
     }
 });
+
 
 
 // ADMIN COMMAND: /restartaws (Strict Rebuild Only)
