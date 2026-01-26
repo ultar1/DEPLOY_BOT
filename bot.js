@@ -6217,7 +6217,9 @@ bot.onText(/^\/dl (.+)$/, async (msg, match) => {
         // -j: dump JSON
         // --flat-playlist: don't expand playlists
         // --no-warnings: keep logs clean
-        const { stdout } = await execPromise(`yt-dlp -j --flat-playlist --no-warnings "${url}"`);
+const command = `yt-dlp --cookies cookies.txt -j --flat-playlist --no-warnings "${url}"`;
+const { stdout } = await execPromise(command);
+
         const info = JSON.parse(stdout);
 
         // Handle Image Carousels (Instagram/TikTok slides)
