@@ -292,77 +292,81 @@ async function getLoggedOutBots() {
  * Deletes old app, Renames the bot (to avoid conflicts), and Redeploys.
  */
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
-    console.log(`[Switch] Starting switch for ${appName} to ${targetType}...`);
+    console.log(`[Switch] Starting AWS clean slate switch for ${appName} to ${targetType}...`);
     
     try {
-        // 1. Get current config (WE NEED THE DATABASE_URL)
-        // We try to get it from Heroku first.
-        let databaseUrl;
-        try {
-            const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, {
-                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            databaseUrl = configRes.data.DATABASE_URL;
-        } catch (e) {
-            console.warn(`[Switch] Could not fetch vars from Heroku for ${appName} (maybe suspended). Trying local DB.`);
-            // Fallback: Try to get DB URL from local records if Heroku fails
-            const localRecord = await pool.query('SELECT config_vars FROM user_deployments WHERE app_name = $1', [appName]);
-            if (localRecord.rows.length > 0) {
-                databaseUrl = localRecord.rows[0].config_vars.DATABASE_URL;
-            }
+        // 1. Clear user state to prevent input collisions
+        if (moduleParams.userStates && moduleParams.userStates[userId]) {
+            delete moduleParams.userStates[userId];
         }
-        
-        // 2. Delete the OLD App from Heroku
+
+        // 2. DELETE OLD APP FROM HEROKU
         try {
             await herokuApi.delete(`/apps/${appName}`, {
-                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                 headers: { 
+                    'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, 
+                    'Accept': 'application/vnd.heroku+json; version=3' 
+                }
             });
-            console.log(`[Switch] Deleted old Heroku app: ${appName}`);
+            console.log(`[Switch] Deleted Heroku app: ${appName}`);
         } catch (e) {
-            if (e.response && e.response.status === 404) {
-                console.log(`[Switch] Old app ${appName} was already deleted.`);
-            } else {
-                console.warn(`[Switch] Warning: Failed to delete old app ${appName}:`, e.message);
-            }
+            console.log(`[Switch] Heroku app ${appName} already gone or inaccessible.`);
         }
 
-        // --- 💡 FIX: GENERATE NEW UNIQUE NAME ---
-        // This prevents "Name already taken" errors
+        // 3. AWS DATABASE DELETE (The "Clean Slate" Logic)
+        const dbNameForDeletion = appName.replace(/-/g, '_');
+        console.log(`[Switch] Requesting AWS deletion for DB: ${dbNameForDeletion}`);
+        
+        // Use your specific AWS deletion function
+        const awsDeleteResult = await deleteSelfHostedDatabase(dbNameForDeletion);
+        
+        if (awsDeleteResult.success) {
+            console.log(`[Switch] AWS Database ${dbNameForDeletion} wiped successfully.`);
+        } else {
+            console.warn(`[Switch] AWS Delete warning: ${awsDeleteResult.error}`);
+        }
+
+        // 4. GENERATE NEW UNIQUE NAME
+        // Heroku often prevents immediate reuse of a deleted name; a suffix fixes this.
         const randomSuffix = require('crypto').randomBytes(2).toString('hex');
-        const newAppName = `${appName}-${randomSuffix}`;
+        const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
         
-        console.log(`[Switch] Renaming bot from ${appName} -> ${newAppName}`);
+        console.log(`[Switch] Migrating identity: ${appName} -> ${newAppName}`);
 
-        // 3. Update Local DB Records (Rename the bot in your database)
+        // 5. UPDATE LOCAL DATABASE RECORDS
+        // We update the existing record with the new name and type
         await pool.query(
-            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3 WHERE bot_name = $4 AND user_id = $5`,
+            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3, status = 'Building' 
+             WHERE bot_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
         
         await pool.query(
-            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3 WHERE app_name = $4 AND user_id = $5`,
+            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3 
+             WHERE app_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
 
-        // 4. Prepare New Config
-        const targetDefaults = defaultEnvVars[targetType] || {};
-        
+        // 6. PREPARE FRESH CONFIG
+        // We omit DATABASE_URL here. buildWithProgress will detect this and 
+        // trigger the AWS createDatabase logic for the new type.
+        const targetDefaults = moduleParams.defaultEnvVars[targetType] || {};
         const newVars = {
-            ...targetDefaults,          // Defaults for new bot type
-            DATABASE_URL: databaseUrl,  // PRESERVE THE DATABASE
-            SESSION_ID: newSessionId,   // New Session
-            APP_NAME: newAppName        // <--- USE NEW NAME
+            ...targetDefaults,
+            SESSION_ID: newSessionId,
+            APP_NAME: newAppName
         };
 
-        // 5. Trigger Build
-        // We pass 'true' for isRestore so it doesn't try to create a NEW database
-        await buildWithProgress(userId, newVars, false, true, targetType);
+        // 7. TRIGGER FRESH BUILD
+        // We pass isRestore = false to force new database provisioning
+        await dbServices.buildWithProgress(userId, newVars, false, false, targetType);
         
     } catch (error) {
-        console.error(`[Switch] Error switching bot ${appName}:`, error);
-        moduleParams.bot.sendMessage(userId, `Switch failed: ${error.message}. Please contact support.`);
+        console.error(`[Switch Error] ${appName}:`, error.message);
+        moduleParams.bot.sendMessage(userId, `❌ Switch failed: ${error.message}. Please contact Admin.`);
     }
 }
+
 
 
 /**
