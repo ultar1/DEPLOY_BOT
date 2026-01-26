@@ -587,20 +587,6 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
   );
 `);
 
-        // Add this inside createAllTablesInPool after the reminders table is created
-try {
-    // This command converts the 'id' column to auto-increment if it isn't already
-    await client.query(`
-        ALTER TABLE reminders 
-        ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY;
-    `);
-    console.log('[Fix] Reminders ID set to auto-increment.');
-} catch (e) {
-    // If it's already fixed, it will error, so we just ignore it
-    // console.log('[Fix] Reminders ID already auto-incrementing.');
-}
-
-
 
       
 
