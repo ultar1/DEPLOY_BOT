@@ -279,85 +279,85 @@ async function getLoggedOutBots() {
     }
 }
 
-/**
- * Handles switching a bot with a CLEAN SLATE on AWS.
- * Deletes old Heroku app, Deletes AWS Database, and Redeploys fresh.
- */
+
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
     console.log(`[Switch] Starting AWS clean slate switch for ${appName} to ${targetType}...`);
     
     try {
-        // 1. Remove user from waiting state immediately
+        // 1. Clear user state to prevent input collisions
         if (moduleParams.userStates && moduleParams.userStates[userId]) {
             delete moduleParams.userStates[userId];
-            console.log(`[Switch] User ${userId} removed from waiting state.`);
         }
 
-        // 2. Delete the OLD App from Heroku
+        // 2. DELETE OLD APP FROM HEROKU
         try {
             await herokuApi.delete(`/apps/${appName}`, {
-                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                 headers: { 
+                    'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, 
+                    'Accept': 'application/vnd.heroku+json; version=3' 
+                }
             });
-            console.log(`[Switch] Deleted old Heroku app: ${appName}`);
+            console.log(`[Switch] Deleted Heroku app: ${appName}`);
         } catch (e) {
-            console.log(`[Switch] Heroku app ${appName} already deleted or inaccessible.`);
+            console.log(`[Switch] Heroku app ${appName} already gone or inaccessible.`);
         }
 
-        // 3. AWS DATABASE DELETE LOGIC (Clean Slate)
+        // 3. AWS DATABASE DELETE (The "Clean Slate" Logic)
         const dbNameForDeletion = appName.replace(/-/g, '_');
         console.log(`[Switch] Requesting AWS deletion for DB: ${dbNameForDeletion}`);
         
-        // Specifically call the AWS delete logic
+        // Use your specific AWS deletion function
         const awsDeleteResult = await deleteSelfHostedDatabase(dbNameForDeletion);
+        
         if (awsDeleteResult.success) {
-            console.log(`[Switch] AWS Database ${dbNameForDeletion} deleted successfully.`);
+            console.log(`[Switch] AWS Database ${dbNameForDeletion} wiped successfully.`);
         } else {
             console.warn(`[Switch] AWS Delete warning: ${awsDeleteResult.error}`);
         }
 
-        // 4. Generate new unique name to avoid Heroku caching/taken errors
+        // 4. GENERATE NEW UNIQUE NAME
+        // Heroku often prevents immediate reuse of a deleted name; a suffix fixes this.
         const randomSuffix = require('crypto').randomBytes(2).toString('hex');
         const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
         
-        console.log(`[Switch] Renaming bot: ${appName} -> ${newAppName}`);
+        console.log(`[Switch] Migrating identity: ${appName} -> ${newAppName}`);
 
-        // 5. Update Local DB Records with the new name and type
+        // 5. UPDATE LOCAL DATABASE RECORDS
+        // We update the existing record with the new name and type
         await pool.query(
-            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3, status = 'online' WHERE bot_name = $4 AND user_id = $5`,
+            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3, status = 'Building' 
+             WHERE bot_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
         
         await pool.query(
-            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3 WHERE app_name = $4 AND user_id = $5`,
+            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3 
+             WHERE app_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
 
-        // 6. Prepare New Config (No DATABASE_URL included to force new creation)
-        const targetDefaults = defaultEnvVars[targetType] || {};
+        // 6. PREPARE FRESH CONFIG
+        // We omit DATABASE_URL here. buildWithProgress will detect this and 
+        // trigger the AWS createDatabase logic for the new type.
+        const targetDefaults = moduleParams.defaultEnvVars[targetType] || {};
         const newVars = {
             ...targetDefaults,
             SESSION_ID: newSessionId,
             APP_NAME: newAppName
         };
 
-        // 7. Trigger Fresh Build
-        // isRestore = false ensures it goes through the "Creating NEW database" logic in AWS
-        await buildWithProgress(userId, newVars, false, false, targetType);
+        // 7. TRIGGER FRESH BUILD
+        // We pass isRestore = false to force new database provisioning
+        await dbServices.buildWithProgress(userId, newVars, false, false, targetType);
         
     } catch (error) {
-        console.error(`[Switch] Error during AWS clean switch for ${appName}:`, error);
-        moduleParams.bot.sendMessage(userId, `Switch failed: ${error.message}. Please contact support.`);
+        console.error(`[Switch Error] ${appName}:`, error.message);
+        moduleParams.bot.sendMessage(userId, `❌ Switch failed: ${error.message}. Please contact Admin.`);
     }
 }
 
 
 
-/**
- * Fetches the AWS database connection string from the local deployment record.
- * Assumes the AWS self-hosted identifier is stored as 'AWS_MAIN' in neon_account_id.
- * @param {string} appName The name of the Heroku application.
- * @returns {Promise<{success: boolean, dbUrl?: string, message?: string}>}
- */
 async function getAwsDbConnectionString(appName) {
     try {
         // We look for a record matching the app name AND the assumed AWS account ID
