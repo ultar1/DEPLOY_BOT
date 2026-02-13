@@ -7919,6 +7919,28 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     });
 });
 
+// --- ADMIN COMMAND: /setbot <type> <on/off> ---
+bot.onText(/^\/setbot (levanter|raganork|hermit) (on|off)$/i, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const botType = match[1].toLowerCase();
+    const status = match[2].toLowerCase() === 'on' ? 'available' : 'down';
+
+    try {
+        await pool.query(
+            `INSERT INTO app_settings (setting_key, setting_value) 
+             VALUES ($1, $2) 
+             ON CONFLICT (setting_key) DO UPDATE SET setting_value = $2`,
+            [`status_${botType}`, status]
+        );
+        await bot.sendMessage(cid, `Bot *${botType.toUpperCase()}* is now set to: *${status.toUpperCase()}*`, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error(e);
+        await bot.sendMessage(cid, "Error saving bot status.");
+    }
+});
+
 
 bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -10331,13 +10353,11 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
-
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         // --- THIS IS THE FREE TRIAL FLOW ---
-        // STEP 1: Check if user can use free trial (cooldown)
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
             const formattedDate = check.cooldown.toLocaleString('en-US', {
@@ -10355,18 +10375,14 @@ if (text === 'Deploy' || text === 'Free Trial') {
         }
 
         try {
-            // STEP 2: REQUIRE MINI APP VERIFICATION FIRST (IP + Location collection)
-            // Check if the APP_URL is configured
             if (!process.env.APP_URL) {
                 console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
                 return bot.sendMessage(cid, "Error: The verification service is currently unavailable. Please try again later.");
             }
 
-            // Set the state to indicate we're waiting for mini app verification
             userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
             const verificationUrl = `${process.env.APP_URL}/verify`;
 
-            // Show the security check button and track the message ID
             const miniAppMessage = await bot.sendMessage(cid, "*Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
                 parse_mode: 'Markdown',
                 reply_markup: {
@@ -10376,7 +10392,6 @@ if (text === 'Deploy' || text === 'Free Trial') {
                 }
             });
             
-            // Store the message ID so we can delete it later when verification is done
             userStates[cid].miniAppMessageId = miniAppMessage.message_id;
         } catch (error) { 
             console.error("Error in free trial verification flow:", error.message);
@@ -10389,26 +10404,45 @@ if (text === 'Deploy' || text === 'Free Trial') {
         const isVerified = await isUserVerified(cid);
     
         if (!isVerified) {
-            // **Step 1: User is NOT verified, so we start the registration process.**
             userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
             await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
-            return; // Stop and wait for their email
+            return;
         }
     
-        // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
+        // --- 🤖 NEW DYNAMIC AVAILABILITY CHECK ---
+        // Fetch statuses from the app_settings table
+        const res = await pool.query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'status_%'");
+        const statusMap = Object.fromEntries(res.rows.map(r => [r.setting_key, r.setting_value]));
+
+        // Define all possible bots
+        const allBots = [
+            { id: 'levanter', text: 'Levanter' },
+            { id: 'raganork', text: 'Raganork MD' },
+            { id: 'hermit', text: 'Hermit' }
+        ];
+
+        // Filter: Only include if status is 'available' (or if no status is set yet, default to available)
+        const availableBots = allBots.filter(bot => (statusMap[`status_${bot.id}`] || 'available') === 'available');
+
+        if (availableBots.length === 0) {
+            return bot.sendMessage(cid, "All bot types are currently not available. Please try again later.");
+        }
+
+        // Create buttons dynamically for available bots
+        const botButtons = availableBots.map(bot => ({
+            text: bot.text,
+            callback_data: `select_deploy_type:${bot.id}`
+        }));
+
+        // Arrange buttons in rows of 2
+        const keyboard = chunkArray(botButtons, 2);
+
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
+        
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
-                inline_keyboard: [
-                    [ // Row 1
-                        { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
-                        { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
-                    ],
-                    [ // Row 2
-                        { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
-                    ]
-                ]
+                inline_keyboard: keyboard
             }
         });
         return;
@@ -10416,6 +10450,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
 }
 
 
+    
   if (text === 'Apps' && isAdmin) {
     return dbServices.sendAppList(cid); // Use dbServices
   }
