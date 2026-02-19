@@ -4309,22 +4309,48 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
 
 
 function buildKeyboard(isAdmin) {
+  // --- Bot API 9.4 Colored Buttons Integration ---
+  
   const baseMenu = [
-      ['Get Session ID', 'Deploy'],
-      ['My Bots', 'Free Trial'],
-      ['FAQ', 'Referrals'],
-      ['Support', 'More Features'] 
+      [
+        { text: 'Get Session ID', style: 'primary' }, // Blue
+        { text: 'Deploy', style: 'success' }         // Green
+      ],
+      [
+        { text: 'My Bots', style: 'success' },        // Green
+        { text: 'Free Trial', style: 'primary' }      // Blue
+      ],
+      [
+        { text: 'FAQ' }, 
+        { text: 'Referrals' }
+      ],
+      [
+        { text: 'Support' }, 
+        { text: 'More Features' }
+      ] 
   ];
+
   if (isAdmin) {
       return [
-          ['Deploy', 'Apps'],
-          ['Generate Key', 'Get Session ID'],
+          [
+            { text: 'Deploy', style: 'success' }, 
+            { text: 'Apps', style: 'primary' }
+          ],
+          [
+            { text: 'Generate Key', style: 'success' }, 
+            { text: 'Get Session ID', style: 'primary' }
+          ],
           ['/stats', '/dbstats', '/bapp'],
-          ['/copydb', '/backupall', `/restoreall`] // <-- ADD /bapp here
+          [
+            { text: '/copydb', style: 'danger' },    // Red
+            { text: '/backupall', style: 'danger' }, // Red
+            { text: '/restoreall', style: 'success' } // Green
+          ]
       ];
   }
   return baseMenu;
 }
+
 
 
 function chunkArray(arr, size) {
