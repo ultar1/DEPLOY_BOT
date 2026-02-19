@@ -4317,16 +4317,16 @@ function buildKeyboard(isAdmin) {
         { text: 'Deploy', style: 'success' }         // Green
       ],
       [
-        { text: 'My Bots', style: 'success' },        // Green
-        { text: 'Free Trial', style: 'primary' }      // Blue
+        { text: 'Free Trial', style: 'primary' },        // Green
+        { text: 'My Bots', style: 'success' }      // Blue
       ],
       [
         { text: 'FAQ' }, 
         { text: 'Referrals' }
       ],
       [
-        { text: 'Support' }, 
-        { text: 'More Features' }
+        { text: 'Support', style: 'danger' }, 
+        { text: 'More Features', style: 'success' }
       ] 
   ];
 
