@@ -11459,63 +11459,65 @@ if (action === 'users_page') {
 // --- FIX: Refactored select_deploy_type to ask for Session ID first with Image ---
 if (action === 'select_deploy_type') {
     const botType = payload;
-    const st = userStates[cid];
-    const messageIdToDelete = q.message.message_id; // Get the ID of the message to delete
+    const cid = q.message.chat.id.toString();
+    const messageIdToDelete = q.message.message_id;
 
     if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION') {
-        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: messageIdToDelete });
+        return bot.editMessageText('This session has expired. Please start the deployment process again.', { 
+            chat_id: cid, 
+            message_id: messageIdToDelete 
+        });
     }
       
     st.data.botType = botType;
-
-    // The flow now always goes to SESSION_ID first.
     st.step = 'SESSION_ID';
     
-    // --- START OF UPDATED IMAGE LOGIC ---
+    // --- START OF UPDATED LOGIC ---
     let prefix;
     let imageGuideUrl;
     let sessionSiteUrl;
 
     if (botType === 'raganork') {
         prefix = RAGANORK_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; // Raganork Image URL
+        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; 
         sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
     } else if (botType === 'hermit') {
         prefix = HERMIT_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; // Using Levanter image as a placeholder for Hermit
+        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; 
         sessionSiteUrl = HERMIT_SESSION_SITE_URL;
-    } else { // Default to Levanter
+    } else { 
         prefix = LEVANTER_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
+        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; 
         sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
     }
-    // --- END OF UPDATED LOGIC ---
 
     const botName = botType.charAt(0).toUpperCase() + botType.slice(1);
-    
     const sessionPrompt = `You've selected *${botName}*. Please send your session id. It must start with \`${prefix}\`.`;
     
-    // 1. Send the new image/instructions message
+    // 1. Send the new image with a COLORED BLUE button
     await bot.sendPhoto(cid, imageGuideUrl, { 
-        caption: sessionPrompt, // Use the prompt as the caption
+        caption: sessionPrompt,
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: `Get Session ID for ${botName}`, url: sessionSiteUrl }
+                    { 
+                        text: `Get Session ID for ${botName}`, 
+                        url: sessionSiteUrl,
+                        style: 'primary' // 🔵 Sets the button color to Blue (API 9.4+)
+                    }
                 ]
             ]
         }
     });
 
-    // 2. Delete the original message that contained the bot type buttons
+    // 2. Delete the original bot selection message
     await bot.deleteMessage(cid, messageIdToDelete)
         .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
 
-    // --- END OF NEW IMAGE LOGIC ---
-
     return;
 }
+
 
 
 
@@ -14287,12 +14289,11 @@ if (action === 'selectapp' || action === 'selectbot') {
     const appName = payload;
 
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
-    // Add this at the very beginning of your selectapp callback handler
-if (userStates[cid]?.data?.logInterval) {
-    clearInterval(userStates[cid].data.logInterval);
-    delete userStates[cid].data.logInterval;
-}
-
+    
+    if (userStates[cid]?.data?.logInterval) {
+        clearInterval(userStates[cid].data.logInterval);
+        delete userStates[cid].data.logInterval;
+    }
 
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
@@ -14318,7 +14319,6 @@ if (userStates[cid]?.data?.logInterval) {
     const keyboard = [];
     let message = "";
 
-    // --- 💡 GRACE PERIOD LOGIC 💡 ---
     const isExpired = expirationDate && expirationDate < now;
     const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
 
@@ -14326,96 +14326,55 @@ if (userStates[cid]?.data?.logInterval) {
         const timeSinceExpiry = now - expirationDate.getTime();
         const hoursRemaining = Math.max(0, Math.round((GRACE_PERIOD_MS - timeSinceExpiry) / (1000 * 60 * 60)));
 
-        message = "```\n";
-        message += ` ═══ SUSPENDED ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : Expired\n`;
-        message += ` ┃❃│ Deletion : in ${hoursRemaining} hours\n`;
-        message += ` ┃❃╰───────────────\n\n`;
-        message += ` This bot is suspended. Renew now to restore it before it is permanently deleted.`;
-        message += "\n```";
+        message = "```\n ═══ SUSPENDED ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : ${appName}\n ┃❃│ Status   : Expired\n ┃❃│ Deletion : in ${hoursRemaining} hours\n ┃❃╰───────────────\n\n This bot is suspended. Renew now to restore it.\n```";
 
         keyboard.push(
-            [{ text: 'Renew Bot', callback_data: `renew_bot:${appName}` }],
-            [{ text: 'Delete Bot', callback_data: `userdelete:${appName}` }]
+            [{ text: 'Renew Bot', callback_data: `renew_bot:${appName}`, style: 'success' }], // 🟢 Green
+            [{ text: 'Delete Bot', callback_data: `userdelete:${appName}`, style: 'danger' }]  // 🔴 Red
         );
 
     } else if (dbBotInfo?.paused_at) {
-        // --- Bot is PAUSED (Manual) ---
-        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
-        const expStatus = expirationDate ? `${daysLeft} days remaining (Paused)` : 'Not Set';
+        message = "```\n ═══ ${botType} ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : ${appName}\n ┃❃│ Status   : Paused\n ┃❃│ Expires  : ${expirationDate ? 'Paused' : 'Not Set'}\n ┃❃╰───────────────\n\n This bot is turned off and its timer is paused.\n```";
 
-        message = "```\n";
-        message += ` ═══ ${botType} ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : Paused\n`;
-        message += ` ┃❃│ Expires  : ${expStatus}\n`;
-        message += ` ┃❃╰───────────────\n\n`;
-        message += ` This bot is turned off and its timer is paused.`;
-        message += "\n```";
-
-        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
+        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]); // 🟢 Green
         
     } else if (dynoStatus === 'on') {
-        // --- Bot is ON (Active) ---
         const finalStatusText = (dbBotInfo?.wpp_status === 'logged_out') ? 'Logged Out' : 'Connected';
         const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
-        const expStatus = expirationDate ? `${daysLeft} days remaining` : 'Not Set';
         
-        message = "```\n";
-        message += ` ═══ ${botType} ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expStatus}\n`;
-        message += ` ┃❃╰───────────────`;
-        message += "\n```";
+        message = "```\n ═══ ${botType} ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : ${appName}\n ┃❃│ Status   : ${finalStatusText}\n ┃❃│ Expires  : ${daysLeft} days left\n ┃❃╰───────────────\n```";
         
         const mainRow = [
-            { text: 'Info', callback_data: `info:${appName}` },
+            { text: 'Info', callback_data: `info:${appName}`, style: 'primary' },    // 🔵 Blue
             { text: 'Restart', callback_data: `restart:${appName}` },
             { text: 'Logs', callback_data: `logs:${appName}` }
         ];
 
         if (daysLeft <= 7) {
-            mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
+            mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}`, style: 'success' }); // 🟢 Green
         }
         
         keyboard.push(
             mainRow,
             [
                 { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
-                { text: 'Delete', callback_data: `userdelete:${appName}` },
+                { text: 'Delete', callback_data: `userdelete:${appName}`, style: 'danger' }, // 🔴 Red
                 { text: 'Set Variable', callback_data: `setvar:${appName}` }
             ],
             [
                 { text: 'Backup', callback_data: `backup_app:${appName}` },
                 { text: 'Switch Bot', callback_data: `switch_bot_start:${appName}` },
-                { text: 'Turn Off (Pause)', callback_data: `toggle_dyno:off:${appName}` }
+                { text: 'Turn Off (Pause)', callback_data: `toggle_dyno:off:${appName}`, style: 'danger' } // 🔴 Red
             ]
         );
 
     } else { 
-        // --- Bot is OFF (but not paused, e.g., crashed) ---
-        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
-        const expStatus = expirationDate ? `${daysLeft} days remaining` : 'Not Set';
+        message = "```\n ═══ ${botType} ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : ${appName}\n ┃❃│ Status   : Off\n ┃❃│ Expires  : Active\n ┃❃╰───────────────\n\n This bot is currently turned off.\n```";
 
-        message = "```\n";
-        message += ` ═══ ${botType} ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : Off\n`;
-        message += ` ┃❃│ Expires  : ${expStatus}\n`;
-        message += ` ┃❃╰───────────────\n\n`;
-        message += ` This bot is currently turned off.`;
-        message += "\n```";
-
-        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
+        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]); // 🟢 Green
     }
     
-    keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
+    keyboard.push([{ text: '« Back', callback_id: 'back_to_app_list' }]);
 
     return bot.editMessageText(message, {
       chat_id: cid,
@@ -14426,6 +14385,7 @@ if (userStates[cid]?.data?.logInterval) {
       }
     });
 }
+
 
 
 // 1. START SWITCH: Show available types
