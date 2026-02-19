@@ -154,7 +154,7 @@ const VCF_GROUP_LINK = 'https://t.me/wbdvcf1';
 const MINI_APP_URL = 'https://deploy-bot-1-xfd5.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 4; // Increment this number for every new keyboard update
+const KEYBOARD_VERSION = 5; // Increment this number for every new keyboard update
 // --- END OF NEW GLOBAL CONSTANT --
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
@@ -4321,8 +4321,8 @@ function buildKeyboard(isAdmin) {
         { text: 'My Bots', style: 'success' }      // Blue
       ],
       [
-        { text: 'FAQ' }, 
-        { text: 'Referrals' }
+        { text: 'FAQ', style: 'primary' }, 
+        { text: 'Referrals', style: 'success' }
       ],
       [
         { text: 'Support', style: 'danger' }, 
@@ -10377,8 +10377,6 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 }
 
   
-
-// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
@@ -10425,7 +10423,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         }
         return;
 
-    } else {
+        } else {
         // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
         const isVerified = await isUserVerified(cid);
     
@@ -10436,28 +10434,26 @@ if (text === 'Deploy' || text === 'Free Trial') {
         }
     
         // --- 🤖 NEW DYNAMIC AVAILABILITY CHECK ---
-        // Fetch statuses from the app_settings table
         const res = await pool.query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'status_%'");
         const statusMap = Object.fromEntries(res.rows.map(r => [r.setting_key, r.setting_value]));
 
-        // Define all possible bots
         const allBots = [
             { id: 'levanter', text: 'Levanter' },
             { id: 'raganork', text: 'Raganork MD' },
             { id: 'hermit', text: 'Hermit' }
         ];
 
-        // Filter: Only include if status is 'available' (or if no status is set yet, default to available)
         const availableBots = allBots.filter(bot => (statusMap[`status_${bot.id}`] || 'available') === 'available');
 
         if (availableBots.length === 0) {
             return bot.sendMessage(cid, "All bot types are currently not available. Please try again later.");
         }
 
-        // Create buttons dynamically for available bots
+        // --- 💡 FIX: Set style to 'success' for GREEN buttons ---
         const botButtons = availableBots.map(bot => ({
             text: bot.text,
-            callback_data: `select_deploy_type:${bot.id}`
+            callback_data: `select_deploy_type:${bot.id}`,
+            style: 'success' // 🟢 This property makes the button Green in API 9.4
         }));
 
         // Arrange buttons in rows of 2
@@ -10473,8 +10469,9 @@ if (text === 'Deploy' || text === 'Free Trial') {
         });
         return;
     }
-}
 
+
+// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
 
     
   if (text === 'Apps' && isAdmin) {
@@ -10521,30 +10518,20 @@ if (text === 'Deploy' || text === 'Free Trial') {
 if (text === 'My Bots') {
     const cid = msg.chat.id.toString();
 
-    // --- 💡 NEW VERIFICATION CHECK ---
+    // --- Verification Check ---
     const isVerified = await isUserVerified(cid);
-
     if (!isVerified) {
-        // User is NOT verified. Start the registration flow.
-        // We add an 'action' to the state so the bot knows what to do after verification.
         userStates[cid] = { step: 'AWAITING_EMAIL', data: { action: 'view_bots' } }; 
-        
-        await bot.sendMessage(cid, 'To manage your bots, you must first verify your email address. This is a one-time security step.\n\nPlease enter your email address:');
-        return; // Stop and wait for their email
+        await bot.sendMessage(cid, 'To manage your bots, you must first verify your email address. Please enter your email address:');
+        return;
     }
-    // --- END OF NEW CHECK ---
 
-    // If verified, proceed with the original "My Bots" logic
     const checkingMsg = await bot.sendMessage(cid, 'Syncing your bot list with the server, please wait...');
 
     try {
-        // 1. Get all bots the user owns from the database.
+        // 1. Get all bots from DB
         const dbBotsResult = await pool.query(
-            `SELECT 
-                ub.bot_name, 
-                ub.status, 
-                ud.expiration_date,
-                ud.deleted_from_heroku_at
+            `SELECT ub.bot_name, ub.status, ud.expiration_date, ud.deleted_from_heroku_at
              FROM user_bots ub
              LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
              WHERE ub.user_id = $1`,
@@ -10557,88 +10544,77 @@ if (text === 'My Bots') {
                 chat_id: cid, message_id: checkingMsg.message_id,
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
-                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                        [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot', style: 'success' }],
+                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup', style: 'primary' }]
                     ]
                 }
             });
             return;
         }
 
-        // 2. Check each bot's status on Heroku.
+        // 2. Cross-check with Heroku API
         const verificationPromises = userBotsFromDb.map(bot =>
-            axios.get(`https://api.heroku.com/apps/${bot.bot_name}/formation`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            herokuApi.get(`/apps/${bot.bot_name}/formation`, {
+                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
             }).then(response => {
                 const webDyno = response.data.find(d => d.type === 'web');
                 return { ...bot, exists_on_heroku: true, is_active: webDyno && webDyno.quantity > 0 };
-            })
-              .catch(() => ({ ...bot, exists_on_heroku: false, is_active: false }))
+            }).catch(() => ({ ...bot, exists_on_heroku: false, is_active: false }))
         );
 
         const results = await Promise.all(verificationPromises);
-        
-        const botsToDisplay = [];
-        const botsToCleanup = [];
+        const botsToDisplay = results.filter(r => r.exists_on_heroku);
 
-        for (const result of results) {
-            if (result.exists_on_heroku) {
-                botsToDisplay.push(result);
-            } else {
-                if (!result.deleted_from_heroku_at) {
-                    botsToCleanup.push(result.bot_name);
-                }
-            }
-        }
-        
-        // 3. Clean up the database in the background.
-        if (botsToCleanup.length > 0) {
-            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bot(s) for user ${cid}. Cleaning up DB.`);
-            await Promise.all(botsToCleanup.map(appName => {
-                dbServices.deleteUserBot(cid, appName); // Remove from active list
-                dbServices.markDeploymentDeletedFromHeroku(cid, appName); // Mark as deleted in backup
-            }));
-        }
-
-        // 4. Display the final, filtered list of bots.
-        if (botsToDisplay.length === 0) {
-            await bot.editMessageText("It seems your bots were deleted from Heroku. You can restore them from your backup.", {
-                chat_id: cid, message_id: checkingMsg.message_id,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Deploy a New Bot', callback_data: 'deploy_first_bot' }],
-                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
-                    ]
-                }
-            });
-            return;
-        }
-
+        // 3. Generate Colored Buttons
         const appButtons = botsToDisplay.map(bot => {
             let statusText = bot.is_active ? (bot.status === 'logged_out' ? 'Logged Out' : 'Connected') : 'Off';
             const expirationCountdown = formatTimeLeft(bot.expiration_date);
-            const buttonText = `${bot.bot_name} - ${statusText}${expirationCountdown}`;
-            return { text: buttonText, callback_data: `selectbot:${bot.bot_name}` };
+            
+            // --- Logic for Colors ---
+            let btnStyle = 'success'; // Default: Green
+            let labelPrefix = '';
+
+            const now = new Date();
+            const expDate = bot.expiration_date ? new Date(bot.expiration_date) : null;
+            const daysLeft = expDate ? (expDate - now) / (1000 * 60 * 60 * 24) : 99;
+
+            // Mark Red if Logged Out, Off, or Expiring in <= 3 days
+            if (bot.status === 'logged_out' || !bot.is_active || daysLeft <= 3) {
+                btnStyle = 'danger'; // Red
+                labelPrefix = '⚠️ ';
+            }
+
+            return { 
+                text: `${labelPrefix}${bot.bot_name} - ${statusText}${expirationCountdown}`, 
+                callback_data: `selectbot:${bot.bot_name}`,
+                style: btnStyle // Apply API 9.4 color style
+            };
         });
 
         const rows = chunkArray(appButtons, 2);
-        rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+        
+        // Restore button in Blue (Primary)
+        rows.push([{ 
+            text: 'Bot not found? Restore', 
+            callback_data: 'restore_from_backup',
+            style: 'primary' 
+        }]);
 
         await bot.editMessageText('Select a bot to manage:', {
-            chat_id: cid, message_id: checkingMsg.message_id,
+            chat_id: cid, 
+            message_id: checkingMsg.message_id,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         });
 
     } catch (error) {
         console.error("Error in 'My Bots' handler:", error);
-        await bot.editMessageText("An error occurred while fetching your bots. Please try again.", {
+        await bot.editMessageText("An error occurred. Please try again.", {
             chat_id: cid, message_id: checkingMsg.message_id
         });
     }
     return;
 }
-
 
 
 if (text === 'Referrals') {
