@@ -10469,6 +10469,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         });
         return;
     }
+}
 
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
