@@ -10491,25 +10491,55 @@ if (text === 'Deploy' || text === 'Free Trial') {
     });
   }
 
-    if (text === 'Get Session ID') {
-      delete userStates[cid]; // Clear user state
-      userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
 
-      await bot.sendMessage(cid, 'Which bot type do you need a session ID for?', {
-          reply_markup: {
-              inline_keyboard: [
-                  [ // Row 1
-                    { text: 'Levanter', callback_data: `select_get_session_type:levanter` },
-                    { text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }
-                  ],
-                  [ // Row 2
-                    { text: 'Hermit', callback_data: `select_get_session_type:hermit` }
-                  ]
-              ]
-          }
-      });
-      return;
-  }
+   if (text === 'Get Session ID') {
+    const cid = msg.chat.id.toString();
+    delete userStates[cid]; 
+    userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
+
+    try {
+        // --- 🤖 DYNAMIC AVAILABILITY CHECK ---
+        // Fetch current statuses set by the admin via /setbot
+        const res = await pool.query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'status_%'");
+        const statusMap = Object.fromEntries(res.rows.map(r => [r.setting_key, r.setting_value]));
+
+        // Define the bots available for session generation
+        const sessionBots = [
+            { id: 'levanter', text: 'Levanter' },
+            { id: 'raganork', text: 'Raganork MD' },
+            { id: 'hermit', text: 'Hermit' }
+        ];
+
+        // Filter only those marked as 'available'
+        const availableBots = sessionBots.filter(bot => (statusMap[`status_${bot.id}`] || 'available') === 'available');
+
+        if (availableBots.length === 0) {
+            return bot.sendMessage(cid, "Bots are currently undergoing maintenance. Please try again later.");
+        }
+
+        // Create buttons with 'success' style (🟢 Green in API 9.4)
+        const botButtons = availableBots.map(bot => ({
+            text: bot.text,
+            callback_data: `select_get_session_type:${bot.id}`,
+            style: 'success' // 🟢 Makes the button GREEN
+        }));
+
+        // Arrange the dynamic buttons in rows of 2
+        const keyboard = chunkArray(botButtons, 2);
+
+        await bot.sendMessage(cid, 'Which bot type do you need a session ID for?', {
+            reply_markup: {
+                inline_keyboard: keyboard
+            }
+        });
+
+    } catch (error) {
+        console.error("Error in Get Session ID handler:", error.message);
+        await bot.sendMessage(cid, "An error occurred while checking bot availability.");
+    }
+    return;
+}
+ 
 
 
         // In bot.js
