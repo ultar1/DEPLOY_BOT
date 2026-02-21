@@ -2145,7 +2145,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         // --- Step 4: Set Environment Variables ---
 
 
-        // --- Step 4: Set Environment Variables ---
+        // --- Step        // --- Step 4: Set Environment Variables ---
         await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
         
@@ -2157,10 +2157,22 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         }
         
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
-        const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
+
+        // 💡 MAGIC FIX: Explicitly set the PATH so Heroku can find yarn
+        // This ensures the Heroku-24 stack knows exactly where the binaries live.
+        const herokuSystemVars = {
+            APP_NAME: appName,
+            PATH: "/usr/local/bin:/usr/bin:/bin:/app/.heroku/node/bin:/app/.heroku/yarn/bin:/app/node_modules/.bin",
+            NODE_ENV: "production",
+            NPM_CONFIG_PRODUCTION: "false"
+        };
+        
+        const finalConfigVars = isRestore ? 
+            { ...filteredVars, ...herokuSystemVars } : 
+            { ...botTypeSpecificDefaults, ...filteredVars, ...herokuSystemVars };
         
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
-            { ...finalConfigVars, APP_NAME: appName },
+            finalConfigVars,
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
         clearInterval(primaryAnimateIntervalId);
