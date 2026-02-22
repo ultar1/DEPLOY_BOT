@@ -12837,8 +12837,8 @@ if (action === 'select_get_session_type') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Get Session', url: RAGANORK_SESSION_SITE_URL }],
-                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    [{ text: 'Get Session', url: RAGANORK_SESSION_SITE_URL, style: 'primary' }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
                 ]
             }
         });
@@ -12853,8 +12853,8 @@ if (action === 'select_get_session_type') {
             reply_markup: {
                 inline_keyboard: [
                     // (Assuming HERMIT_SESSION_SITE_URL is defined at the top of bot.js)
-                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL }],
-                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL, style: 'primary' }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
                 ]
             }
         });
@@ -12870,11 +12870,11 @@ if (action === 'select_get_session_type') {
             reply_markup: {
                 inline_keyboard: [
                     [
-                        { text: 'Get Session ID', url: levanterUrl },
-                        { text: "Can't get session?", callback_data: 'levanter_wa_fallback' }
+                        { text: 'Get Session ID', url: levanterUrl, style: 'primary' },
+                        { text: "Can't get session?", callback_data: 'levanter_wa_fallback', style: 'primary' }
                     ],
                     [
-                        { text: 'Deploy Now', callback_data: 'deploy_first_bot' }
+                        { text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }
                     ]
                 ]
             }
@@ -13665,8 +13665,8 @@ if (action === 'select_renewal') {
               reply_markup: {
                   inline_keyboard: [
                       [
-                          { text: 'Confirm & Deploy', callback_data: `setup:startbuild` },
-                          { text: 'Cancel', callback_data: `setup:cancel` }
+                          { text: 'Confirm & Deploy', callback_data: `setup:startbuild`, style: 'success' },
+                          { text: 'Cancel', callback_data: `setup:cancel`, style: 'danger' }
                       ]
                   ]
               }
@@ -13753,7 +13753,7 @@ if (action === 'confirm_and_pay_step') {
             message_id: q.message.message_id,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Make payment`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
+                    [{ text: `Make payment`, callback_data: 'buy_key_for_deploy', style: 'success' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy', style: 'danger' }]
                 ]
             }
         });
@@ -14179,10 +14179,6 @@ if (action === 'paystack_deploy' || action === 'paystack_renew') {
 }
 
 
-// In bot.js, inside bot.on('callback_query', ...)
-
-// bot.js (Inside bot.on('callback_query', ...) handler)
-
 if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const isRenewal = action === 'flutterwave_renew';
     const priceNgn = parseInt(payload, 10);
@@ -14249,7 +14245,7 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
             `Click the button below to complete your payment with Flutterwave.`, {
                 chat_id: cid, message_id: q.message.message_id,
                 reply_markup: {
-                    inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
+                    inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl, style: 'success' }]]
                 }
             }
         );
