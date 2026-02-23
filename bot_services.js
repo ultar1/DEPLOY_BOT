@@ -2364,7 +2364,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); // Re-using primaryAnimateIntervalId
         
         const appStatusPromise = new Promise((resolve, reject) => {
-            const STATUS_CHECK_TIMEOUT = 250 * 1000;
+            const STATUS_CHECK_TIMEOUT = 500 * 1000;
             const timeoutId = setTimeout(() => {
                 const appPromise = appDeploymentPromises.get(appName);
                 if (appPromise) {
