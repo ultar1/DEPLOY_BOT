@@ -10764,7 +10764,7 @@ if (text === 'Support') {
     return bot.sendMessage(cid, "Contact our official support here: @staries1", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Message Support', url: 'https://t.me/staries1' }]
+                [{ text: 'Message Support', url: 'https://t.me/staries1', style: 'success' }]
             ]
         }
     });
@@ -11691,7 +11691,7 @@ if (action === 'edit_deployment_start_over') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Get Session ID for ${botType.toUpperCase()}`, url: sessionUrl }]
+                    [{ text: `Get Session ID for ${botType.toUpperCase()}`, url: sessionUrl, style: 'primary' }]
                 ]
             }
         }
@@ -11812,8 +11812,8 @@ if (action === 'set_auto_status_choice') {
         message_id: q.message.message_id,
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }],
-                [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over` }]
+                [{ text: 'Confirm', callback_data: `confirm_and_pay_step`, style: 'success' }],
+                [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over`, style: 'primary' }]
             ]
         },
         parse_mode: 'Markdown' // This parse_mode works with the ``` code block
@@ -14389,16 +14389,16 @@ if (action === 'selectapp' || action === 'selectbot') {
         keyboard.push(
             mainRow,
             [
-                { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
+                { text: 'Redeploy', callback_data: `redeploy_app:${appName}`, style: 'success' },
                 { text: 'Delete', callback_data: `userdelete:${appName}`, style: 'danger' },
-                { text: 'Set Variable', callback_data: `setvar:${appName}` }
+                { text: 'Set Variable', callback_data: `setvar:${appName}`, style: 'success' }
             ],
             [
-                { text: 'Backup', callback_data: `backup_app:${appName}` },
-                { text: 'Switch Bot', callback_data: `switch_bot_start:${appName}` },
+                { text: 'Backup', callback_data: `backup_app:${appName}`, style: 'success' },
+                { text: 'Switch Bot', callback_data: `switch_bot_start:${appName}`, style: 'success' },
                 { text: 'Turn Off (Pause)', callback_data: `toggle_dyno:off:${appName}`, style: 'danger' }
             ],
-            [{ text: '« Back', callback_data: 'back_to_app_list' }] // Fixed property name
+            [{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }] // Fixed property name
         );
 
         await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
@@ -14407,7 +14407,7 @@ if (action === 'selectapp' || action === 'selectbot') {
         let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : Off\n ┃❃│ Expires  : Active\n ┃❃╰───────────────\n\n This bot is currently turned off.\n```";
 
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]);
-        keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
+        keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }]);
 
         await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
     }
@@ -15011,7 +15011,7 @@ if (action === 'info') {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}`, style: 'success' }]]
         }
       });
     } finally {
@@ -15195,8 +15195,8 @@ if (action === 'ai_summary') {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: "Yes, I am sure", callback_data: `confirmdelete:${payload}:${action}` },
-            { text: "No, cancel", callback_data: `selectapp:${payload}` }
+            { text: "Yes, I am sure", callback_data: `confirmdelete:${payload}:${action}`, style: 'danger' },
+            { text: "No, cancel", callback_data: `selectapp:${payload}`, style: 'primary' }
           ]]
         }
       });
@@ -15265,8 +15265,8 @@ if (action === 'ai_summary') {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Get Session ID', url: sessionUrl }],
-                [{ text: "I have my Session ID now", callback_data: `has_session:${botType}` }]
+                [{ text: 'Get Session ID', url: sessionUrl, style: 'primary' }],
+                [{ text: "I have my Session ID now", callback_data: `has_session:${botType}`, style: 'success' }]
             ]
         }
     });
@@ -15959,7 +15959,7 @@ if (action === 'change_session') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: "Get New Session ID", url: sessionSiteUrl }]
+                    [{ text: "Get New Session ID", url: sessionSiteUrl, style: 'primary' }]
                 ]
             }
         });
