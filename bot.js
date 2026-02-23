@@ -14368,7 +14368,7 @@ if (action === 'selectapp' || action === 'selectbot') {
         let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : Paused\n ┃❃│ Expires  : Paused\n ┃❃╰───────────────\n\n This bot is turned off and its timer is paused.\n```";
 
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]);
-        keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]); // Corrected callback_data
+        keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }]); // Corrected callback_data
 
         await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
         
@@ -14377,13 +14377,13 @@ if (action === 'selectapp' || action === 'selectbot') {
         
         // FIX: All buttons in the row must be objects if style is used
         const mainRow = [
-            { text: 'Info', callback_data: `info:${appName}`, style: 'primary' },
-            { text: 'Restart', callback_data: `restart:${appName}` },
-            { text: 'Logs', callback_data: `logs:${appName}` }
+            { text: 'Info', callback_data: `info:${appName}`, style: 'success' },
+            { text: 'Restart', callback_data: `restart:${appName}`, style: 'success' },
+            { text: 'Logs', callback_data: `logs:${appName}`, style: 'success' }
         ];
 
         if (daysLeft <= 7) {
-            mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}`, style: 'success' });
+            mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}`, style: 'danger' });
         }
         
         keyboard.push(
@@ -14487,8 +14487,8 @@ if (action === 'confirm_switch_pay') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}` }],
-                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}` }]
+                    [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}`, style: 'success' }],
+                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}`,  style: 'danger' }]
                 ]
             }
         }
@@ -16174,7 +16174,8 @@ if (action === 'change_session') {
       if (bots.length > 0) {
           const rows = chunkArray(bots, 3).map(r => r.map(n => ({
             text: n,
-            callback_data: `selectbot:${n}`
+            callback_data: `selectbot:${n}`,
+              style: 'primary'
           })));
           return bot.editMessageText('Your remaining deployed bots:', {
             chat_id: cid,
@@ -16188,8 +16189,8 @@ if (action === 'change_session') {
             message_id: currentMessageId,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
-                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot', style: 'success' }],
+                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup', style: 'primary' }]
                 ]
             }
         });
@@ -16372,7 +16373,7 @@ bot.on('channel_post', async msg => {
                 const sentMessage = await bot.sendMessage(userId, warningMessage, {
                     parse_mode: 'Markdown',
                     reply_markup: {
-                        inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
+                        inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}`, style: 'success' }]]
                     }
                 }).catch(e => console.error(`Failed to send Telegram warning to user ${userId}: ${e.message}`));
                 
