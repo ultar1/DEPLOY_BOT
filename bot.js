@@ -1121,9 +1121,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
 
 
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
+
 
 /**
  * Executes yt-dlp to extract high-quality media information.
