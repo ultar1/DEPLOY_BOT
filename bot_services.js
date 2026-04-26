@@ -2225,65 +2225,58 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             throw err; 
         }
 
-         // --- Step 7: Handle Build Succeeded ---
+                 // --- Step 7: Handle Build Succeeded ---
         console.log(`[Flow] buildWithProgress: Heroku build for "${appName}" SUCCEEDED.`);
-        
+
         // NEW: AUTOMATIC DYNO CONFIGURATION (LEVANTER ONLY)
         if (botType === 'levanter') {
             try {
                 console.log(`[Dyno] Auto-scaling Levanter "${appName}" to Standard-2X...`);
-                
                 await herokuApi.patch(`/apps/${appName}/formation`, {
-                    updates: [
-                        {
-                            process: 'web',
-                            quantity: 1,         // Automatically turns the bot ON
-                            size: 'Standard-2X'  // Sets the heavy-duty dyno size (1GB RAM)
-                        }
-                    ]
+                    updates: [{
+                        process: 'web',
+                        quantity: 1,
+                        size: 'standard-2x' // Use lowercase for API compatibility
+                    }]
                 }, {
-                    headers: { 
+                    headers: {
                         'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                        'Accept': 'application/vnd.heroku+json; version=3' 
+                        'Accept': 'application/vnd.heroku+json; version=3'
                     }
                 });
                 console.log(`[Dyno] Levanter "${appName}" is now live on Standard-2X.`);
             } catch (dynoError) {
-                // If this fails (e.g. no credit card on Heroku), we log it but don't stop the deploy
                 console.error(`[Dyno Error] Could not auto-scale Levanter:`, dynoError.response?.data || dynoError.message);
+                // Fallback: try to just turn it on if Standard-2X fails
+                await herokuApi.patch(`/apps/${appName}/formation`, {
+                    updates: [{ process: 'web', quantity: 1 }]
+                }).catch(() => {});
             }
-        }
-        // END OF DYNO LOGIC
+        } 
+        // --- END OF DYNO LOGIC ---
 
-        const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
-        await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
+        const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { 
+            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+        })).data;
         
+        await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
+
         // --- START OF EXPIRATION DATE UPDATE ---
-        let expirationDateToUse = null; // Initialize variable
+        let expirationDateToUse = null;
 
         if (isRestore) {
-            // For restores, preserve the original expiration date from the backup vars if available
             expirationDateToUse = vars.expiration_date ? new Date(vars.expiration_date) : null;
             console.log(`[Build Restore] Preserving expiration date: ${expirationDateToUse ? expirationDateToUse.toISOString() : 'Not Set'}`);
         } else {
-            // For new builds, use the user's provided logic based on vars.DAYS
-            if (vars.DAYS) { // Check if DAYS property exists in the vars object
-                const daysToAdd = parseInt(vars.DAYS, 10);
-                if (!isNaN(daysToAdd) && daysToAdd > 0) {
-                    const deployDate = new Date(); // Use current date
-                    expirationDateToUse = new Date(deployDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-                    console.log(`[Build] Calculated expiration date from vars.DAYS (${daysToAdd}): ${expirationDateToUse.toISOString()}`);
-                } else {
-                    console.warn(`[Build] Invalid vars.DAYS value (${vars.DAYS}). Falling back to saveUserDeployment default.`);
-                    expirationDateToUse = null; // Ensure it's null to trigger default in saveUserDeployment
+            if (vars.DAYS) {
+                const daysToAddVal = parseInt(vars.DAYS, 10);
+                if (!isNaN(daysToAddVal) && daysToAddVal > 0) {
+                    const deployDate = new Date();
+                    expirationDateToUse = new Date(deployDate.getTime() + daysToAddVal * 24 * 60 * 60 * 1000);
                 }
             } else if (isFreeTrial) {
-                 // Free trial logic - Pass null to let saveUserDeployment calculate the 1-day
-                 console.log(`[Build] Free trial - letting saveUserDeployment calculate expiration.`);
-                 expirationDateToUse = null;
+                expirationDateToUse = null;
             } else {
-                // Paid deployment but vars.DAYS is missing - Pass null to trigger default in saveUserDeployment
-                console.warn(`[Build] vars.DAYS not provided for new paid deploy ${appName}. saveUserDeployment will use its default.`);
                 expirationDateToUse = null;
             }
         }
