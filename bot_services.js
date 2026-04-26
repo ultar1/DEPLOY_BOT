@@ -1942,6 +1942,8 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
     let primaryAnimChatId;
     let primaryAnimMsgId;
 
+    try {
+
             // --- 💡 FIX: CHECK OWNERSHIP & RENAME IF BLOCKED 💡 ---
         try {
             // Check if the app exists and if we have access
