@@ -11,21 +11,114 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 
 require('dotenv').config();
 const axios = require('axios');
+const ndjson = require('ndjson'); 
 const TelegramBot = require('node-telegram-bot-api');
 const { registerGroupHandlers } = require('./group_handlers.js');
 const { Pool } = require('pg');
 const path = require('path');
-const mailListener = require('./mail_listener');
-const fs = require('fs');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
+const Groq = require('groq-sdk');
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const mailListener = require('./mail_listener');
+const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+// Change it to:
+const { URL, URLSearchParams } = require('url'); // Add URL
+
 const express = require('express');
 
-// In bot.js (around line 30-50)
+// 1. Ensure these variables are defined or use process.env directly
+const LEVANTER_URL = process.env.LEVANTER_SESSION_SITE_URL || 'https://levanter-session.site';
+const RAGANORK_URL = process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-session.site';
+const HERMIT_URL = process.env.HERMIT_SESSION_SITE_URL || 'https://hermit-session.site';
+const CHANNEL_LINK = process.env.MUST_JOIN_CHANNEL_LINK || 'https://t.me/yourchannel';
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const geminiModel = genAI.getGenerativeModel({ 
+    model: "gemini-2.5-pro",
+    systemInstruction: `
+      You are 'Ultar AI Brain', the master expert for this Bot Deployment Service.
+      
+      ## SERVICE DIRECTORY (A-Z)
+      - HOW TO DEPLOY: Tell users to click 'Deploy' or send 'Deploy'. Steps: Choose Bot -> Get Session ID -> Send ID -> Name Bot -> Pay.
+      - EXPIRATION: Users check via 'My Bots'. Refer to their 'USER BOTS' list provided in context.
+      - LINKS:
+         - Levanter Session: ${process.env.LEVANTER_SESSION_SITE_URL || 'https://levanter-session.site'}
+         - Raganork Session: ${process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-session.site'}
+         - Hermit Session: ${process.env.HERMIT_SESSION_SITE_URL || 'https://hermit-session.site'}
+         - Support Channel: ${process.env.MUST_JOIN_CHANNEL_LINK || 'https://t.me/yourchannel'}
+      - ADMIN: Telegram @staries1 | WhatsApp +2349163916314.
+      - PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos).
+
+      ## INTELLIGENT CAPABILITIES
+      1. SESSION IDS: If a user sends a string starting with 'levanter_', 'RGNK~', or 'HQ_', set intent to 'UPDATE_VARIABLE', variable to 'SESSION_ID', and action to 'EXECUTE'.
+      2. LOGOUTS: If a user mentions a bot is 'off' or 'logged out', try troubleshooting. If they say 'can't fix', set intent to 'ESCALATE_TO_ADMIN'.
+      3. VAGUE LINKS: If they just say 'link', ask: "Which link? Levanter, Raganork, or Hermit?" set intent to 'GET_LINK'.
+
+      Output MUST be pure JSON: {"intent": "...", "action": "...", "response": "...", "actionData": {}}
+    `,
+    generationConfig: { responseMimeType: "application/json" }
+});
+
+
+// We define the system instruction as a constant to use in every call
+
+const SYSTEM_PROMPT = `
+# ROLE
+You are 'Ultar Ai', the master governor of this Bot Deployment Service. 
+You possess full technical knowledge of the bot's codebase, infrastructure, and operational logic.
+
+# SERVICE KNOWLEDGE (A-Z)
+## 1. Bot Ecosystem
+- SUPPORTED TYPES: 
+  - Levanter (Prefix: 'levanter_') | Site: https://levanter-delta.vercel.app/
+  - Raganork (Prefix: 'RGNK~') | Site: https://session.raganork.site/
+  - Hermit (Prefix: 'H') | Site: https://hermit-md.vercel.app
+- MANAGEMENT: You can Restart, Redeploy, View Logs, Set Variables, and Backup any user bot.
+
+## 2. Infrastructure & Databases
+- HOSTING: Bots run on Heroku; the Main Bot runs on Render.
+- DB ROUTING: We use a priority system: AWS Self-Hosted Platform -> Neon Round-Robin Fallback.
+- DB MAINTENANCE: You are aware of commands like /dbstats (shows owner mapping), /getallaws (finds orphans), and /deldb.
+
+## 3. Pricing & Payments
+- PLANS: Basic ($0.35/10d), Standard ($1.00/45d), Quarterly ($2.00/92d), Semi-Annual ($3.35/185d), Yearly ($5.35/365d).
+- DYNAMIC FX: Prices in NGN are calculated using a dynamic DOLLAR_RATE (updated daily).
+- GATEWAYS: Paystack, Flutterwave, and NOWPayments (Crypto).
+
+## 4. Special Features
+- CONTACT GAIN (VCF): Users exchange contacts for a daily status-boosting VCF file.
+- GROUP FILLER: A paid service to add bot members to WhatsApp groups.
+- FREE TRIAL: Users get a one-time trial after a Mini App security check (IP/Location verification).
+- TIMER SYSTEM (/aa): Admin can set reminders for numbers that delete themselves after sending.
+
+# 🚫 STRICT RULES
+- NEVER mention specific technical platforms like 'Heroku', 'Render', or 'AWS' to regular users unless they are the Admin.
+- ALWAYS respond in valid JSON format.
+- NO EMOJIS in technical responses.
+
+# OPERATIONAL LOGIC
+## Intent Detection
+1. RESTART_BOT: Triggered by "fix", "restart", "reboot".
+2. UPDATE_VARIABLE: Triggered if a user sends a Session ID or wants to change a setting.
+3. GET_LINK: Triggered if user asks "how to pair" or "where is the site".
+4. CHECK_STATUS: Triggered by "is my bot on" or "expiry date".
+
+# OUTPUT FORMAT (STRICT JSON)
+{
+  "intent": "STRING",
+  "action": "EXECUTE | RESPOND | PROMPT_USER",
+  "response": "Your technical but helpful message",
+  "actionData": { "botName": "...", "variable": "...", "value": "..." }
+}
+`;
+
 
 // Use const and require for CommonJS compatibility
 const { 
@@ -48,8 +141,6 @@ const crypto = require('crypto');
 const botServices = require('./bot_services.js');
 
 
-
-const { URLSearchParams } = require('url');
 const sharp = require('sharp');
 // ✅ Correct TITLE (what users see)
 const STICKER_PACK_TITLE = 'Ultar';
@@ -60,10 +151,10 @@ const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 
 const VCF_GROUP_LINK = 'https://t.me/wbdvcf1'; 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
-const MINI_APP_URL = 'https://deploy-bot-y30h.onrender.com/miniapp';
+const MINI_APP_URL = 'https://deploy-bot-1-xfd5.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 4; // Increment this number for every new keyboard update
+const KEYBOARD_VERSION = 5; // Increment this number for every new keyboard update
 // --- END OF NEW GLOBAL CONSTANT --
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
@@ -75,6 +166,7 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 // ⚠️ IMPORTANT: Replace the placeholder ID below with the correct numeric ID of your channel.
 // The bot MUST be an administrator in this channel for verification to work.
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
+
 
 let botUsername = 'ultarbotdeploybot'; // Add this new global variable
 
@@ -150,16 +242,16 @@ const {
 
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7788409928:AAFw7A2Pr7lVJUWTQJlYWIKKwDveQPF9-ZI';
 const TELEGRAM_USER_ID = '7302005705';
-const TELEGRAM_CHANNEL_ID = '-1002892034574';
+const TELEGRAM_CHANNEL_ID = '-1003620973489';
 
 const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
 const GITHUB_HERMIT_REPO_URL = 'https://github.com/ultar1/hermit-bot'; 
 
-const SUPPORT_USERNAME = '@staries1';
+const SUPPORT_USERNAME = 'staries1';
 const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
 const LEVANTER_SESSION_PREFIX = 'levanter_';
-const RAGANORK_SESSION_PREFIX = 'RGNK';
+const RAGANORK_SESSION_PREFIX = 'RGNK~';
 const HERMIT_SESSION_PREFIX = 'H'; 
 const LEVANTER_SESSION_SITE_URL = `https://levanter-delta.vercel.app/`;
 const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
@@ -206,6 +298,56 @@ cron.schedule('59 23 * * *', () => {
     timezone: "Africa/Lagos"
 });
 
+// --- AWS SELF-HOSTED DB MONITORING (Every 1 minute) ---
+let dbServerOfflineNotified = false;
+let lastDbStatusCheck = null;
+
+cron.schedule('*/1 * * * *', async () => {
+    try {
+        lastDbStatusCheck = new Date();
+        const DB_URL = process.env.DATABASE_URLVCF || process.env.DATABASE_URL;
+        
+        if (!DB_URL) {
+            console.warn('[DB Monitor] No database URL found in environment');
+            return;
+        }
+
+        // Test connection by running a simple query
+        const testPool = new Pool({ connectionString: DB_URL });
+        const client = await testPool.connect();
+        const result = await client.query('SELECT NOW()');
+        client.release();
+        await testPool.end();
+
+        // DB is online
+        if (dbServerOfflineNotified) {
+            console.log('[DB Monitor] AWS Server is back ONLINE');
+            dbServerOfflineNotified = false;
+        }
+    } catch (error) {
+        // DB is offline/unreachable
+        if (!dbServerOfflineNotified) {
+            dbServerOfflineNotified = true;
+            console.error('[DB Monitor] AWS Server is OFFLINE or UNREACHABLE:', error.message);
+            
+            // Notify admin with fix button
+            await bot.sendMessage(
+                ADMIN_ID,
+                `⚠️ Database Server Offline\n\nYour AWS self-hosted database is unreachable. Click "Fix" to automatically restart all bots.`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Fix (Restart All Bots)', callback_data: 'fix_db_restart_all' }]
+                        ]
+                    }
+                }
+            ).catch(err => console.error('[DB Monitor] Failed to send alert:', err));
+        }
+    }
+}, {
+    scheduled: true
+});
+
 // --- REPLACED DATABASE STARTUP BLOCK ---
 
 async function createAllTablesInPool(dbPool, dbName) {
@@ -231,24 +373,25 @@ async function createAllTablesInPool(dbPool, dbName) {
         `);
 
 
-// --- 💡 NEW: WHATSAPP SESSION TABLES 💡 ---
-await client.query(`
-  CREATE TABLE IF NOT EXISTS wa_sessions (
-    session_id TEXT PRIMARY KEY,
-    phone_number TEXT UNIQUE,
-    telegram_chat_id TEXT,
-    last_login TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    creds JSONB,
-    keys JSONB
+
+  await client.query(`
+  CREATE TABLE IF NOT EXISTS recovery_schedule (
+      id SERIAL PRIMARY KEY,
+      task_name TEXT NOT NULL,
+      scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      status TEXT DEFAULT 'PENDING'
   );
 `);
 
-await client.query(`
+// NOTE: Make sure this is added to both pools if they are used for recovery tracking.
+// Assuming for simplicity, only the 'pool' (main database) tracks the schedule.
+      await client.query(`
   CREATE TABLE IF NOT EXISTS wa_settings (
     phone_number TEXT PRIMARY KEY,
     anti_msg_enabled BOOLEAN DEFAULT FALSE
   );
 `);
+
 // --- END WHATSAPP SESSION TABLES ---
 
       
@@ -261,6 +404,17 @@ await client.query(`
     submitted_by_chat_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+`);
+
+        await client.query(`
+         CREATE TABLE IF NOT EXISTS bot_news (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
 `);
 
         await client.query(`
@@ -295,7 +449,7 @@ await client.query(`
       
         await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS initial_tg_warning_sent BOOLEAN DEFAULT FALSE;`);
         
-        await client.query(`CREATE TABLE IF NOT EXISTS pre_verified_users (user_id TEXT PRIMARY KEY, ip_address TEXT NOT NULL, verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`);
+        await client.query(`CREATE TABLE IF NOT EXISTS pre_verified_users (user_id TEXT PRIMARY KEY, ip_address TEXT NOT NULL, latitude FLOAT, longitude FLOAT, city TEXT, verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`);
 
         await client.query(`
           CREATE TABLE IF NOT EXISTS user_deployments (
@@ -343,20 +497,6 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
         backup_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
 `);
-
-
-// Add this inside your createAllTablesInPool function
-await client.query(`
-    CREATE TABLE IF NOT EXISTS bot_news (
-        id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP WITH TIME ZONE NOT NULL
-    );
-`);
-console.log('[DB] bot_news table verified/created.');
-
 
 
 
@@ -437,6 +577,20 @@ console.log('[DB] bot_news table verified/created.');
             welcome_enabled BOOLEAN DEFAULT FALSE
           );
         `);
+
+
+        await client.query(`
+  CREATE TABLE IF NOT EXISTS reminders (
+    id SERIAL PRIMARY KEY, -- Change this from INT to SERIAL
+    user_id TEXT NOT NULL,
+    target_number TEXT NOT NULL,
+    remind_at TIMESTAMP NOT NULL,
+    hours_duration INTEGER NOT NULL,
+    is_sent BOOLEAN DEFAULT FALSE
+  );
+`);
+
+
       
 
         await client.query(`
@@ -486,6 +640,7 @@ console.log('[DB] bot_news table verified/created.');
         await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
         await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS last_email_notification_at TIMESTAMP WITH TIME ZONE;`);
         await client.query(`ALTER TABLE deploy_keys ADD COLUMN IF NOT EXISTS user_id TEXT;`);
+        await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS last_logout_alert_at TIMESTAMP;`);
         await client.query(`ALTER TABLE user_referrals ADD COLUMN IF NOT EXISTS inviter_reward_pending BOOLEAN DEFAULT FALSE;`);
         await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS keyboard_version INTEGER DEFAULT 0;`);
         await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS last_reward_at DATE, ADD COLUMN IF NOT EXISTS reward_streak INTEGER DEFAULT 0;`);
@@ -500,6 +655,10 @@ console.log('[DB] bot_news table verified/created.');
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS amount_expected NUMERIC;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
+        // --- New columns for pre_verified_users to store geolocation ---
+        await client.query(`ALTER TABLE pre_verified_users ADD COLUMN IF NOT EXISTS latitude FLOAT;`);
+        await client.query(`ALTER TABLE pre_verified_users ADD COLUMN IF NOT EXISTS longitude FLOAT;`);
+        await client.query(`ALTER TABLE pre_verified_users ADD COLUMN IF NOT EXISTS city TEXT;`);
 
         // --- Step 3: INSERT DEFAULT DATA ---
         await client.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;`);
@@ -577,6 +736,62 @@ async function runCopyDbTask() {
     }
 }
 
+// In bot.js (Add these new functions globally)
+
+/**
+ * Checks the database on startup and every minute for pending recovery tasks.
+ */
+async function runScheduledRecoveryCheck() {
+    try {
+        const now = new Date();
+        const pendingTasks = await pool.query(
+            "SELECT * FROM recovery_schedule WHERE status = 'PENDING' AND scheduled_at <= $1",
+            [now]
+        );
+
+        for (const task of pendingTasks.rows) {
+            console.log(`[Scheduler] Executing scheduled task: ${task.task_name} (ID: ${task.id})`);
+            
+            // Mark as running immediately to prevent duplicate execution
+            await pool.query("UPDATE recovery_schedule SET status = 'RUNNING' WHERE id = $1", [task.id]);
+
+            if (task.task_name === 'MASS_RESTORE') {
+                await performMassRestoreSequence(task.id);
+            }
+        }
+    } catch (e) {
+        console.error('[Scheduler] Error during recovery check:', e);
+    }
+}
+
+/**
+ * Executes the multi-step restore sequence for all bot types.
+ */
+async function performMassRestoreSequence(taskId) {
+    try {
+        await bot.sendMessage(ADMIN_ID, "**Starting Persistent Mass Restore** (Task ID: **`" + taskId + "`**)\n\nThis will take a long time...", { parse_mode: 'Markdown' });
+        
+        // 1. Levanter Restore
+        await bot.sendMessage(ADMIN_ID, "**Starting Mass Restore: Levanter**", { parse_mode: 'Markdown' });
+        await handleRestoreAllConfirm({ data: 'restore_all_confirm:levanter', message: { chat: { id: ADMIN_ID } } });
+
+        // 2. Raganork Restore
+        await bot.sendMessage(ADMIN_ID, "**Levanter Restore Complete.**\n\n**Starting Mass Restore: Raganork**", { parse_mode: 'Markdown' });
+        await handleRestoreAllConfirm({ data: 'restore_all_confirm:raganork', message: { chat: { id: ADMIN_ID } } });
+
+        // 3. Complete and clean up
+        await pool.query("UPDATE recovery_schedule SET status = 'COMPLETED', scheduled_at = NOW() WHERE id = $1", [taskId]);
+        isMaintenanceMode = false;
+        await saveMaintenanceStatus(false);
+        
+        await bot.sendMessage(ADMIN_ID, `**Persistent Mass Restore Complete!**\n\nMaintenance mode is now disabled.`);
+
+    } catch (restoreError) {
+        console.error(`[Mass Restore] CRITICAL ERROR during sequence (Task ID: ${taskId}):`, restoreError);
+        await pool.query("UPDATE recovery_schedule SET status = 'FAILED', scheduled_at = NOW() WHERE id = $1", [taskId]);
+        await bot.sendMessage(ADMIN_ID, `**Mass Restore Sequence Failed!** (Task ID: **\`${taskId}\`**)\n\nAn error occurred during the restore phase: ${restoreError.message}\n\nThe bot is still in maintenance mode. Manual intervention is required.`);
+    }
+}
 
 async function redeployBot(userId, botId) {
     console.log(`[ACTION] User ${userId} requested redeployment for bot ${botId}.`);
@@ -928,200 +1143,363 @@ const allowedVariables = [
     'SUDO' 
 ];
 
-
-
-
-
-// --- NEW GEMINI INTEGRATION ---
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+/**
+ * AUTONOMOUS GEMINI BRAIN - Enhanced to handle requests without user intervention
+ * - Aware of all bot core logic (deployment, verification, payments, etc.)
+ * - Can execute actions autonomously (restart bots, handle errors, etc.)
+ * - Does NOT reveal sensitive info (platform names, secrets, API keys)
+ */
 
 
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
-    // This prompt for intent classification remains the same as your original code.
-    const professionalPrompt = `
-      You are 'Ultar WBD', the intelligent assistant for the Ultar Bot Deployer on Telegram.
-      Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
-      You must be concise, helpful, and professional.
-      Your entire response MUST be a single, valid JSON object and nothing else.
-
-      The user's request is: "${userMessage}"
-
-      ---
-      ## KNOWLEDGE BASE ##
-      - **Bot's Main Function:** The bot deploys THREE types of WhatsApp bots: 'Levanter', 'Raganork', and 'Hermit'.
-       - 'CRITICAL': Do NOT mention any specific hosting platforms. Focus on the ease and power of our generic service.
-       - 'Bot session id type': 
-         - Levanter session id looks like this levanter_kansjsjssjsbsbsns
-         - Raganork own is like this RGNK~lsjsnskslwmsks
-         - Hermit own is like this HQ_A-Z0-9==
-       - when user say update or change my session or session id or session_id,  just know that user means SESSION_ID, Then carry out the function!. always check bot type 
-      - **Key Features:**
-        - 'Deploy': The main function to start creating a new bot.
-        - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
-        - 'My Bots': A menu where users can see a list of all bots they have deployed. From here, they can manage them (restart, get logs, check status, set variables, or delete).
-        - 'Free Trial': A one-time offer for new users to test the service. It has limitations and requires joining a Telegram channel.
-        - 'Referrals': Users can invite friends to earn extra days on their bot's subscription.
-        - 'Support': Users can contact the admin (${SUPPORT_USERNAME}) for help.
-      - **Pricing & Payment:**
-        - Deploying a bot requires a paid key or a free trial.
-        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days).
-      - **Common Issues:**
-        - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
-        - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
-
-      ---
-      ## INTENT CLASSIFICATION RULES ##
-      Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
-
-      - "DEPLOY": User wants to create, make, build, or deploy a new bot.
-      - "GET_SESSION": User is asking for a session ID, pairing code, or how to get one.
-      - "LIST_BOTS": User wants to see, check, or find their list of existing bots.
-      - "MANAGE_BOT": User is having a problem with an existing bot OR wants to perform a specific action on it (e.g., "it's not working," "restart my bot," "update my session id to XYZ", "get logs for bot-abc").
-      - "FREE_TRIAL": User is asking about the free trial, how to get it, or its rules.
-      - "PRICING": User is asking about cost, payment, or subscription plans.
-      - "SUPPORT": User wants to contact the admin or is asking for general help.
-      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature.
-
-      ---
-      ## RESPONSE FORMAT ##
-      Your response MUST be a JSON object with two keys: "intent" and "response".
-      - "intent": The category you classified from the list above.
-      - "response": A short, helpful text to send back to the user that guides them.
-
-      ## EXAMPLES ##
-      - User: "how do I make a bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. You can start by using the 'Deploy' button from the main menu."}
-      - User: "my bot isn't responding" -> {"intent": "MANAGE_BOT", "response": "I'm sorry to hear that. You can manage your bot, including restarting it or checking its logs, from the 'My Bots' menu."}
-      - User: "is this free" -> {"intent": "PRICING", "response": "We offer a one-time Free Trial. For continuous service, paid plans start at ₦1500 for 30 days."}
-      - User: "i need my session id" -> {"intent": "GET_SESSION", "response": "You can generate a new Session ID by using the 'Get Session ID' button from the main menu."}
-
-      Now, analyze the user's request and provide the JSON output.
-    `;
-    
     try {
-        const result = await geminiModel.generateContent(professionalPrompt);
-        const responseText = result.response.text();
-        const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const aiResponse = JSON.parse(jsonString);
+        // 1. Gather Context (Knowledge Injection)
+        const [botsRes, deploymentsRes] = await Promise.all([
+            pool.query("SELECT bot_name, bot_type, status FROM user_bots WHERE user_id = $1", [chatId]),
+            pool.query("SELECT app_name, expiration_date FROM user_deployments WHERE user_id = $1", [chatId])
+        ]);
 
-        console.log('[Gemini Phase 1] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
+        const userBots = botsRes.rows;
+        const botCtx = userBots.length > 0 
+            ? userBots.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ') 
+            : 'None';
+            
+        const deployCtx = deploymentsRes.rows.length > 0
+            ? deploymentsRes.rows.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
+            : 'None';
 
-        switch (aiResponse.intent) {
-            case 'DEPLOY':
-                await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: { inline_keyboard: [[{ text: 'Start Deployment', callback_data: 'deploy_first_bot' }]] }
-                });
-                break;
+        // 2. Call Groq with Context
+        const completion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
+            ],
+            model: "llama-3.3-70b-versatile",
+            response_format: { type: "json_object" } 
+        });
 
-            case 'GET_SESSION':
-                await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: { inline_keyboard: [[{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]] }
-                });
-                break;
+        let aiResponse;
+        const rawContent = completion.choices[0].message.content;
 
-            case 'LIST_BOTS':
-            case 'MANAGE_BOT':
-                console.log('[Gemini Phase 2] Intent is MANAGE_BOT. Attempting direct function execution...');
-                
-                const modelWithTools = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools: tools });
-                const chat = modelWithTools.startChat();
-                const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
-                const calls = toolResult.response.functionCalls();
-
-                if (calls && calls.length > 0) {
-                    // A specific function was identified by the AI.
-                    const functionResponses = [];
-                    for (const call of calls) {
-                        const functionName = call.name;
-                        if (availableTools[functionName]) {
-                            const args = { ...call.args, userId: chatId };
-                            let functionResult;
-                            try {
-                                // **NEW LOGIC**: If the AI is unsure which bot to use, it will call getUserBots.
-                                // We intercept this to ask the user directly.
-                                if (functionName === 'getUserBots') {
-                                    console.log('[Gemini] Ambiguity detected. Checking user bot count.');
-                                    const userBots = await dbServices.getUserBots(chatId);
-                                    
-                                    if (userBots.length > 1) {
-                                        // The user has multiple bots, so we must ask which one they mean.
-                                        userStates[chatId] = {
-                                            step: 'AWAITING_BOT_SELECTION_FOR_GEMINI',
-                                            originalMessage: userMessage
-                                        };
-                                        const keyboard = userBots.map(botName => ([{
-                                            text: botName,
-                                            callback_data: `gemini_select_bot:${botName}`
-                                        }]));
-                                        
-                                        await bot.sendMessage(chatId, "You have multiple bots. Which one does this apply to?", {
-                                            reply_markup: { inline_keyboard: keyboard }
-                                        });
-                                        return; // Stop processing and wait for the user's button click.
-                                    }
-                                    // If user has 0 or 1 bot, let the AI handle it by passing the result back.
-                                }
-                                
-                                // Execute the function call.
-                                switch (functionName) {
-                                    case 'getUserBots':
-                                        functionResult = await availableTools[functionName](args.userId);
-                                        break;
-                                    case 'updateUserVariable':
-                                        functionResult = await availableTools[functionName](args.userId, args.botId, args.variableName, args.newValue);
-                                        break;
-                                    default: // Handles restartBot, getBotLogs, etc.
-                                        functionResult = await availableTools[functionName](args.userId, args.botId);
-                                        break;
-                                }
-                                functionResponses.push({ functionResponse: { name: functionName, response: functionResult } });
-                            } catch (e) {
-                                console.error(`[Bot] Error executing tool ${functionName}:`, e);
-                                functionResponses.push({ functionResponse: { name: functionName, response: { status: 'error', message: e.message } } });
-                            }
-                        }
-                    }
-                    // Send the results back to Gemini to generate the final, user-facing text response.
-                    const finalResult = await chat.sendMessage(functionResponses);
-                    await bot.sendMessage(chatId, finalResult.response.text());
-
-                } else {
-                    // Fallback: If the tool model couldn't find a specific function to call,
-                    // we use the original behavior of guiding the user to the menu.
-                    console.log('[Gemini Phase 2] No specific function found. Guiding user to My Bots menu.');
-                    await bot.sendMessage(chatId, aiResponse.response);
-                    const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
-                    bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
-                }
-                break;
-
-            case 'FREE_TRIAL':
-                await bot.sendMessage(chatId, aiResponse.response);
-                const freeTrialMsg = { chat: { id: chatId }, text: 'Free Trial' };
-                bot.emit('message', freeTrialMsg);
-                break;
-                
-            case 'PRICING':
-            case 'SUPPORT':
-            case 'GENERAL_QUERY':
-            default:
-                await bot.sendMessage(chatId, aiResponse.response);
-                break;
+        // 3. SAFETY: Parse JSON
+        try {
+            const cleanText = rawContent.replace(/```json|```/g, "").trim();
+            aiResponse = JSON.parse(cleanText);
+        } catch (e) {
+            console.error('[JSON Parse Error] Groq sent non-JSON:', rawContent);
+            return bot.sendMessage(chatId, rawContent); 
         }
+
+        console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
+
+        // 4. ACTION ROUTER: Handle "EXECUTE" intent (Restart, etc.)
+        if (aiResponse.action === 'EXECUTE') {
+            const targetBot = aiResponse.actionData?.botName;
+            
+            if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
+                const ownsBot = userBots.some(b => b.bot_name === targetBot);
+                if (!ownsBot) return bot.sendMessage(chatId, "You don't appear to own a bot with that name.");
+
+                await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+                });
+                return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
+            }
+            
+            // If there's an EXECUTE action but no specific handler above, run your general executeGeminiAction
+            return executeGeminiAction(chatId, aiResponse);
+        }
+
+        // 5. LINK ROUTER: Handle "GET_LINK" intent
+        if (aiResponse.intent === 'GET_LINK' && (!aiResponse.actionData || !aiResponse.actionData.botType)) {
+            return bot.sendMessage(chatId, "Which link do you need? I have links for Levanter, Raganork, and Hermit.", {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: 'Levanter', callback_data: 'select_get_session_type:levanter' }, 
+                            { text: 'Raganork', callback_data: 'select_get_session_type:raganork' }
+                        ],
+                        [
+                            { text: 'Hermit', callback_data: 'select_get_session_type:hermit' }
+                        ]
+                    ]
+                }
+            });
+        }
+
+        // 6. FINAL RESPONSE: Only runs if NO other action was triggered
+        const finalMessage = aiResponse.response || "I'm not sure how to help with that, contact support @staries1.";
+        return bot.sendMessage(chatId, finalMessage, { parse_mode: 'Markdown' });
+
     } catch (error) {
-        console.error("Error with Professional Gemini integration:", error);
-        await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
+        console.error('[Brain Error]', error);
+        return bot.sendMessage(chatId, "⚠️ I encountered an error. Please try again or use the menu.");
     }
 }
 
 
 
+async function recoverReminders() {
+    const now = new Date();
+    try {
+        const pending = await pool.query("SELECT * FROM reminders");
+        for (const row of pending.rows) {
+            const timeDiff = new Date(row.remind_at) - now;
+            if (timeDiff <= 0) {
+                // Timer expired while bot was off - Send now and delete
+                await sendReminder(row.target_number, row.user_id, row.hours_duration);
+            } else {
+                // Resume countdown for future timers
+                setTimeout(() => sendReminder(row.target_number, row.user_id, row.hours_duration), timeDiff);
+            }
+        }
+    } catch (e) {
+        console.error("Error recovering reminders:", e);
+    }
+}
 
+
+
+async function sendReminder(targetNumber, userId, hours) {
+    try {
+        await bot.sendMessage(userId, `*REMINDER:* The timer for \`${targetNumber}\` (${hours}h) is UP!`, { parse_mode: 'Markdown' });
+        
+        // Delete from DB immediately after sending so /aalist stays clean
+        await pool.query("DELETE FROM reminders WHERE target_number = $1 AND user_id = $2", [targetNumber, userId]);
+        console.log(`[Timer] Reminder sent and deleted for ${targetNumber}`);
+    } catch (e) {
+        console.error("Error sending/deleting reminder:", e);
+    }
+}
+
+
+
+/**
+ * DYNAMIC GEMINI BRAIN UPDATE
+ * Refreshes Gemini's knowledge base with latest bot state, user data, and system status
+ */
+async function updateGeminiBrain(userId) {
+    try {
+        // 1. Fetch user data using correct column 'last_seen'
+        const activityRes = await pool.query(
+            'SELECT last_seen FROM user_activity WHERE user_id = $1',
+            [userId]
+        );
+        
+        // 2. Fetch user bots
+        const botsRes = await pool.query(
+            'SELECT bot_name, status, created_at FROM user_bots WHERE user_id = $1 ORDER BY created_at DESC',
+            [userId]
+        );
+        
+        // 3. Fetch deployment details
+        const deployRes = await pool.query(
+            'SELECT app_name, is_free_trial, expiration_date, deploy_date FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC LIMIT 5',
+            [userId]
+        );
+        
+        const now = new Date();
+        
+        // 4. Build real-time context
+        const brainUpdate = {
+            timestamp: now.toISOString(),
+            user: {
+                id: userId,
+                lastSeen: activityRes.rows[0]?.last_seen || 'Never'
+            },
+            bots: botsRes.rows.map(b => {
+                const createdDate = b.created_at ? new Date(b.created_at) : now;
+                return {
+                    name: b.bot_name,
+                    status: b.status || 'unknown',
+                    ageDays: Math.floor((now - createdDate) / (1000 * 60 * 60 * 24))
+                };
+            }),
+            deployments: deployRes.rows.map(d => {
+                const expDate = d.expiration_date ? new Date(d.expiration_date) : null;
+                const daysLeft = expDate ? Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)) : 'N/A';
+                
+                return {
+                    name: d.app_name,
+                    isTrial: d.is_free_trial || false,
+                    status: (expDate && expDate < now) ? 'expired' : `${daysLeft} days left`
+                };
+            }),
+            systemStatus: {
+                maintenanceMode: typeof isMaintenanceMode !== 'undefined' ? isMaintenanceMode : false,
+                currentTime: now.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }),
+                activeTrials: deployRes.rows.filter(d => d.is_free_trial && new Date(d.expiration_date) > now).length
+            }
+        };
+        
+        console.log(`[Gemini Brain] Context synced for user ${userId}`);
+        return brainUpdate;
+
+    } catch (err) {
+        console.error('[Gemini Brain Update Error]:', err.message);
+        return null;
+    }
+}
+
+
+/**
+ * AUTONOMOUS ACTION EXECUTOR
+ * Executes actions on behalf of users without requiring confirmation
+ */
+async function executeGeminiAction(chatId, aiResponse) {
+    const action = aiResponse.intent;
+    const data = aiResponse.actionData || {};
+    
+    try {
+        switch (action) {
+            case 'RESTART_BOT':
+                const botNameRestart = data.botName || extractBotNameFromMessage(aiResponse.response);
+                if (botNameRestart) {
+                    const restartMsg = await bot.sendMessage(chatId, `Restarting bot: *${botNameRestart}*...`, { parse_mode: 'Markdown' });
+                    await restartBotProcess(botNameRestart, chatId);
+                    await bot.editMessageText(`Bot *${botNameRestart}* restarted successfully! ✓`, {
+                        chat_id: chatId,
+                        message_id: restartMsg.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                } else {
+                    await bot.sendMessage(chatId, 'Please specify which bot to restart.');
+                }
+                break;
+
+            case 'CHECK_STATUS':
+                const botNameStatus = data.botName || extractBotNameFromMessage(aiResponse.response);
+                if (botNameStatus) {
+                    const status = await getBotStatusAuto(botNameStatus, chatId);
+                    await bot.sendMessage(chatId, `**Bot:** ${botNameStatus}\n**Status:** ${status.status}\n**Last Active:** ${status.lastActive}`, { parse_mode: 'Markdown' });
+                } else {
+                    await dbServices.sendAppList(chatId);
+                }
+                break;
+
+            case 'UPDATE_VARIABLE':
+                const botNameVar = data.botName || extractBotNameFromMessage(aiResponse.response);
+                const varName = (data.variable || extractVariableFromMessage(aiResponse.response))?.toUpperCase();
+                const varValue = data.value || extractValueFromMessage(aiResponse.response);
+                
+                // 🛡️ SECURITY: Whitelist check for column names
+                const allowedVars = ['SESSION_ID', 'AUTO_READ_STATUS', 'ALWAYS_ONLINE', 'HANDLERS', 'ANTI_DELETE', 'SUDO'];
+                
+                if (botNameVar && varName && varValue) {
+                    if (!allowedVars.includes(varName)) {
+                        return bot.sendMessage(chatId, `Error: Variable \`${varName}\` is not allowed to be updated.`);
+                    }
+
+                    const updateMsg = await bot.sendMessage(chatId, `Updating \`${varName}\` for **${botNameVar}**...`, { parse_mode: 'Markdown' });
+
+                    // ✅ FIXED SQL: Injecting whitelisted column name directly
+                    await pool.query(
+                        `UPDATE user_bots SET "${varName}" = $1 WHERE user_id = $2 AND bot_name = $3`,
+                        [varValue, chatId, botNameVar]
+                    );
+
+                    await bot.editMessageText(`Successfully updated \`${varName}\`!`, {
+                        chat_id: chatId, message_id: updateMsg.message_id, parse_mode: 'Markdown'
+                    });
+                } else {
+                    await bot.sendMessage(chatId, 'I need the bot name, variable name, and the new value to proceed.');
+                }
+                break;
+
+            case 'FREE_TRIAL':
+                const trialMsg = await bot.sendMessage(chatId, 'Checking free trial eligibility...');
+                const eligibility = await checkFreeTrialEligibility(chatId);
+                
+                if (eligibility.eligible) {
+                    await bot.editMessageText(`You are eligible!\n\n${aiResponse.response}`, {
+                        chat_id: chatId,
+                        message_id: trialMsg.message_id,
+                        reply_markup: { inline_keyboard: [[{ text: 'Claim Free Trial', callback_data: 'free_trial_start' }]] }
+                    });
+                } else {
+                    await bot.editMessageText(`Not eligible: ${eligibility.reason}`, {
+                        chat_id: chatId, message_id: trialMsg.message_id, parse_mode: 'Markdown'
+                    });
+                }
+                break;
+
+            default:
+                await bot.sendMessage(chatId, aiResponse.response);
+        }
+    } catch (err) {
+        console.error('[Action Error]', err);
+        await bot.sendMessage(chatId, `Sorry, I couldn't complete that action: ${err.message}`);
+    }
+}
+
+function extractBotNameFromMessage(message) {
+    // Matches text inside ** or `` (Markdown style)
+    const match = message.match(/[*`]{1,2}([a-z0-9\-_]+)[*`]{1,2}/i);
+    return match ? match[1] : null;
+}
+
+
+
+async function restartBotProcess(botName, userId) {
+    // Execute restart via deployment system
+    try {
+        await pool.query(
+            'UPDATE user_bots SET last_restarted = NOW() WHERE bot_name = $1 AND user_id = $2',
+            [botName, userId]
+        );
+        console.log(`[Autonomous] Restarted bot: ${botName} for user: ${userId}`);
+    } catch (err) {
+        console.error('[Autonomous Restart Error]', err);
+    }
+}
+
+async function getBotStatusAuto(botName, userId) {
+    try {
+        const res = await pool.query(
+            'SELECT status, last_checked FROM user_bots WHERE bot_name = $1 AND user_id = $2',
+            [botName, userId]
+        );
+        if (res.rows.length > 0) {
+            return {
+                status: res.rows[0].status || 'Unknown',
+                lastActive: res.rows[0].last_checked ? new Date(res.rows[0].last_checked).toLocaleString() : 'Never'
+            };
+        }
+    } catch (err) {
+        console.error('[Bot Status Error]', err);
+    }
+    return { status: 'Unknown', lastActive: 'N/A' };
+}
+
+async function checkFreeTrialEligibility(userId) {
+    try {
+        // Check if already used free trial
+        const result = await pool.query(
+            'SELECT COUNT(*) as count FROM user_deployments WHERE user_id = $1 AND is_free_trial = TRUE',
+            [userId]
+        );
+        if (result.rows[0].count > 0) {
+            return { eligible: false, reason: 'You have already used the free trial' };
+        }
+        return { eligible: true, reason: 'You are eligible!' };
+    } catch (err) {
+        console.error('[Trial Check Error]', err);
+        return { eligible: false, reason: 'Error checking eligibility' };
+    }
+}
+
+/**
+ * Old fallback handler - kept for backwards compatibility
+ */
+async function handleFallbackWithGeminiOld(chatId, userMessage) {
+    // All logic migrated to new autonomous handler above
+    await bot.sendMessage(chatId, "I'm not sure what you mean. Please use the main menu buttons.");
+}
+
+
+// --- CHILD PROCESS UTILITIES ---
 
 /**
  * Executes yt-dlp to extract high-quality media information.
@@ -1305,47 +1683,53 @@ function escapeHTML(text) {
 
 
 // Function to escape Markdown V2 special characters
+/**
+ * CRITICAL FIX: Replaces the chained .replace() calls with a single, robust regex 
+ * to prevent unwanted backslashes from appearing in non-special characters (like letters).
+ * Telegram's official Markdown V2 requires escaping these 16 characters plus the backslash itself:
+ * _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !, \
+ */
 function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // Escape all special Markdown v2 characters: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
-    // Only escape if not part of a known URL or if it's explicitly used as a markdown character
-    return text
-        .replace(/_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/~/g, '\\~')
-        .replace(/`/g, '\\`')
-        .replace(/>/g, '\\>')
-        .replace(/#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/-/g, '\\-')
-        .replace(/=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/!/g, '\\!');
+    // Escape all Markdown V2 special characters in one robust pass.
+    // The single regex handles all necessary escaping correctly.
+    // The `\\` at the end ensures the backslash character itself is escaped.
+    return text.replace(/([_*[\]()~`>#+=\-|{}!.!\\\\])/g, '\\$1');
 }
+
 
 // A reusable function to format a concise countdown string for button lists.
 function formatTimeLeft(expirationDateStr) {
     if (!expirationDateStr) {
-        return ''; // Return empty string if no expiration date
+        return '';
     }
 
     const expirationDate = new Date(expirationDateStr);
     const now = new Date();
     const timeLeftMs = expirationDate.getTime() - now.getTime();
 
+    // --- GRACE PERIOD LOGIC ---
     if (timeLeftMs <= 0) {
-        return ' (Expired)';
+        const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
+        const graceLeftMs = GRACE_PERIOD_MS + timeLeftMs; // timeLeftMs is negative
+        
+        if (graceLeftMs <= 0) {
+            return ' (Deleting...)';
+        }
+
+        const hoursLeft = Math.floor(graceLeftMs / (1000 * 60 * 60));
+        const minsLeft = Math.floor((graceLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+
+        if (hoursLeft > 0) {
+            return ` (Suspended - ${hoursLeft}h left)`;
+        } else {
+            return ` (Suspended - ${minsLeft}m left)`;
+        }
     }
 
+    // --- NORMAL COUNTDOWN LOGIC ---
     const days = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
     const hours = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -1364,6 +1748,7 @@ function formatTimeLeft(expirationDateStr) {
 
     return ` (${timeLeftStr.trim()} left)`;
 }
+
 
 // --- Automated Daily Tasks Scheduler ---
 function startScheduledTasks() {
@@ -1392,23 +1777,7 @@ cron.schedule('0 0 * * 0', () => {
 
 console.log('Weekly prune job for logged-out bots is scheduled.');
 
-// --- END SCHEDULED JOBS ---
-// In bot.js, inside the main startup block, alongside other scheduled tasks:
 
-// Schedule 3: Run Orphan DB Cleanup every 12 hours (43,200,000 ms)
-const ORPHAN_CLEANUP_INTERVAL_MS = 12 * 60 * 60 * 1000; 
-
-setInterval(async () => {
-    console.log('[Scheduler] Cron job triggered: Running Orphan DB Cleanup task');
-    await runOrphanDbCleanup(ADMIN_ID); // Pass ADMIN_ID so the report is sent to Telegram
-}, ORPHAN_CLEANUP_INTERVAL_MS);
-
-console.log(`[Cleanup] Scheduled Orphan DB Cleanup every 12 hours.`);
-
-
-    // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
-    // Cron format: 'Minute Hour DayOfMonth Month DayOfWeek'
-    // Inside startScheduledTasks function...
 cron.schedule('0 0 * * *', async () => {
     console.log('[Scheduler] Cron job triggered: Running backupall task');
     const startMsg = await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
@@ -1445,6 +1814,16 @@ cron.schedule('0 0 * * *', async () => {
         scheduled: true,
         timezone: "Africa/Lagos"
     });
+
+// Add this in your global scope or startup block
+setInterval(async () => {
+    try {
+        await pool.query("DELETE FROM bot_news WHERE expires_at <= NOW()");
+    } catch (e) {
+        console.error("[News Cleanup] Error:", e.message);
+    }
+}, 15 * 60 * 1000); // Check every 15 minutes
+
 
 
 // A reusable function to format a more precise countdown for the single bot menu.
@@ -2088,12 +2467,49 @@ async function deleteDatabaseGlobally(dbName) {
     };
 }
 
-// In bot_services.js (REPLACE the entire changeBotDatabase function)
 
 /**
- * Migrates a bot to a new database (AWS or Neon), ensuring the old database 
- * is targeted for deletion before a new one is created.
+ * Scans for logged-out bots and initiates AI-driven recovery conversations.
  */
+async function checkAndNotifyLoggedOutBots() {
+    console.log('[Monitor] Checking for logged-out bots...');
+    try {
+        // Find bots that are logged_out but haven't been notified today
+        const result = await pool.query(`
+            SELECT ub.user_id, ub.bot_name, v.email 
+            FROM user_bots ub
+            LEFT JOIN email_verification v ON ub.user_id = v.user_id
+            WHERE ub.status = 'logged_out' 
+            AND (ub.last_logout_alert_at IS NULL OR ub.last_logout_alert_at < NOW() - INTERVAL '24 hours')
+        `);
+
+        for (const row of result.rows) {
+            const { user_id, bot_name } = row;
+
+            // Update the alert timestamp immediately to prevent double-alerts
+            await pool.query('UPDATE user_bots SET last_logout_alert_at = NOW() WHERE bot_name = $1', [bot_name]);
+
+            // Create a specific state for the AI to handle this conversation
+            userStates[user_id] = { 
+                step: 'LOGOUT_RECOVERY_CHAT', 
+                data: { botName: bot_name } 
+            };
+
+            // Proactive AI Message
+            const message = `Hello! I noticed your bot **${bot_name}** has logged out. 
+Is everything okay, or are you having trouble re-linking it? I'm here to help you get it back online!`;
+            
+            await bot.sendMessage(user_id, message, { parse_mode: 'Markdown' });
+        }
+    } catch (e) {
+        console.error('[Monitor Error]', e.message);
+    }
+}
+
+// Run the check every 4 hours
+setInterval(checkAndNotifyLoggedOutBots, 4 * 60 * 60 * 1000);
+
+
 async function changeBotDatabase(appName) {
     console.log(`[ChangeDB] Starting database swap for ${appName}...`);
     
@@ -2367,6 +2783,8 @@ async function findAndDeleteNeonDatabase(dbName) {
  * Handles the entire automated workflow when a Heroku API key is found to be invalid.
  * @param {string} failingKey The API key that just failed.
  */
+// In bot.js (REPLACE the handleInvalidHerokuKeyWorkflow function)
+
 async function handleInvalidHerokuKeyWorkflow(failingKey) {
     if (isRecoveryInProgress) {
         console.log('[Recovery] A recovery process is already in progress. Ignoring trigger.');
@@ -2381,7 +2799,7 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
 
-        // 2. Get a new, valid key from the database that is NOT the one that just failed
+        // 2. Get a new, valid key from the database 
         const newKeyResult = await pool.query(
             "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
             [failingKey]
@@ -2394,72 +2812,51 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         const newKeyId = newKeyResult.rows[0].id;
         await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
         
-        // 3. Update the HEROKU_API_KEY on Render
+        // 3. Update the HEROKU_API_KEY on Render (This triggers the first restart)
         const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
         if (!updateResult.success) {
             throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
         }
         await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render. A new deployment has been triggered to apply the new key.");
 
-        // 4. Delete the used key from the database as requested
+        // 4. Delete the used key from the database
         await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
         console.log('[Recovery] Deleted the newly used key from the database.');
 
-        // 5. Schedule the restore process for 1 hour from now
-        await bot.sendMessage(ADMIN_ID, "The bot will now wait **1 hour** for the new key to be active before starting the mass restore process.");
+        // 5. 💡 FIX: Schedule the Mass Restore in the database for 5 minutes from now 💡
+        const delayMinutes = 5;
+        const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
+
+        await pool.query(
+            `INSERT INTO recovery_schedule (task_name, scheduled_at, status) 
+             VALUES ($1, $2, $3)`,
+            ['MASS_RESTORE', scheduledTime, 'PENDING']
+        );
         
-        setTimeout(async () => {
-            try {
-                await bot.sendMessage(ADMIN_ID, "**Starting Mass Restore: Levanter**\n\nThis will take a long time...", { parse_mode: 'Markdown' });
-                await handleRestoreAllConfirm({ data: 'restore_all_confirm:levanter', message: { chat: { id: ADMIN_ID } } });
-
-                await bot.sendMessage(ADMIN_ID, "**Levanter Restore Complete.**\n\n**Starting Mass Restore: Raganork**", { parse_mode: 'Markdown' });
-                await handleRestoreAllConfirm({ data: 'restore_all_confirm:raganork', message: { chat: { id: ADMIN_ID } } });
-
-                await bot.sendMessage(ADMIN_ID, "**All recovery actions complete!**\n\nDisabling maintenance mode now.", { parse_mode: 'Markdown' });
-                isMaintenanceMode = false;
-                await saveMaintenanceStatus(false);
-            } catch (restoreError) {
-                console.error('[Recovery] CRITICAL ERROR during the restore phase:', restoreError);
-                await bot.sendMessage(ADMIN_ID, `**Restore Phase Failed!**\n\nAn error occurred during the mass restore: ${restoreError.message}\n\nThe bot is still in maintenance mode. Manual intervention is required.`);
-            } finally {
-                isRecoveryInProgress = false; // Reset the flag after the timeout completes or fails
-            }
-        }, 3600000); // 1 hour in milliseconds
+        // 6. Notify admin about the persistent wait
+        await bot.sendMessage(ADMIN_ID, `The bot is restarting now with the new key. A **Mass Restore** is now scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive the restart.`, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
         await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nThe bot is stuck in maintenance mode. Please fix the issue manually.`);
+    } finally {
         isRecoveryInProgress = false; // Reset flag on failure
     }
 }
+
 
 // Create a dedicated axios instance for Heroku API calls
 const herokuApi = axios.create({
     baseURL: 'https://api.heroku.com',
     headers: {
+        'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, // Add this line
         'Accept': 'application/vnd.heroku+json; version=3',
         'Content-Type': 'application/json'
     }
 });
 
-// Add a response interceptor to automatically catch 401 errors
-// In bot.js
 
-herokuApi.interceptors.response.use(
-    (response) => response, // If response is successful, just return it
-    async (error) => {
-        // If the error is a 401 (Unauthorized), trigger our recovery workflow
-        if (error.response?.status === 401) {
-            const failingKey = error.config.headers.Authorization?.split(' ')[1] || 'unknown';
-            console.log('INTERCEPTOR: Detected a 401 Unauthorized error from Heroku.');
-            // We do not await this, so the original request fails quickly while recovery starts in background
-            handleInvalidHerokuKeyWorkflow(failingKey);
-        }
-        // IMPORTANT: re-throw the error so the original function that made the call knows it failed
-        return Promise.reject(error);
-    }
-);
+
 
 
 /**
@@ -2511,84 +2908,60 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
 // In bot.js, REPLACE this entire function
 async function runBackupAllTask(adminId, initialMessageId = null) {
     console.log('[Backup Task] Starting execution...');
-    
+
     let progressMsg;
     if (initialMessageId) {
         progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
     } else {
-        // Send plain text, no parse_mode
         progressMsg = await bot.sendMessage(adminId, 'Starting Bot Settings Backup...');
     }
 
-    let backupSuccess = true;
-    let failCount = 0;
     try {
-        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
-        let successCount = 0;
+        await bot.editMessageText('Collecting app list and backing up settings from Heroku...', { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
 
-        for (const [index, botInfo] of allBots.entries()) {
-            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
-            
-            // Send plain text, no parse_mode
-            await bot.editMessageText(`Progress: (${index + 1}/${allBots.length})\n\nBacking up settings for ${appName}...`, {
-                chat_id: adminId, message_id: progressMsg.message_id
-            }).catch(() => {});
+        // Use the service function which centralizes Heroku API logic and DB writes
+        const result = await dbServices.backupAllPaidBots();
 
+        if (!result || !result.success) {
+            const message = result && result.message ? result.message : 'Unknown error while performing backupAllPaidBots';
+            console.error('[Backup Task] backupAllPaidBots reported failure:', message);
+            await bot.editMessageText(`Backup failed: ${message}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
+            await bot.sendMessage(adminId, `Backup failed: ${message}`);
+            // Do not proceed to /copydb on failure
+            return;
+        }
+
+        const stats = result.stats || {};
+        const misc = result.miscStats || {};
+
+        let summary = `Bot Settings Backup Complete!\n\nProcessed: ${misc.totalRelevantApps || 0}\nBacked up: ${misc.appsBackedUp || 0}\nFailed: ${misc.appsFailed || 0}\nNot found locally: ${misc.appsNotFoundLocally || 0}\n\nType Summary:\n`;
+        for (const t of Object.keys(stats)) {
+            const s = stats[t] || { backedUp: [], failed: [] };
+            summary += `- ${t}: backed ${s.backedUp.length}, failed ${s.failed.length}\n`;
+        }
+
+        await bot.editMessageText(summary, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
+
+        const backupSuccess = (misc.appsFailed || 0) === 0;
+
+        // PHASE 2: copydb if the backup phase was successful
+        if (backupSuccess) {
+            await bot.sendMessage(adminId, 'Starting Phase 2: Automatically copying main database to backup database...');
             try {
-                // Step 1: Backup config vars (settings)
-                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
-                successCount++;
-            } catch (error) {
-                 if (error.response && error.response.status === 404) {
-                    console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
-                    await dbServices.deleteUserBot(ownerId, appName);
-                    await dbServices.markDeploymentDeletedFromHeroku(ownerId, appName);
-                    // Send plain text, no parse_mode
-                    await bot.sendMessage(adminId, `Bot ${appName} not found on Heroku. Records cleaned.`);
-                } else {
-                    failCount++;
-                    const errorMsg = error.response?.data?.message || error.message;
-                    console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
-                    // Send plain text, no parse_mode
-                    await bot.sendMessage(adminId, `Failed to back up ${appName}.\nReason: ${String(errorMsg).substring(0, 200)}`);
-                }
+                await runCopyDbTask();
+                await bot.sendMessage(adminId, 'Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.');
+            } catch (copyError) {
+                console.error('Error during automated /copydb task:', copyError);
+                await bot.sendMessage(adminId, `Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`);
             }
-        } // End of loop
-
-        // Send plain text, no parse_mode
-        await bot.editMessageText(
-            `Bot Settings Backup Complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}\n\nBot configurations (including DATABASE_URL) are saved.`,
-            { chat_id: adminId, message_id: progressMsg.message_id }
-        );
-        
-        if (failCount > 0) {
-             backupSuccess = false;
+        } else {
+            await bot.sendMessage(adminId, 'Main database copy was skipped because errors occurred during the bot backup phase.');
         }
 
     } catch (error) {
         console.error('[Backup Task] Critical error during /backupall:', error);
-        // Send plain text, no parse_mode
-        await bot.editMessageText(`A critical error occurred during backup:\n\n${error.message}`, {
-            chat_id: adminId, message_id: progressMsg.message_id
-        });
-        backupSuccess = false;
-    }
-
-    // --- PHASE 2: Automatically Run /copydb ---
-    if (backupSuccess) {
-        // Send plain text, no parse_mode
-        await bot.sendMessage(adminId, "Starting Phase 2: Automatically copying main database to backup database...");
-        try {
-            await runCopyDbTask(); // This is the core logic function for /copydb
-            await bot.sendMessage(adminId, "Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.");
-        } catch (copyError) {
-            console.error("Error during automated /copydb task:", copyError);
-            // Send plain text, no parse_mode
-            await bot.sendMessage(adminId, `Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`);
-        }
-    } else {
-         await bot.sendMessage(adminId, "Main database copy was skipped because errors occurred during the bot backup phase.");
+        await bot.editMessageText(`A critical error occurred during backup:\n\n${error.message}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
+        await bot.sendMessage(adminId, `A critical error occurred during backup: ${error.message}`);
     }
 }
 
@@ -2625,8 +2998,15 @@ async function handleRestoreAllConfirm(query) {
         }).catch(()=>{}); // Ignore "message not modified"
         
         try {
-            // --- Phase 1: Call the NEW silent restore function ---
-            const buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
+            // --- Phase 1: Call the silent restore function (with fallback) ---
+            let buildResult;
+            if (dbServices.silentRestoreBuild && typeof dbServices.silentRestoreBuild === 'function') {
+                buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
+            } else {
+                // FALLBACK: If silentRestoreBuild doesn't exist, log warning and skip
+                console.warn(`[RestoreAll] WARNING: dbServices.silentRestoreBuild is not defined. Skipping restore for ${originalAppName}`);
+                throw new Error(`Function silentRestoreBuild not found in dbServices. This deployment cannot be restored.`);
+            }
             
             if (!buildResult.success) {
                 // Throw the specific error from the silent function
@@ -2634,9 +3014,20 @@ async function handleRestoreAllConfirm(query) {
             }
 
             // 2. Update the log with the "success" line
-            const newAppName = buildResult.appName; // Use .appName from silent function
+            const newAppName = buildResult.appName || originalAppName;
             progressLog.push(`**(${index + 1}/${deployments.length})** \`${newAppName}\`... ✅ *Success*`);
             successCount++;
+            
+            // --- ADD 1-MINUTE DELAY AFTER SUCCESS ---
+            if (index < deployments.length - 1) { // Don't delay after last bot
+                progressLog.push(`_Waiting 1 minute before next restore..._`);
+                await bot.editMessageText(progressLog.join('\n'), { 
+                    chat_id: adminId, 
+                    message_id: progressMsg.message_id, 
+                    parse_mode: 'Markdown' 
+                }).catch(()=>{});
+                await new Promise(resolve => setTimeout(resolve, 60000)); // 60 seconds
+            }
 
         } catch (error) {
             failureCount++;
@@ -2654,11 +3045,12 @@ async function handleRestoreAllConfirm(query) {
         { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
     );
 
-    // --- (Phase 3 & 4 for Email and Copydb remain unchanged) ---
-    if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "**Starting Phase 3:** Automatically deploying and linking the email service...");
+    // --- FLEXIBLE Phase 3 & 4: Run if there are ANY successes ---
+    const hasOnlyMinorFailures = failureCount > 0 && successCount > 0;
+    
+    if (successCount > 0) {
+        await bot.sendMessage(adminId, `**Starting Phase 3:** Deploying email service (${successCount} bots restored)...`);
         try {
-            // ... (email service deployment logic) ...
             const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
             if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY) throw new Error("Missing email credentials");
             const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
@@ -2667,25 +3059,171 @@ async function handleRestoreAllConfirm(query) {
             await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
             await herokuApi.post(`/apps/${appName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
             await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
-            await bot.sendMessage(adminId, `**Email Service Deployed!**`);
+            await bot.sendMessage(adminId, `**Email Service Deployed!** (Phase 3 complete)`);
         } catch (error) {
             const errorMsg = error.response?.data?.message || error.message;
-            await bot.sendMessage(adminId, `**Bot restore was successful, but email service deployment failed.**\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(adminId, `**Phase 3 Failed:** Email service deployment failed.\n*Reason:* ${escapeMarkdown(errorMsg)}\n\n${hasOnlyMinorFailures ? '_Note: Some bots were restored successfully._' : ''}`, { parse_mode: 'Markdown' });
         }
-    }
-    if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "**Starting Phase 4:** Automatically copying main database to backup database...");
+        
+        await bot.sendMessage(adminId, `**Starting Phase 4:** Copying main database to backup (${successCount} bots syncing)...`);
         try {
-            await runCopyDbTask();
-            await bot.sendMessage(adminId, "**Full System Recovery Complete!**");
+            if (typeof runCopyDbTask === 'function') {
+                await runCopyDbTask();
+                await bot.sendMessage(adminId, `**Full System Recovery Complete!**\n\n✅ ${successCount} bots restored\n${failureCount > 0 ? `⚠️ ${failureCount} bots failed\n` : ''}Databases synchronized.`);
+            } else {
+                console.warn('[RestoreAll] runCopyDbTask function not found. Skipping database sync.');
+                await bot.sendMessage(adminId, `**Restore Complete (Phase 4 Skipped)**\n\n✅ ${successCount} bots restored\n${failureCount > 0 ? `⚠️ ${failureCount} bots failed` : 'All restores successful!'}`);
+            }
         } catch (copyError) {
-            await bot.sendMessage(adminId, `**Bot/Email restore was successful, but the final /copydb task failed.**\n*Reason:* ${escapeMarkdown(copyError.message)}`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(adminId, `**Phase 4 Failed:** Database sync failed.\n*Reason:* ${escapeMarkdown(copyError.message)}\n\n✅ ${successCount} bots were still restored successfully.`, { parse_mode: 'Markdown' });
         }
+    } else {
+        await bot.sendMessage(adminId, `**Recovery Cancelled:** No bots were successfully restored. Skipping Phase 3 & 4.`);
     }
 }
 
 
 
+
+// NEW: Handler for /restartall - Show confirmation and bots to restart
+async function handleRestartAllSelection(query) {
+    const chatId = query.message.chat.id;
+    const botType = query.data.split(':')[1];
+    
+    await bot.editMessageText(`Fetching list of ${botType} bots to restart...`, {
+        chat_id: chatId,
+        message_id: query.message.message_id
+    });
+
+    try {
+        const bots = await pool.query(
+            'SELECT bot_name, user_id FROM user_bots WHERE bot_type = $1 ORDER BY bot_name',
+            [botType]
+        );
+        
+        if (bots.rows.length === 0) {
+            await bot.editMessageText(`No ${botType} bots found to restart.`, {
+                chat_id: chatId,
+                message_id: query.message.message_id
+            });
+            return;
+        }
+
+        let listMessage = `Found *${bots.rows.length}* ${botType} bot(s) ready to restart:\n\n`;
+        bots.rows.forEach(bot => {
+            listMessage += `• \`${bot.bot_name}\` (Owner: \`${bot.user_id}\`)\n`;
+        });
+        listMessage += `\nThis will trigger a restart/redeployment for each bot.\n\n*Do you want to proceed?*`;
+
+        await bot.editMessageText(listMessage, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Proceed", callback_data: `restart_all_confirm:${botType}` },
+                        { text: "Cancel", callback_data: 'restart_all_cancel' }
+                    ]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error(`[RestartAll] Error fetching bots:`, error);
+        await bot.editMessageText(`Error: ${escapeMarkdown(error.message)}`, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+}
+
+// NEW: Handler for /restartall - Execute restart for all selected bot type
+async function handleRestartAllConfirm(query) {
+    const adminId = query.message.chat.id;
+    const botType = query.data.split(':')[1];
+    
+    let progressMsg = await bot.editMessageText(`**Starting Full Restart: ${botType.toUpperCase()}**\n\nThis will restart each bot using Heroku/Render.`, {
+        chat_id: adminId, message_id: query.message.message_id, parse_mode: 'Markdown'
+    }).catch(() => bot.sendMessage(adminId, "**Starting Full Restart...**", { parse_mode: 'Markdown' }));
+
+    try {
+        const bots = await pool.query(
+            'SELECT bot_name, user_id FROM user_bots WHERE bot_type = $1 ORDER BY bot_name',
+            [botType]
+        );
+        
+        let successCount = 0;
+        let failureCount = 0;
+        let progressLog = [`*Starting restart for ${bots.rows.length} ${botType} bots...*\n`];
+
+        for (const [index, botInfo] of bots.rows.entries()) {
+            const appName = botInfo.bot_name;
+            const ownerId = botInfo.user_id;
+            
+            // Update progress
+            const currentTask = `**(${index + 1}/${bots.rows.length})** Restarting \`${appName}\`... ⏳`;
+            await bot.editMessageText(progressLog.join('\n') + "\n" + currentTask, { 
+                chat_id: adminId, 
+                message_id: progressMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }).catch(()=>{});
+            
+            try {
+                // Try to restart using Heroku API
+                const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
+                if (!HEROKU_API_KEY) {
+                    throw new Error("HEROKU_API_KEY not set in environment");
+                }
+
+                // Use axios directly with proper Heroku API headers
+                // Heroku dyno restart requires DELETE request to /apps/{appName}/dynos/web
+                await axios.delete(`https://api.heroku.com/apps/${appName}/dynos/web`, 
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                            'Accept': 'application/vnd.heroku+json; version=3',
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+                
+                progressLog.push(`**(${index + 1}/${bots.rows.length})** \`${appName}\`... ✅ *Restarted*`);
+                successCount++;
+                
+                // 30-second delay between restarts to avoid rate limiting
+                if (index < bots.rows.length - 1) {
+                    progressLog.push(`_Waiting 30 seconds before next restart..._`);
+                    await bot.editMessageText(progressLog.join('\n'), { 
+                        chat_id: adminId, 
+                        message_id: progressMsg.message_id, 
+                        parse_mode: 'Markdown' 
+                    }).catch(()=>{});
+                    await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
+                }
+
+            } catch (error) {
+                failureCount++;
+                const errorMsg = error.message || error.response?.data?.message || 'Unknown error';
+                console.error(`[RestartAll] Error restarting ${appName}:`, errorMsg);
+                progressLog.push(`**(${index + 1}/${bots.rows.length})** \`${appName}\`... ❌ *Failed*: ${String(errorMsg).substring(0, 80)}...`);
+            }
+        }
+        
+        // Final summary
+        await bot.editMessageText(
+            `**Bot Restart Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.join('\n')}`, 
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error(`[RestartAll] CRITICAL ERROR:`, error);
+        await bot.editMessageText(
+            `**Restart Failed!**\n\n*Reason:* ${escapeMarkdown(error.message)}`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+}
 
 
 async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
@@ -2808,26 +3346,6 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
-// In bot.js (Find the herokuApi interceptor block and REPLACE it)
-
-herokuApi.interceptors.response.use(
-    (response) => response, // If response is successful, just return it
-    async (error) => {
-        // --- 💡 CHECK FOR UNAUTHORIZED (401) ONLY 💡 ---
-        if (error.response && error.response.status === 401) {
-            const failingKey = error.config.headers.Authorization?.split(' ')[1] || 'unknown';
-            console.log(`INTERCEPTOR: Detected a 401 (Unauthorized) error from Heroku. Rotating key.`);
-            
-            // This starts the self-healing process in the background
-            handleInvalidHerokuKeyWorkflow(failingKey);
-            
-            // NOTE: The separate checkHerokuApiKey interval handles 403 on the /account endpoint.
-        }
-        // IMPORTANT: re-throw the error so the original function that made the call knows it failed
-        return Promise.reject(error);
-    }
-);
-
 
 async function sendPricingTiers(chatId, messageId) {
     // Check if user has existing bots to determine if they are a new user
@@ -2873,8 +3391,8 @@ async function sendPricingTiers(chatId, messageId) {
 
     // Standard Plan
     planButtons.push({ 
-        text: `Standard: $${pricesUsd.standard} / 30 Days`, 
-        callback_data: `select_plan:${p.standard}:30` 
+        text: `Standard: $${pricesUsd.standard} / 45 Days`, 
+        callback_data: `select_plan:${p.standard}:45` 
     });
 
     // Quarterly Plan
@@ -3552,6 +4070,74 @@ function generateKey() {
 }
 
 
+async function streamLiveLogs(chatId, appName, messageId) {
+    try {
+        // 1. Create a Tail Log Session
+        const session = await axios.post(
+            `https://api.heroku.com/apps/${appName}/log-sessions`,
+            { lines: 10, tail: true }, 
+            {
+                headers: {
+                    'Accept': 'application/vnd.heroku+json; version=3',
+                    'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        // 2. Open the Logplex Stream
+        const streamResponse = await axios({
+            method: 'get',
+            url: session.data.logplex_url,
+            responseType: 'stream'
+        });
+
+        let logBuffer = [];
+        let lastMessageText = ""; // Track the last text sent to avoid redundant edits
+
+        // 3. Listen for data and update Telegram
+        streamResponse.data.on('data', async (chunk) => {
+            const lines = chunk.toString().split('\n').filter(l => l.trim());
+            if (lines.length === 0) return;
+
+            logBuffer = [...logBuffer, ...lines].slice(-15); 
+            const logText = `**Live Log Stream for ${appName}:**\n\n\`\`\`\n${logBuffer.join('\n')}\n\`\`\``;
+
+            // Only attempt to edit if the content is actually different
+            if (logText === lastMessageText) return;
+
+            try {
+                await bot.editMessageText(logText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                });
+                lastMessageText = logText; // Update the tracker
+            } catch (e) {
+                // Specific fix for the "message is not modified" error
+                if (e.message.includes("message is not modified")) {
+                    // Do nothing, this is normal when logs haven't moved
+                } else if (e.message.includes("429")) {
+                    console.warn("[Live Logs] Rate limited by Telegram. Waiting...");
+                } else {
+                    console.error("Live log edit error:", e.message);
+                }
+            }
+        });
+
+        // Auto-stop after 2 minutes to save resources/API limits
+        setTimeout(() => {
+            if (streamResponse.data) streamResponse.data.destroy();
+            bot.sendMessage(chatId, "Live log session ended. Click the button again to resume.");
+        }, 120000);
+
+    } catch (error) {
+        console.error("Live Stream Error:", error.message);
+        bot.sendMessage(chatId, "Error connecting to live logs. Ensure the bot is running.");
+    }
+}
+
+
 // REPLACE WITH THIS
 async function loadMaintenanceStatus() {
     try {
@@ -3592,7 +4178,7 @@ async function triggerRenderRestart() {
 }
 
 
-// In bot.js, replace your old checkHerokuApiKey function with this one
+// In bot.js (REPLACE the checkHerokuApiKey function)
 
 async function checkHerokuApiKey() {
     if (!HEROKU_API_KEY) {
@@ -3601,9 +4187,6 @@ async function checkHerokuApiKey() {
     }
 
     try {
-        // ❗️ FIX: Use the standard 'axios' to make the call.
-        // This is necessary so this function can catch the error itself,
-        // instead of the 'herokuApi' interceptor catching it.
         await axios.get('https://api.heroku.com/account', {
             headers: {
                 'Authorization': `Bearer ${HEROKU_API_KEY}`,
@@ -3611,23 +4194,25 @@ async function checkHerokuApiKey() {
             }
         });
         
-        // If the request succeeds, the key is valid.
         console.log('[API Check] Periodic check: Heroku API key is valid.');
 
     } catch (error) {
-        // ❗️ FIX: Check for the 401 error and MANUALLY start the workflow.
-        if (error.response && error.response.status === 401) {
-            console.error('[API Check] Status 401: The Heroku key is unauthorized. Triggering recovery workflow...');
+        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
             
-            // Manually call the recovery function with the key that just failed.
+            const status = error.response.status;
+            const reason = status === 403 ? 'Forbidden/Suspended' : 'Unauthorized';
+            
+            console.error(`[API Check] Status ${status} (${reason}): Triggering recovery workflow...`);
+            
+            // Trigger the auto-replacement logic (where the DB logic resides)
             await handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
 
         } else {
-            // Log any other errors (like 503, 500, etc.)
             console.error(`[API Check] An unexpected error occurred during periodic check:`, error.message);
         }
     }
 }
+
 
 // In bot_services.js (Add this function)
 
@@ -3724,22 +4309,48 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
 
 
 function buildKeyboard(isAdmin) {
+  // --- Bot API 9.4 Colored Buttons Integration ---
+  
   const baseMenu = [
-      ['Get Session ID', 'Deploy'],
-      ['My Bots', 'Free Trial'],
-      ['FAQ', 'Referrals'],
-      ['Support', 'More Features'] 
+      [
+        { text: 'Get Session ID', style: 'primary' }, // Blue
+        { text: 'Deploy', style: 'success' }         // Green
+      ],
+      [
+        { text: 'Free Trial', style: 'primary' },        // Green
+        { text: 'My Bots', style: 'success' }      // Blue
+      ],
+      [
+        { text: 'FAQ', style: 'primary' }, 
+        { text: 'Referrals', style: 'success' }
+      ],
+      [
+        { text: 'Support', style: 'danger' }, 
+        { text: 'More Features', style: 'success' }
+      ] 
   ];
+
   if (isAdmin) {
       return [
-          ['Deploy', 'Apps'],
-          ['Generate Key', 'Get Session ID'],
+          [
+            { text: 'Deploy', style: 'success' }, 
+            { text: 'Apps', style: 'primary' }
+          ],
+          [
+            { text: 'Generate Key', style: 'success' }, 
+            { text: 'Get Session ID', style: 'primary' }
+          ],
           ['/stats', '/dbstats', '/bapp'],
-          ['/copydb', '/backupall', `/restoreall`] // <-- ADD /bapp here
+          [
+            { text: '/copydb', style: 'danger' },    // Red
+            { text: '/backupall', style: 'danger' }, // Red
+            { text: '/restoreall', style: 'success' } // Green
+          ]
       ];
   }
   return baseMenu;
 }
+
 
 
 function chunkArray(arr, size) {
@@ -4076,12 +4687,14 @@ bot.on('new_chat_members', handleNewMembers);
 bot.on('left_chat_member', handleLeftMembers);
 
 
+// Add this inside your main startup block
+await recoverReminders();
 
     await loadMaintenanceStatus(); // Load initial maintenance status
 // In bot.js, inside the main (async () => { ... })(); startup block
 
   startScheduledTasks();
-  runOrphanDbCleanup();
+    await checkHerokuApiKey(); 
 
   setTimeout(async () => {
       try {
@@ -4093,9 +4706,14 @@ bot.on('left_chat_member', handleLeftMembers);
       }
   }, 5000); // Wait 5 seconds
   //
-  
-  setInterval(checkHerokuApiKey, 1 * 60 * 1000);
-    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
+
+// Schedule the DB-backed recovery check every minute
+setInterval(runScheduledRecoveryCheck, 60 * 1000); 
+console.log('[Scheduler] Database-backed recovery check initiated.');
+
+// Also run it once at startup
+runScheduledRecoveryCheck(); 
+
 
   setInterval(checkNeonCapacity, CAPACITY_CHECK_INTERVAL_MS);
     console.log(`[Capacity Check] Proactive Neon capacity monitor scheduled every 6 hours.`);
@@ -4593,49 +5211,39 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 
 app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
     try {
-        // Telegram user ID (guaranteed by middleware)
         const userId = req.telegramData.id.toString();
+        const country = req.body.country || 'NG';
+        const ipAddress = req.body.ip_address || req.socket.remoteAddress;
+        const city = req.body.city || 'Unknown';
 
-        // Safely extract IP address (handles proxies / Heroku / Cloudflare)
-        const forwardedFor = req.headers['x-forwarded-for'];
-        const userIpAddress = forwardedFor 
-            ? forwardedFor.split(',')[0].trim() 
-            : req.socket.remoteAddress;
+        console.log(`[Pre-Verify] User ${userId} | IP: ${ipAddress} | Country: ${country} | City: ${city}`);
 
-        // --- CHECK 1: Has this user already claimed a final trial? ---
-        const trialUserCheck = await pool.query(
-            "SELECT user_id FROM free_trial_numbers WHERE user_id = $1",
-            [userId]
-        );
-        if (trialUserCheck.rows.length > 0) {
-            return res.json({ success: false, message: 'You have already claimed a free trial.' });
+        // Block India and Pakistan ONLY
+        if (country === 'IN' || country === 'PK') {
+            console.warn(`[Pre-Verify] User ${userId} blocked from: ${country}`);
+            return res.json({ success: false, message: 'Service not available in your country.' });
         }
 
-        // --- CHECK 2: Has this IP already been used? ---
-        // 🚨 FIX: We check for IP usage BEFORE recording the IP address.
-        const trialIpCheck = await pool.query(
-            "SELECT user_id FROM free_trial_numbers WHERE ip_address = $1",
-            [userIpAddress]
-        );
-        if (trialIpCheck.rows.length > 0) {
-            return res.json({ success: false, message: 'This network has already been used for a free trial.' });
+        // Save verification data to database
+        try {
+            await pool.query(
+                `INSERT INTO pre_verified_users (user_id, ip_address, city) 
+                 VALUES ($1, $2, $3) 
+                 ON CONFLICT (user_id) DO UPDATE 
+                 SET ip_address = $2, city = $3, verified_at = NOW()`,
+                [userId, ipAddress, city]
+            );
+            console.log(`[Pre-Verify] ✅ User ${userId} passed verification - data saved`);
+        } catch (dbErr) {
+            console.warn('[Pre-Verify] DB error:', dbErr.message);
+            // Don't fail - still approve the verification
         }
 
-        // 🚨 FIX: Record the user/IP success only
-        await pool.query(
-            `INSERT INTO pre_verified_users (user_id, ip_address, verified_at)
-             VALUES ($1, $2, NOW())
-             ON CONFLICT (user_id) 
-             DO UPDATE SET ip_address = EXCLUDED.ip_address, verified_at = NOW()`,
-            [userId, userIpAddress]
-        );
-
-        // ✅ Everything passed on the server side
-        return res.json({ success: true, message: "Server checks passed." });
+        return res.json({ success: true, message: 'Verified!', userId: userId, verified: true });
 
     } catch (error) {
         console.error("Error in /pre-verify-user:", error);
-        return res.status(500).json({ success: false, message: 'Server error during verification check.' });
+        return res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 
@@ -4680,7 +5288,7 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
             if (price_amount >= 5.0) days = 365;
             else if (price_amount >= 3.0) days = 185;
             else if (price_amount >= 1.5) days = 92;
-            else if (price_amount >= 0.8) days = 30;
+            else if (price_amount >= 0.8) days = 45;
             else days = 10;
             
             // --- 💡 FIX: Calculate Kobo for storage ---
@@ -4869,69 +5477,142 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
 
-/// In bot.js (REPLACE this handler)
+
+app.get('/api/news', validateWebAppInitData, async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT title, content, created_at FROM bot_news WHERE expires_at > NOW() ORDER BY created_at DESC LIMIT 5"
+        );
+        res.json({ success: true, news: result.rows });
+    } catch (e) {
+        console.error("[API News] Error:", e.message);
+        res.status(500).json({ success: false, message: "Could not fetch news." });
+    }
+});
+
+// In bot.js (REPLACE the Flutterwave webhook)
 
 app.post('/flutterwave/webhook', async (req, res) => {
+    // 1. Verify the signature (Security)
     const signature = req.headers['verif-hash'];
     if (!signature || (signature !== process.env.FLUTTERWAVE_SECRET_HASH)) {
+        console.warn('[Flutterwave] Invalid IPN signature received. Ignoring.');
         return res.status(401).end();
     }
 
     const payload = req.body;
     console.log('[Flutterwave] Webhook received:', payload.event);
 
+    // 2. Only process successful charge completions
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         
         const reference = payload.data.tx_ref;
-        const amount = payload.data.amount;
+        const amount_ngn = payload.data.amount; // Amount is in NGN
         const customer = payload.data.customer;
         
+        // 3. Find the pending payment to get necessary context
         const pendingPayment = await pool.query(
-            'SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', 
+            'SELECT user_id, bot_type, app_name, session_id, email FROM pending_payments WHERE reference = $1', 
             [reference]
         );
         
         if (pendingPayment.rows.length === 0) {
-            console.warn(`[Flutterwave Webhook] Cannot process reference ${reference}. Details missing.`);
+            console.warn(`[Flutterwave Webhook] Cannot process reference ${reference}. Details missing in pending_payments.`);
             return res.status(200).end(); 
         }
 
-        // The user ID is fetched as 'user_id' and renamed to 'userId' for the rest of this function.
-        const { user_id: userId, bot_type, app_name, session_id } = pendingPayment.rows[0];
+        const { 
+            user_id: userId, 
+            bot_type, 
+            app_name, 
+            session_id, 
+            email: pendingEmail 
+        } = pendingPayment.rows[0];
 
-        const isRenewal = app_name && app_name.startsWith('renewal_');
-        let finalAppName = app_name;
+        // Determine the intent flags
+        const isGroupFiller = bot_type === 'group_filler';
+        const isSwitch = bot_type && bot_type.startsWith('switch-'); 
+        const isRenewal = bot_type === 'renewal';
         
-    
-let days;
-if (amount >= 8000) days = 365;    // Annual: ₦10,000
-else if (amount >= 5000) days = 185; // Semi-Annual: ₦6,000
-else if (amount >= 3000) days = 92;  // Quarterly: ₦3,500
-else if (amount >= 1500) days = 30;  // Standard: ₦1,500
-else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is possible)
+        // --- 💡 DYNAMIC DURATION LOGIC 💡 ---
+        // Convert NGN to USD to determine the correct plan duration
+        const currentRate = parseInt(process.env.DOLLAR_RATE || '1500', 10);
+        const amountPaidUsd = amount_ngn / currentRate;
 
+        let days;
+        if (amountPaidUsd >= 5.0) {
+            days = 365; // Annual ($5.35)
+        } else if (amountPaidUsd >= 3.0) {
+            days = 185; // Semi-Annual ($3.35)
+        } else if (amountPaidUsd >= 1.5) {
+            days = 92;  // Quarterly ($2.00)
+        } else if (amountPaidUsd >= 0.8) {
+            days = 45;  // Standard ($1.00)
+        } else {
+            days = 10;  // Basic ($0.35)
+        }
+
+        console.log(`[Payment Logic] NGN: ${amount_ngn} | Rate: ${currentRate} | USD: $${amountPaidUsd.toFixed(2)} | Result: ${days} days`);
 
         try {
+            // 4. Check if already processed (Idempotency)
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) return res.status(200).end();
+            
+            // Convert amount from NGN to Kobo (multiply by 100)
+            const amountInKobo = amount_ngn * 100;
+            const finalEmail = customer.email || pendingEmail || 'flutterwave_user@email.com';
             
             // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
+                [reference, userId, finalEmail, amountInKobo]
             );
 
-            // ❗️ FIX: Use the correct variables that are available in this scope.
-            await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, finalAppName || 'N/A', bot_type || 'N/A', session_id || 'N/A');
-
+            // Notify user of confirmation and admin of sale
             const userChat = await bot.getChat(userId);
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
 
-            if (isRenewal) {
-                // RENEWAL LOGIC
-                finalAppName = finalAppName.substring('renewal_'.length);
+            // Send internal payment confirmation email
+            await sendPaymentConfirmation(finalEmail, `User ${userId}`, reference, app_name || 'N/A', bot_type || 'N/A', session_id || 'N/A');
+
+
+            // --- 5. EXECUTION LOGIC (Ordered by Intent) ---
+
+            if (isGroupFiller) {
+                const link = session_id; 
+                const members = parseInt(app_name, 10); 
                 
-                // ❗️ FIX: Use the correct 'userId' variable here.
+                await bot.sendMessage(userId, `**Payment Confirmed!** The job to add **${members} members** to your group has started. Hold on...`, { parse_mode: 'Markdown' });
+                
+                try {
+                     const fillResponse = await axios.post(
+                         `${process.env.GROUP_FILLER_API_URL}/api/join`, 
+                         {
+                             apiKey: process.env.GROUP_FILLER_API_SECRET,
+                             amount: members,
+                             link: link
+                         },
+                         { timeout: 300000 }
+                     );
+
+                     const responseData = fillResponse.data;
+                     const finalMessage = `**Job Status Update** (Link: ${link})\n\n` +
+                                          `Requested Members: ${responseData.data.requested}\n` +
+                                          `Successfully Joined: ${responseData.data.success}\n` +
+                                          `Already in Group: ${responseData.data.already_in}\n` +
+                                          `Failed to Join: ${responseData.data.failed}`;
+
+                     await bot.sendMessage(userId, finalMessage, { parse_mode: 'Markdown' });
+                     await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] Job complete for user ${userId}. Success: ${responseData.data.success}.`, { parse_mode: 'Markdown' });
+
+                } catch (error) {
+                     const errMsg = error.message || error.response?.data?.message || 'API connection failed';
+                     await bot.sendMessage(userId, `**Group Filler Failed:** The external service could not start the job.\nReason: ${errMsg}`);
+                     await bot.sendMessage(ADMIN_ID, `[GROUP FILLER] CRITICAL API Failure for ${userId}: ${errMsg}`, { parse_mode: 'Markdown' });
+                }
+                
+            } else if (isRenewal) {
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -4940,27 +5621,31 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
                            ELSE expiration_date + ($1 * INTERVAL '1 day')
                         END
                      WHERE user_id = $2 AND app_name = $3`,
-                    [days, userId, finalAppName]
+                    [days, userId, app_name]
                 );
 
-                // ❗️ FIX: Use the correct 'userId' variable here.
-                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${finalAppName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `Payment confirmed! *${escapeMarkdown(app_name)}* has been successfully **renewed** for ${days} days.`, { parse_mode: 'Markdown' });
             
+            } else if (isSwitch) {
+                await bot.sendMessage(userId, 'Payment confirmed! Processing your bot migration now...', { parse_mode: 'Markdown' });
+                const targetType = bot_type.replace('switch-', '');
+                await dbServices.processBotSwitch(userId, app_name, targetType, session_id);
+                await bot.sendMessage(ADMIN_ID, `*Bot Switch Paid (Flutterwave)*\nUser: \`${userId}\`\nApp: \`${app_name}\`\nTo: ${targetType.toUpperCase()}`, { parse_mode: 'Markdown' });
+
             } else { 
-                // NEW DEPLOYMENT LOGIC
-                
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 await bot.sendMessage(userId, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days }; 
                 
-                // ❗️ FIX: Use the correct 'userId' variable here.
                 dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
-                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\nUser: ${userName}\nApp Name: \`${app_name}\`\nAmount: ₦${amount_ngn}`, { parse_mode: 'Markdown' });
             }
             
+            // 6. Clean up pending payment
             await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             
+            // Clear Awaiting Key state if it exists
+            if (userStates[userId]) delete userStates[userId];
+
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
             await bot.sendMessage(ADMIN_ID, `CRITICAL FLUTTERWAVE WEBHOOK ERROR for ref ${reference}. Manual review needed. Error: ${dbError.message}`);
@@ -4968,7 +5653,6 @@ else days = 10;                     // Basic: ₦500 (Assuming ₦500 payment is
     }
     res.status(200).end();
 });
-
 
 
 
@@ -5157,7 +5841,7 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     const isAdmin = cid === ADMIN_ID;
     delete userStates[cid];
     const { first_name, last_name, username } = msg.from;
-    console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
+    console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}] | IsAdmin: ${isAdmin}`);
 
     if (inviterId && inviterId !== cid) {
         try {
@@ -5175,7 +5859,9 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     }
 
     if (isAdmin) {
-        await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
+        console.log(`[Admin Start] Admin ${cid} used /start command. Showing admin menu.`);
+        await bot.sendMessage(cid, '*Welcome, Admin!*\n\nHere is your admin menu:', {
+            parse_mode: 'Markdown',
             reply_markup: {
                 keyboard: buildKeyboard(isAdmin),
                 resize_keyboard: true
@@ -5273,6 +5959,57 @@ bot.onText(/^\/apps$/i, async msg => {
     dbServices.sendAppList(cid); // Use dbServices
   }
 });
+
+
+bot.onText(/^\/deploymsg$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const appName = `msgbot-${Math.floor(Math.random() * 9000) + 1000}`;
+    const statusMsg = await bot.sendMessage(cid, `**Starting Build for ${appName}...**\nProvisioning Postgres database...`, { parse_mode: 'Markdown' });
+
+    try {
+        const body = {
+            source_blob: {
+                // ❗️ FIX: Added .tarball/master so Heroku can download the code
+                url: 'https://github.com/Ultar12/MESSAGEBOT/tarball/master'
+            },
+            app: {
+                name: appName,
+                region: 'us'
+            },
+        
+            // ❗️ FIX: Specific plan name for the new Heroku billing system
+            addons: [
+                { plan: "heroku-postgresql" } 
+            ]
+        };
+
+        const res = await herokuApi.post('/app-setups', body);
+        
+        await bot.editMessageText(`**Deployment Created!**\n\n**App Name:** \`${appName}\`\n**Status:** Building\n\nTrack progress: https://dashboard.heroku.com/apps/${appName}/activity`, {
+            chat_id: cid,
+            message_id: statusMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+
+        // Save to DB so it shows up in your lists
+        await pool.query(
+            "INSERT INTO user_bots (user_id, bot_name, bot_type, status) VALUES ($1, $2, $3, $4)",
+            [cid, appName, 'messagebot', 'Building']
+        );
+
+    } catch (e) {
+        // Detailed error logging to tell us WHY it failed
+        const herokuError = e.response?.data?.message || e.message;
+        console.error("Deploy Error:", herokuError);
+        await bot.editMessageText(`**Deployment Failed**\n\nReason: ${herokuError}`, {
+            chat_id: cid,
+            message_id: statusMsg.message_id
+        });
+    }
+});
+
 
 // ADMIN COMMAND: /maintenance
 bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
@@ -5496,6 +6233,96 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
 });
 
 
+bot.onText(/^\/dl (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    const url = match[1].trim();
+
+    const waitingMsg = await bot.sendMessage(cid, "**Processing link with yt-dlp...**", { parse_mode: 'Markdown' });
+
+    try {
+        // -j: dump JSON
+        // --flat-playlist: don't expand playlists
+        // --no-warnings: keep logs clean
+const command = `yt-dlp --cookies cookies.txt -j --flat-playlist --no-warnings "${url}"`;
+const { stdout } = await execPromise(command);
+
+        const info = JSON.parse(stdout);
+
+        // Handle Image Carousels (Instagram/TikTok slides)
+        if (info.entries || info.formats === undefined) {
+            const entries = info.entries || [info];
+            const mediaGroup = entries.map(e => ({
+                type: 'photo',
+                media: e.url || e.thumbnail
+            })).slice(0, 10);
+
+            await bot.sendMediaGroup(cid, mediaGroup);
+        } else {
+            // Handle Single Video or Image
+            const mediaUrl = info.url;
+            const isVideo = info.vcodec !== 'none';
+
+            if (isVideo) {
+                await bot.sendVideo(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
+            } else {
+                await bot.sendPhoto(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
+            }
+        }
+
+        await bot.deleteMessage(cid, waitingMsg.message_id);
+
+    } catch (error) {
+        console.error("[yt-dlp Error]:", error.message);
+        await bot.editMessageText("**Error:** link is private or yt-dlp needs an update.", {
+            chat_id: cid,
+            message_id: waitingMsg.message_id
+        });
+    }
+});
+
+
+
+
+// ADMIN COMMAND: /restartaws (Strict Rebuild Only)
+bot.onText(/^\/restartaws$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+    if (!apiUrl || !apiKey) {
+        return bot.sendMessage(adminId, "Config Missing: Ensure SELF_HOSTED_DB_URL and SELF_HOSTED_DB_SECRET are set.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, "🏗️ **Sending Rebuild Signal to AWS...**");
+
+    try {
+        const response = await axios.post(`${apiUrl}/rebuild`, {}, {
+            headers: { 'x-api-key': apiKey },
+            timeout: 60000 
+        });
+
+        if (response.data.success) {
+            await bot.editMessageText(
+                "**AWS Rebuild Successful**\n\nThe EC2 infrastructure is rebuilding.",
+                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+            );
+        } else {
+            throw new Error(response.data.error || "EC2 failed to initiate rebuild.");
+        }
+
+    } catch (error) {
+        const errorMsg = error.response?.data?.error || error.message;
+        await bot.editMessageText(`**Rebuild Failed**\n\nReason: \`${errorMsg}\``, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+});
+
+
 // --- Command: /createawsdb <dbname> ---
 bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -5539,6 +6366,59 @@ bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
         await bot.editMessageText(`Error: ${e.message}`, { chat_id: adminId, message_id: workingMsg.message_id });
     }
 });
+
+
+bot.onText(/^\/aa (\d+) (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const targetNumber = match[1];
+    const hours = parseInt(match[2], 10);
+    const remindAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+
+    try {
+        await pool.query(
+            "INSERT INTO reminders (user_id, target_number, remind_at, hours_duration) VALUES ($1, $2, $3, $4)",
+            [adminId, targetNumber, remindAt, hours]
+        );
+
+        const timeString = remindAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        await bot.sendMessage(adminId, `Timer saved for ${targetNumber}. I will remind you in ${hours} hour(s) (at ${timeString}).`);
+        
+        // Start a timeout for the current session
+        setTimeout(() => sendReminder(targetNumber, adminId, hours), hours * 60 * 60 * 1000);
+
+    } catch (e) {
+        console.error("Failed to save reminder:", e);
+        await bot.sendMessage(adminId, "Failed to save reminder to database.");
+    }
+});
+
+bot.onText(/^\/aalist$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    try {
+        // This query only gets active timers because sent ones are deleted
+        const result = await pool.query("SELECT target_number, remind_at FROM reminders ORDER BY remind_at ASC");
+        
+        if (result.rows.length === 0) {
+            return bot.sendMessage(adminId, "You have no active timers.");
+        }
+
+        let listMsg = "*Active Number Timers:*\n\n";
+        result.rows.forEach((row, index) => {
+            const timeStr = new Date(row.remind_at).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+            listMsg += `${index + 1}. \`${row.target_number}\`\n   ⏳ Due: ${timeStr}\n\n`;
+        });
+
+        await bot.sendMessage(adminId, listMsg, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error("Error fetching aalist:", e);
+        await bot.sendMessage(adminId, "Error retrieving timer list.");
+    }
+});
+
 
 // --- Command: /deleteawsdb <dbname> ---
 bot.onText(/^\/deleteawsdb (.+)$/, async (msg, match) => {
@@ -5629,6 +6509,100 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
         bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
     }
 });
+
+bot.onText(/^\/changessl\s+(no-verify|disable)$/i, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const sslMode = match[1].toLowerCase();
+    
+    // 1. Send working message
+    const workingMsg = await bot.sendMessage(adminId, `**Starting Mass DB SSL Update**\n\nTargeting: \`${sslMode}\`\n\n1️⃣ Phase 1: Fetching all deployed apps...`, { parse_mode: 'Markdown' });
+
+    let successCount = 0;
+    let failCount = 0;
+    
+    try {
+        // 2. Get all deployed apps from the database (to get the list of appNames)
+        const allBotsResult = await pool.query("SELECT user_id, app_name FROM user_deployments");
+        const allBots = allBotsResult.rows;
+
+        if (allBots.length === 0) {
+            return bot.editMessageText(`No deployed bots found in the database.`, { chat_id: adminId, message_id: workingMsg.message_id });
+        }
+        
+        // 3. Process each bot sequentially
+        for (const [index, botRow] of allBots.entries()) {
+            const appName = botRow.app_name;
+            
+            // Update progress message periodically
+            if (index % 5 === 0 || index === allBots.length - 1) {
+                await bot.editMessageText(
+                    `**Mass DB SSL Update**\n\nTargeting: \`${sslMode}\`\nProgress: ${index + 1}/${allBots.length}\nSuccess: ${successCount} | Failed: ${failCount}\n\nCurrent App: \`${appName}\``, 
+                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                ).catch(()=>{});
+            }
+
+            try {
+                // 4. Fetch current config vars
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { 
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+                });
+                const configVars = configRes.data;
+                const oldDbUrl = configVars.DATABASE_URL;
+
+                if (!oldDbUrl) {
+                    failCount++;
+                    continue;
+                }
+                
+                // 5. Parse and modify the DATABASE_URL
+                const dbUrlObj = new URL(oldDbUrl);
+                const params = new URLSearchParams(dbUrlObj.search);
+                params.set('sslmode', sslMode);
+                
+                // Reconstruct the new URL with the updated parameters
+                dbUrlObj.search = params.toString();
+                const newDbUrl = dbUrlObj.toString();
+
+                // 6. Update Heroku config var (triggers bot restart)
+                await herokuApi.patch(`/apps/${appName}/config-vars`,
+                    { DATABASE_URL: newDbUrl },
+                    { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                );
+
+                // ❌ STEP 7: REMOVED LOCAL DB UPDATE (dbServices.saveUserDeployment) ❌
+
+                successCount++;
+                
+                // Small delay to prevent Heroku rate limiting
+                await new Promise(r => setTimeout(r, 1000));
+
+            } catch (e) {
+                failCount++;
+                console.error(`[SSL Update] Failed to process ${appName}:`, e.message);
+            }
+        }
+
+        // 8. Final Success Report
+        await bot.editMessageText(
+            `**Mass DB SSL Update Complete!**\n\n` +
+            `Target SSL Mode: \`${sslMode}\`\n` +
+            `Successfully Updated: **${successCount}** app(s).\n` +
+            `Failed to Update: **${failCount}** app(s).`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error(`[SSL Update] CRITICAL ERROR:`, error.message);
+        await bot.editMessageText(`**CRITICAL FAILURE!**\n\nReason: ${error.message}`, 
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+});
+
 
 bot.onText(/^\/mynum$/, async (msg) => {
     const userId = msg.chat.id.toString();
@@ -5791,6 +6765,42 @@ bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
     }
 });
 
+
+bot.onText(/^\/postnews (\d+)\s*\|(.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    if (!msg.reply_to_message) {
+        return bot.sendMessage(adminId, "Please reply to the message you want to post as news.");
+    }
+
+    const hours = parseInt(match[1]);
+    const title = match[2].trim();
+    
+    // Get the content from the replied message (text or caption)
+    const content = msg.reply_to_message.text || msg.reply_to_message.caption;
+
+    if (!content) {
+        return bot.sendMessage(adminId, "The replied message has no text content to post.");
+    }
+    
+    const expiresAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+
+    try {
+        await pool.query(
+            "INSERT INTO bot_news (title, content, expires_at) VALUES ($1, $2, $3)",
+            [title, content, expiresAt]
+        );
+        
+        const timeStr = expiresAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        await bot.sendMessage(adminId, `News posted! Body taken from reply. Auto-delete at: ${timeStr}`);
+    } catch (e) {
+        console.error("Error posting news:", e.message);
+        await bot.sendMessage(adminId, "Failed to post news. Ensure database table 'bot_news' exists.");
+    }
+});
+
+
 // In bot.js, with your other admin commands
 
 bot.onText(/^\/deluser (\d+)$/, async (msg, match) => {
@@ -5850,7 +6860,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         if (userBots.length > 0) {
             userDetails += `\n*Deployed Bots:*\n`;
             for (const botName of userBots) {
-                userDetails += `  - \`${escapeMarkdown(botName)}\`\n`;
+                userDetails += `  - \`${botName}\`\n`;
             }
         } else {
             userDetails += `\n*Deployed Bots:* None\n`;
@@ -5877,6 +6887,108 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     }
 });
 
+
+// ... (Your existing bot.js content)
+
+bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    
+    // --- 1. Admin Check ---
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const appName = match[1].trim();
+    let workingMsg;
+
+    try {
+        // --- 2. Send initial message and store reference ---
+        workingMsg = await bot.sendMessage(adminId, `Fetching AWS DB URL for \`${appName}\`...`, { parse_mode: 'Markdown' });
+
+        // --- 3. Call the service function ---
+        const result = await dbServices.getAwsDbConnectionString(appName);
+
+        // --- 4. Handle success or failure ---
+        if (result.success) {
+            await bot.editMessageText(
+                `**AWS Database Connection String** for \`${appName}\`:\n\n` +
+                `\`${result.dbUrl}\``,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            await bot.editMessageText(
+                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${escapeMarkdown(result.message)}`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            );
+        }
+    } catch (e) {
+        // --- 5. CRITICAL CATCH: Handle unexpected crashes ---
+        const rawErrorMessage = e.message || 'An unknown critical error occurred.';
+        // CRITICAL FIX: Escape the raw error message before wrapping it in backticks for display
+        const escapedErrorMessage = escapeMarkdown(rawErrorMessage); 
+        console.error(`Error processing /getawsdb for ${appName}:`, rawErrorMessage, e.stack);
+
+        if (workingMsg && workingMsg.message_id) {
+            // Edit the message with the escaped error wrapped in code block
+            await bot.editMessageText(`An unexpected critical error occurred:\n\n\`${escapedErrorMessage}\``, {
+                chat_id: adminId,
+                message_id: workingMsg.message_id,
+                parse_mode: 'Markdown' // Still using Markdown for the outer formatting
+            }).catch(editError => console.error(`Failed to send error reply: ${editError.message}`));
+        } else {
+            // If the initial message failed, send a new one
+             await bot.sendMessage(adminId, `An unexpected critical error occurred:\n\n\`${escapedErrorMessage}\``, {
+                parse_mode: 'Markdown'
+            });
+        }
+    }
+});
+
+
+// In bot.js, with your other command handlers (e.g., near /revenue)
+
+bot.onText(/^\/addsale (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const amountNaira = parseInt(match[1], 10);
+    const amountKobo = amountNaira * 100;
+    
+    if (isNaN(amountNaira) || amountNaira <= 0) {
+        return bot.sendMessage(adminId, "Please provide a valid sale amount in Naira (e.g., `/addsale 1500`).", { parse_mode: 'Markdown' });
+    }
+
+    try {
+        const reference = `manual_${crypto.randomBytes(8).toString('hex')}`;
+        const adminEmail = await getUserEmail(adminId) || 'admin@ultarbot.com';
+
+        // Insert into completed_payments table
+        await pool.query(
+            `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) 
+             VALUES ($1, $2, $3, $4, $5, NOW())`,
+            [reference, adminId, adminEmail, amountKobo, 'NGN']
+        );
+        
+        await bot.sendMessage(adminId, 
+            `**Manual Sale Recorded!**\n\n` +
+            `*Amount:* ₦${amountNaira.toLocaleString()}\n` +
+            `*Reference:* \`${reference}\`\n\n` +
+            `Revenue stats will reflect this entry.`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        console.error("Error recording manual sale:", error);
+        await bot.sendMessage(adminId, `❌ Failed to record manual sale. Reason: ${error.message}`);
+    }
+});
 
 // In bot.js
 bot.onText(/^\/copy$/, async (msg) => {
@@ -5947,52 +7059,176 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 });
 
 
+// In bot.js (REPLACE the existing /updatehost handler)
 
-bot.onText(/^\/dl (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    const url = match[1].trim();
+bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
 
-    const waitingMsg = await bot.sendMessage(cid, "🔍 **Extracting media...** Please wait.", { parse_mode: 'Markdown' });
+    const newHost = match[1].trim();
+    
+    // Smart IP validation - must be exactly 4 octets, each 0-255
+    function isValidIPAddress(ip) {
+        const ipRegex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+        const match = ip.match(ipRegex);
+        
+        if (!match) return false;
+        
+        // Check each octet is between 0-255
+        for (let i = 1; i <= 4; i++) {
+            const octet = parseInt(match[i], 10);
+            if (octet < 0 || octet > 255) return false;
+        }
+        
+        return true;
+    }
+    
+    // Validate IP address
+    if (!isValidIPAddress(newHost)) {
+        return bot.sendMessage(adminId, "❌ Invalid IP address format.\n\nRequired: Must be exactly 4 octets (0-255 each).\nExample: `13.48.5.119`\n\nUsage: `/updatehost 13.48.5.119`");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, `**Migration Started**\n\nTarget Host: \`${newHost}\`\n\n1️⃣ Phase 1: Updating User Bots...`, { parse_mode: 'Markdown' });
+
+    // --- PHASE 1: Update User Bots & Backup ---
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
 
     try {
-        // -j outputs raw JSON metadata, which tells us if it's an image or video
-        const { stdout } = await execPromise(`yt-dlp -j --no-warnings "${url}"`);
-        const info = JSON.parse(stdout);
-        
-        const title = info.title || "Downloaded Media";
-        const mediaUrl = info.url;
+        // Get ALL bots with their config vars
+        const result = await pool.query("SELECT user_id, app_name, config_vars FROM user_deployments");
+        const allBots = result.rows;
 
-        // 1. Check if it's a Video
-        const isVideo = info.vcodec !== 'none' || info.ext === 'mp4' || info.ext === 'mkv';
-        
-        // 2. Check if it's an Image (Instagram Photo, etc.)
-        const isImage = info.ext === 'jpg' || info.ext === 'png' || info.ext === 'webp' || info.protocol === 'https' && !isVideo;
+        if (allBots.length > 0) {
+            for (const [i, botEntry] of allBots.entries()) {
+                const appName = botEntry.app_name;
+                const oldConfig = botEntry.config_vars || {};
+                const oldUrl = oldConfig.DATABASE_URL;
 
-        if (isVideo) {
-            await bot.sendVideo(cid, mediaUrl, { caption: `**Video:** ${title}`, parse_mode: 'Markdown' });
-        } else if (isImage || info.format_id === 'photo') {
-            await bot.sendPhoto(cid, mediaUrl, { caption: `**Image:** ${title}`, parse_mode: 'Markdown' });
+                if (!oldUrl) {
+                    skipped++;
+                    continue;
+                }
+
+                // ✅ CRITICAL: Only update if DATABASE_URL does NOT contain 'neon' (i.e., it's AWS)
+                if (oldUrl.includes('neon')) {
+                    skipped++;
+                    continue;
+                }
+
+                try {
+                    // 1. Parse and modify the URL
+                    const dbUrlObj = new URL(oldUrl);
+                    
+                    // Skip if it's already updated
+                    if (dbUrlObj.hostname === newHost) {
+                        skipped++;
+                        continue;
+                    }
+
+                    dbUrlObj.hostname = newHost;
+                    const newUrl = dbUrlObj.toString();
+
+                    // 2. Update Heroku (This restarts the user bot)
+                    await herokuApi.patch(`/apps/${appName}/config-vars`,
+                        { DATABASE_URL: newUrl },
+                        { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                    );
+
+                    // 3. BACKUP: Update Local Database Record Immediately
+                    // We update the JSON blob so your backup is always in sync with Heroku
+                    await pool.query(`
+                        UPDATE user_deployments
+                        SET config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($1::text), true)
+                        WHERE app_name = $2
+                    `, [newUrl, appName]);
+
+                    success++;
+                    
+                    // Update progress message every 5 bots
+                    if (i % 5 === 0) {
+                         await bot.editMessageText(
+                             `1. Updating User Bots... (${i + 1}/${botsToUpdate.length})\n` +
+                             `Current: \`${appName}\`\n` +
+                             `OK: ${success} | Fail: ${failed}`, 
+                             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+                         ).catch(()=>{});
+                    }
+                    
+                    // Small delay to prevent Heroku rate limiting
+                    await new Promise(r => setTimeout(r, 1000));
+
+                } catch (e) {
+                    console.error(`Failed to migrate ${appName}:`, e.message);
+                    failed++;
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Critical error during user bot update:", error);
+        return bot.sendMessage(adminId, `**Critical Error:** Database query failed. Migration stopped.\n${error.message}`);
+    }
+
+    // --- PHASE 2: Update Main Bot (Render) ---
+    
+    await bot.editMessageText(
+        `**Phase 1 Complete**\n\n` +
+        `User Bots Updated/Backed Up: ${success}\n` +
+        `Skipped (Already Done): ${skipped}\n` +
+        `Failed: ${failed}\n\n` +
+        `2. Updating Main Bot Config & Restarting...`, 
+        { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+    );
+
+    try {
+        // Construct the API URL (http://IP:3000)
+        const newApiUrl = `http://${newHost}:3000`;
+        
+        // Use your existing helper function to update Render
+        const updateResult = await updateRenderVar('SELF_HOSTED_DB_URL', newApiUrl);
+        
+        if (updateResult.success) {
+            await bot.sendMessage(adminId, 
+                `**Migration Successful!**\n\n` +
+                `1. All AWS User bots updated to \`${newHost}\`.\n` +
+                `2. Backups synchronized.\n` +
+                `3. Render \`SELF_HOSTED_DB_URL\` updated.\n\n` +
+                `**Main Bot is restarting now.** Back online in ~1 minute.`
+            );
         } else {
-            // Fallback for unknown formats
-            await bot.sendMessage(cid, `[File](${mediaUrl})\n\nI found the media but couldn't identify the type. Click the link above to view.`, { parse_mode: 'Markdown' });
+            throw new Error(updateResult.message);
         }
 
-        await bot.deleteMessage(cid, waitingMsg.message_id).catch(() => {});
-
     } catch (error) {
-        console.error("[DL Error]:", error.message);
-        let errorMsg = "Failed to download. The link might be private or unsupported.";
-        
-        if (error.message.includes('404')) errorMsg = "Media not found. Check the link.";
-        if (error.message.includes('Sign in')) errorMsg = "This content requires a login. I can't access it.";
-
-        await bot.editMessageText(`❌ ${errorMsg}`, {
-            chat_id: cid,
-            message_id: waitingMsg.message_id
-        });
+        await bot.sendMessage(adminId, `**Phase 2 Failed:** User bots are updated, but Main Bot failed to update Render.\nError: ${error.message}\n\nPlease update \`SELF_HOSTED_DB_URL\` manually in Render Dashboard.`);
     }
 });
 
+
+// Command: /aa mode
+bot.onText(/^\/aa mode$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    // Set the state
+    userStates[adminId] = {
+        step: 'AA_CONTINUOUS_MODE',
+        data: { startTime: Date.now() }
+    };
+
+    // Auto-exit timer (15 minutes)
+    const exitTimer = setTimeout(async () => {
+        if (userStates[adminId] && userStates[adminId].step === 'AA_CONTINUOUS_MODE') {
+            delete userStates[adminId];
+            await bot.sendMessage(adminId, "AA Mode expired due to 15 minutes of inactivity.");
+        }
+    }, 15 * 60 * 1000);
+
+    userStates[adminId].data.timeoutId = exitTimer;
+
+    await bot.sendMessage(adminId, "AA Mode active. Just send: number time\nExample: 2349012345678 2\n\nType 'exit' to stop.");
+});
 
 
 // In bot.js
@@ -6161,103 +7397,141 @@ bot.onText(/^\/dellogout$/, async (msg) => {
 
 
 
-bot.onText(/^\/deploytls$/, async (msg) => {
+
+// ADMIN COMMAND: /deploy_email_service (with no arguments)
+bot.onText(/^\/deployem$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY, MESSAGE_BOT_API_KEY } = process.env;
-    
-    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY) {
-        return bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials or Heroku Key.");
+    // 1. Prerequisite Check for credentials in the bot's environment.
+    const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY || !HEROKU_API_KEY) {
+        return bot.sendMessage(adminId, "**Setup Incomplete:**\nMissing required credentials (`GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SECRET_API_KEY`, `HEROKU_API_KEY`) in the bot's environment.", { parse_mode: 'Markdown' });
     }
 
-    const progressMsg = await bot.sendMessage(adminId, "Starting TLS Stack Deployment (3 Apps)...");
+    const progressMsg = await bot.sendMessage(adminId, "**Starting Automated Deployment...**", { parse_mode: 'Markdown' });
 
     try {
-        // --- STEP 1: DEPLOY MESSAGEBOT FIRST (To get the URL for the Scraper) ---
-        await bot.editMessageText("(1/3) Deploying MessageBot...", { chat_id: adminId, message_id: progressMsg.message_id });
-        const msgAppName = `msg-tls-${crypto.randomBytes(3).toString('hex')}`;
-        await herokuApi.post('/apps', { name: msgAppName });
+        const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
         
-        await herokuApi.put(`/apps/${msgAppName}/buildpack-installations`, {
-            updates: [
-                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
-                { buildpack: 'heroku/nodejs' }
-            ]
-        });
+        // --- Step 1: Create the Heroku app ---
+        await bot.editMessageText(`**Progress (1/4):** Creating app \`${appName}\`...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        const createAppRes = await herokuApi.post('/apps', { name: appName }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        const appWebUrl = createAppRes.data.web_url;
 
-        await herokuApi.patch(`/apps/${msgAppName}/config-vars`, { 
-            SECRET_API_KEY, 
-            MESSAGE_BOT_API_KEY,
-            DATABASE_URL: process.env.DATABASE_URL 
-        });
+        // --- Step 2: Set environment variables ---
+        await bot.editMessageText(`**Progress (2/4):** Setting credentials...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
-        await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
-
-        // Retrieve exact URL for MessageBot to give to Scraper
-        const msgAppInfo = await herokuApi.get(`/apps/${msgAppName}`);
-        const messageBotUrl = msgAppInfo.data.web_url; // Exact URL for Scraper config
-
-        // --- STEP 2: DEPLOY SCARPERBOT (SCRAPER) ---
-        await bot.editMessageText("(2/3) Deploying ScraperBot...", { chat_id: adminId, message_id: progressMsg.message_id });
-        const scAppName = `scr-tls-${crypto.randomBytes(3).toString('hex')}`;
-        await herokuApi.post('/apps', { name: scAppName });
-
-        await herokuApi.put(`/apps/${scAppName}/buildpack-installations`, {
-            updates: [
-                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
-                { buildpack: 'https://github.com/jontewks/heroku-buildpack-puppeteer-firefox' },
-                { buildpack: 'https://buildpack-registry.s3.amazonaws.com/buildpacks/heroku-community/chrome-for-testing.tgz' },
-                { buildpack: 'heroku/python' },
-                { buildpack: 'heroku/nodejs' }
-            ]
-        });
-
-        // 💡 Injects MessageBot URL into Scraper as APP_URL
-        await herokuApi.patch(`/apps/${scAppName}/config-vars`, { 
-            APP_URL: messageBotUrl,
-            SECRET_API_KEY 
-        });
-
-        await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
-
-        // --- STEP 3: DEPLOY EMAIL SERVICE ---
-        await bot.editMessageText("(3/3) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
-        const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
-        await herokuApi.post('/apps', { name: emAppName });
-        await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY });
-        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
-
-        // Retrieve exact URL for Email Service to update Render
-        const emAppInfo = await herokuApi.get(`/apps/${emAppName}`);
-        const emailServiceUrl = emAppInfo.data.web_url;
-
-        // --- FINAL SYNC TO RENDER & RESTART ---
-        await bot.editMessageText("Finalizing: Updating Render EMAIL_SERVICE_URL and restarting...", { chat_id: adminId, message_id: progressMsg.message_id });
-
-        // Update Render variable for Email Service
-        await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl);
-
-        // Explicitly trigger Render restart
+        // --- Step 3: Trigger the build from the hardcoded GitHub repo ---
+        await bot.editMessageText(`**Progress (3/4):** Building from GitHub...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        await herokuApi.post(`/apps/${appName}/builds`, {
+            source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" }
+        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        
+        // --- Step 4: Link the new service and explicitly restart the main bot ---
+        await bot.editMessageText(`**Progress (4/4):** Linking service and restarting main bot...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        const updateResult = await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
+        if (!updateResult.success) {
+            throw new Error(`Failed to update Render variable: ${updateResult.message}`);
+        }
+        
+        // This function explicitly tells Render to start a new deployment.
         await triggerRenderRestart();
 
         await bot.editMessageText(
-            "Full TLS Stack Deployed Successfully\n\n" +
-            "Message Bot URL: " + messageBotUrl + "\n" +
-            "Scraper Bot: Configured with APP_URL = " + messageBotUrl + "\n" +
-            "Email Service: " + emailServiceUrl + "\n\n" +
-            "Render is restarting to apply the new Email Service link.", 
-            { chat_id: adminId, message_id: progressMsg.message_id }
-        );
+            `**Deployment Successful!**\n\nYour bot is now **restarting** on Render to use the new email service. It will be back online shortly.`, {
+            chat_id: adminId, 
+            message_id: progressMsg.message_id, 
+            parse_mode: 'Markdown'
+        });
 
     } catch (error) {
-        console.error(error);
-        const errDetails = error.response?.data?.message || error.message;
-        await bot.editMessageText("Deployment Failed\n\nReason: " + errDetails, {
-            chat_id: adminId, message_id: progressMsg.message_id
+        const errorMsg = error.response?.data?.message || error.message;
+        await bot.editMessageText(`**Deployment Failed!**\n\n*Reason:* ${escapeMarkdown(errorMsg)}`, {
+            chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
         });
     }
 });
+
+// In bot.js (in the command handlers section, e.g., near line 5150)
+
+bot.onText(/^\/exp$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, "Fetching list of bots expiring within 7 days...");
+
+    try {
+        // Query for bots expiring in the next 7 days that are NOT paused
+        const query = `
+            SELECT user_id, app_name, expiration_date 
+            FROM user_deployments 
+            WHERE 
+                expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+                AND paused_at IS NULL
+            ORDER BY 
+                expiration_date ASC;
+        `;
+        
+        const result = await pool.query(query);
+        const expiringBots = result.rows;
+
+        if (expiringBots.length === 0) {
+            return bot.editMessageText("No active bots are expiring in the next 7 days.", {
+                chat_id: adminId,
+                message_id: workingMsg.message_id
+            });
+        }
+
+        let responseMessage = `*Bots Expiring Soon (Next 7 Days):*\n\n`;
+        const now = new Date();
+
+        for (const bot of expiringBots) {
+            const expDate = new Date(bot.expiration_date);
+            const timeLeftMs = expDate.getTime() - now.getTime();
+            
+            // Calculate days, hours, and minutes
+            const daysLeft = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+            const hoursLeft = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutesLeft = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+
+            let timeRemaining;
+            
+            if (daysLeft > 0) {
+                timeRemaining = `*${daysLeft}d ${hoursLeft}h left*`;
+            } else if (hoursLeft > 0) {
+                timeRemaining = `*${hoursLeft}h ${minutesLeft}m left*`;
+            } else {
+                // If less than an hour, show only minutes
+                timeRemaining = `*${minutesLeft}m left* (Expiring very soon!)`;
+            }
+
+            responseMessage += `▪️ \`${escapeMarkdown(bot.app_name)}\`\n`;
+            responseMessage += `  (Owner: \`${bot.user_id}\`)\n`;
+            responseMessage += `  (Expires: ${timeRemaining})\n\n`;
+        }
+
+        await bot.editMessageText(responseMessage, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+
+    } catch (error) {
+        console.error("Error fetching /exp list:", error);
+        await bot.editMessageText(`An error occurred: ${error.message}`, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id
+        });
+    }
+});
+
+
+// In bot.js, replace your entire bot.onText(/^\/dbstats$/, async (msg) => { ... }) function with this:
+
 
 
 
@@ -6367,7 +7641,72 @@ bot.onText(/^\/deldb\s+([\w-]+)(?:\s+(\d+))?$/i, async (msg, match) => {
     return;
 });
 
+bot.onText(/^\/getallaws$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
 
+    const workingMsg = await bot.sendMessage(adminId, "Scanning AWS and Heroku to find unowned databases...");
+
+    try {
+        const apiUrl = process.env.SELF_HOSTED_DB_URL;
+        const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+        if (!apiUrl || !apiKey) {
+            return bot.editMessageText("AWS Configuration missing.", { chat_id: adminId, message_id: workingMsg.message_id });
+        }
+
+        // 1. Fetch data from both platforms
+        const [awsRes, herokuRes] = await Promise.all([
+            axios.get(`${apiUrl}/list`, { headers: { 'x-api-key': apiKey }, timeout: 15000 }),
+            herokuApi.get('/apps', { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })
+        ]);
+
+        if (awsRes.data.success) {
+            const allAwsDbs = awsRes.data.databases;
+            const herokuAppNames = new Set(herokuRes.data.map(app => app.name.replace(/-/g, '_')));
+
+            // 2. Filter for databases not matched to any Heroku app
+            const unownedDbs = allAwsDbs.filter(db => {
+                const dbName = db.name.replace(/-/g, '_');
+                return !herokuAppNames.has(dbName) && dbName !== 'neondb' && dbName !== 'postgres';
+            });
+
+            // Remove the scanning message
+            await bot.deleteMessage(adminId, workingMsg.message_id).catch(() => {});
+
+            if (unownedDbs.length === 0) {
+                return bot.sendMessage(adminId, "Clean: All AWS databases are matched to Heroku bots.", { parse_mode: 'HTML' });
+            }
+
+            // 3. Build the response with escaping for every database name
+            let currentMessage = "Unowned AWS Databases (" + unownedDbs.length + "):\n\n";
+            const MAX_LENGTH = 3500;
+
+            for (const [index, db] of unownedDbs.entries()) {
+                // This escaping prevents the 'can't parse entities' error
+                const safeName = escapeHTML(db.name); 
+                const nameLine = (index + 1) + ". <code>" + safeName + "</code>\n";
+
+                if ((currentMessage + nameLine).length > MAX_LENGTH) {
+                    await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
+                    currentMessage = "Unowned AWS Databases (Continued):\n\n";
+                }
+                currentMessage += nameLine;
+            }
+
+            currentMessage += "\nUse /deleteawsdb &lt;name&gt; to remove.";
+            await bot.sendMessage(adminId, currentMessage, { parse_mode: 'HTML' });
+
+        } else {
+            throw new Error("AWS server reported failure.");
+        }
+
+    } catch (e) {
+        console.error("Failed /getallaws:", e.message);
+        const safeError = escapeHTML(e.message);
+        await bot.sendMessage(adminId, "Error:\n" + safeError, { parse_mode: 'HTML' }).catch(() => {});
+    }
+});
 
 
 
@@ -6379,17 +7718,93 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
     const workingMsg = await bot.sendMessage(adminId, "Fetching database lists (AWS + Neon)...");
 
-    // --- 0. CRITICAL FIX: PREPARE ROBUST OWNER MAPPING ---
-    // This query uses UNION to merge user_id and app/bot_name from both core tables,
-    // ensuring we find the owner for apps tracked in user_deployments (like after /changedb).
+    // --- 0. FUZZY OWNER MAPPING WITH SIMILARITY MATCHING ---
+    // This query uses UNION to merge user_id and app/bot_name from both core tables
     const allBotsResult = await pool.query(`
         SELECT bot_name, user_id FROM user_bots
         UNION 
         SELECT app_name AS bot_name, user_id FROM user_deployments
     `);
     
-    // Create a map of canonical DB name (underscores) -> user_id
-    const ownerMap = new Map(allBotsResult.rows.map(bot => [bot.bot_name.replace(/-/g, '_'), bot.user_id]));
+    // Build owner list with canonical names for fuzzy matching
+    const botList = allBotsResult.rows.map(bot => ({
+        name: bot.bot_name,
+        canonical: bot.bot_name.replace(/-/g, '_'),
+        userId: bot.user_id
+    }));
+    
+    // Similarity function: Levenshtein distance ratio
+    function getSimilarity(str1, str2) {
+        const longer = str1.length > str2.length ? str1 : str2;
+        const shorter = str1.length > str2.length ? str2 : str1;
+        
+        if (longer.length === 0) return 1.0;
+        
+        const editDistance = getEditDistance(longer, shorter);
+        return (longer.length - editDistance) / longer.length;
+    }
+    
+    function getEditDistance(s1, s2) {
+        const costs = [];
+        for (let i = 0; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 0; j <= s2.length; j++) {
+                if (i === 0) {
+                    costs[j] = j;
+                } else if (j > 0) {
+                    let newValue = costs[j - 1];
+                    if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                        newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                    }
+                    costs[j - 1] = lastValue;
+                    lastValue = newValue;
+                }
+            }
+            if (i > 0) costs[s2.length] = lastValue;
+        }
+        return costs[s2.length];
+    }
+    
+    // Function to find owner by exact or fuzzy match
+    function findOwnerByName(dbName) {
+        // 1. Try exact match on canonical name
+        for (const bot of botList) {
+            if (bot.canonical === dbName) return bot.userId;
+        }
+        
+        // 2. Try exact match on original name (with underscores)
+        const dbNameWithUnderscores = dbName.replace(/-/g, '_');
+        for (const bot of botList) {
+            if (bot.canonical === dbNameWithUnderscores) return bot.userId;
+        }
+        
+        // 3. Try prefix matching (for renamed apps like mecusgift-4221 matching mecusgift)
+        // Check if DB name starts with any bot's base name
+        for (const bot of botList) {
+            // Extract base name (remove hex suffix if present)
+            const baseName = bot.canonical.replace(/_[a-f0-9]{4,}$/, '');
+            
+            // Check if database name matches the base name or is a renamed version
+            if (dbNameWithUnderscores.startsWith(baseName + '_') || 
+                dbNameWithUnderscores === baseName) {
+                return bot.userId;
+            }
+        }
+        
+        // 4. Fuzzy match: find the most similar name with lower threshold > 65%
+        let bestMatch = null;
+        let bestSimilarity = 0.65; // 65% similarity threshold (lowered for better matching)
+        
+        for (const bot of botList) {
+            const similarity = getSimilarity(dbNameWithUnderscores, bot.canonical);
+            if (similarity > bestSimilarity) {
+                bestSimilarity = similarity;
+                bestMatch = bot.userId;
+            }
+        }
+        
+        return bestMatch || 'Unknown';
+    }
 
     // --- 1. AWS SELF-HOSTED REPORT ---
     let awsReport = "";
@@ -6416,8 +7831,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
                     awsDbs.forEach((db, index) => {
                         const dbName = db.name;
                         const size = db.size;
-                        // Map DB Name to Owner ID
-                        const owner = ownerMap.get(dbName) || 'Unknown';
+                        // Use fuzzy matching to find owner
+                        const owner = findOwnerByName(dbName);
                         
                         // Format: #1 dbname | size | ownerID
                         awsReport += `▫️ #${index + 1} <code>${escapeHTML(dbName)}</code> | ${size} | <code>${owner}</code>\n`;
@@ -6490,8 +7905,8 @@ bot.onText(/^\/dbstats$/, async (msg) => {
             if (result.dbList && result.dbList.length > 0) {
                 result.dbList.forEach(db => {
                     const dbNameSanitized = db.name.replace(/-/g, '_'); 
-                    // 💡 FIX APPLIED: This now correctly fetches the owner ID from the robust ownerMap
-                    const ownerUserId = ownerMap.get(dbNameSanitized) || 'Unknown'; 
+                    // Use fuzzy matching to find owner
+                    const ownerUserId = findOwnerByName(dbNameSanitized); 
                     consolidatedDBListMessage += `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerUserId}</code>\n`;
                 });
             }
@@ -6530,6 +7945,28 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     });
 });
 
+// --- ADMIN COMMAND: /setbot <type> <on/off> ---
+bot.onText(/^\/setbot (levanter|raganork|hermit) (on|off)$/i, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const botType = match[1].toLowerCase();
+    const status = match[2].toLowerCase() === 'on' ? 'available' : 'down';
+
+    try {
+        await pool.query(
+            `INSERT INTO app_settings (setting_key, setting_value) 
+             VALUES ($1, $2) 
+             ON CONFLICT (setting_key) DO UPDATE SET setting_value = $2`,
+            [`status_${botType}`, status]
+        );
+        await bot.sendMessage(cid, `Bot *${botType.toUpperCase()}* is now set to: *${status.toUpperCase()}*`, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error(e);
+        await bot.sendMessage(cid, "Error saving bot status.");
+    }
+});
+
 
 bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -6562,6 +7999,39 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const dbName = match[1].trim();
+    const dbPass = `Ultardatabase${dbName}`;
+    const workingMsg = await bot.sendMessage(cid, `Fetching connection string for *${dbName}*...`, { parse_mode: 'Markdown' });
+
+    // These should match your manager script constants
+    const PUBLIC_HOST = process.env.PUBLIC_HOST || 'localhost';
+    const PUBLIC_DB_PORT = process.env.PUBLIC_DB_PORT || 5432;
+
+    try {
+        const connString = `postgres://${dbName}:${dbPass}@${PUBLIC_HOST}:${PUBLIC_DB_PORT}/${dbName}?sslmode=disable`;
+
+        await bot.editMessageText(
+            `**Database Credentials Found**\n\n` +
+            `*DB Name:* \`${dbName}\`\n` +
+            `*Password:* \`${dbPass}\`\n\n` +
+            `**Connection String:**\n\`${connString}\``,
+            {
+                chat_id: cid,
+                message_id: workingMsg.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+    } catch (e) {
+        await bot.editMessageText(`Error: ${e.message}`, {
+            chat_id: cid,
+            message_id: workingMsg.message_id
+        });
+    }
+});
 
 
 bot.onText(/^\/apilist$/, async (msg) => {
@@ -6814,55 +8284,92 @@ bot.onText(/^\/users$/, async (msg) => {
 
 
 bot.onText(/^\/list$/, async (msg) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
+    const cid = msg.chat.id.toString();
+    const isAdmin = cid === ADMIN_ID;
 
-    const workingMsg = await bot.sendMessage(adminId, "Fetching active sessions from external server...");
+    const commands = `
+📋 **BOT COMMANDS SUMMARY**
 
-    try {
-        // 1. Call External API
-        const response = await axios.get(
-            `${MESSAGE_BOT_URL}/list`,
-            { 
-                headers: { 'x-api-key': MESSAGE_BOT_API_KEY }
-            }
-        );
+🔧 **ADMIN COMMANDS:**
+\`/menu\` - Show admin menu
+\`/apps\` - List all deployed bots
+\`/dbstats\` - DB stats with owner lookup
+\`/sync\` - Sync databases
 
-        const data = response.data;
-        
-        // Assuming API returns { success: true, clients: ["23490...", "1234..."] } 
-        // or { success: true, clients: [{ number: "...", status: "..." }] }
-        const clients = data.clients || [];
+💾 **BACKUP & RESTORE:**
+\`/backupall\` - Backup all paid bots
+\`/copydb\` - Copy database
+\`/restoreall\` - Restore all bots
+\`/restartall\` - Restart all bots
 
-        if (clients.length === 0) {
-            return bot.editMessageText("No active WhatsApp sessions found on the external server.", {
-                chat_id: adminId, message_id: workingMsg.message_id
-            });
-        }
+🌐 **DATABASE:**
+\`/createawsdb <name>\` - Create AWS database
+\`/deleteawsdb <name>\` - Delete AWS database
+\`/getawsdb <name>\` - Get AWS database info
+\`/createneondb <name>\` - Create Neon database
+\`/changedb <url>\` - Change database URL
+\`/updatehost <ip>\` - Update database host IP
 
-        let message = "*Active External Sessions:*\n\n";
-        
-        clients.forEach((client, index) => {
-            // Handle different API response formats (string vs object)
-            const number = typeof client === 'string' ? client : client.number || client.phone;
-            const status = client.status ? `[${client.status}]` : '';
-            
-            message += `**${index + 1}. +${number}** ${status}\n`;
-        });
-        
-        message += `\n_Total: ${clients.length}_`;
+⏱️ **EXPIRATION:**
+\`/expire <days>\` - Set bot expiration (admin)
+\`/exp\` - View my expiration
+\`/addexpall <days>\` - Add days to ALL bots
+\`/addexp <days>\` - Add days to my bot
+\`/addexp <user_id> <days>\` - Add days to user's bots
 
-        await bot.editMessageText(message, {
-            chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown'
-        });
+👥 **USER MANAGEMENT:**
+\`/add <user_id>\` - Add user (free trial)
+\`/deluser <user_id>\` - Delete user
+\`/ban <user_id>\` - Ban user
+\`/unban\` - Show banned users
+\`/info <user_id>\` - User info
+\`/num\` - View pending users
+\`/mynum\` - My number
+\`/users\` - List all users
+\`/revenue\` - Revenue stats
 
-    } catch (e) {
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error("[ListPair] External API Error:", errorMsg);
-        await bot.editMessageText(`❌ Failed to fetch list.\nError: ${errorMsg}`, {
-            chat_id: adminId, message_id: workingMsg.message_id
-        });
-    }
+🔍 **BOT MANAGEMENT:**
+\`/findbot <name>\` - Find bot by name
+\`/restart\` - Restart main bot
+\`/dellogout\` - Delete logged-out bots
+\`/deldb <name>\` - Delete bot database
+\`/remove <user_id>\` - Remove user bot
+
+🔐 **SECURITY:**
+\`/id\` - Show my ID
+\`/dkey\` - Get deployment key
+\`/key <1-5>\` - Get API key
+
+📨 **MESSAGING:**
+\`/send <user_id> <text>\` - Send message to user
+\`/sendall <type> <text>\` - Send to all bots
+\`/askadmin <text>\` - Ask admin question
+
+📱 **WHATSAPP & STICKERS:**
+\`/pair <number>\` - Pair WhatsApp number
+\`/sticker <pack>\` - Download stickers
+
+🛠️ **OTHER:**
+\`/maintenance on|off\` - Toggle maintenance
+\`/addapi <url>\` - Add API endpoint
+\`/apilist\` - List APIs
+\`/delapi\` - Delete API
+\`/editvar\` - Edit variables
+\`/deployem\` - Deploy test bot
+\`/updateall <type>\` - Update bot type
+\`/vcf <data>\` - Generate VCF
+\`/copy\` - Copy something
+\`/bapp\` - Bot app info
+
+✅ **USER COMMANDS:**
+\`/start\` - Start bot
+\`/menu\` - Show menu
+\`/exp\` - Check expiration
+\`/addexp <days>\` - Extend my bot
+\`/askadmin <text>\` - Contact admin
+    `;
+
+    await bot.sendMessage(cid, commands.trim(), { parse_mode: 'Markdown' });
 });
 
 
@@ -7048,54 +8555,6 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork|hermit))?\s*([\s\S]*)$/, async (m
 });
 
 
-// ... (Your existing bot.js content)
-
-// Add this handler to your bot.onText section in bot.js
-
-bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
-
-    const appName = match[1].trim();
-
-    const workingMsg = await bot.sendMessage(adminId, `Fetching AWS DB URL for \`${appName}\`...`, { parse_mode: 'Markdown' });
-
-    try {
-        // Call the new service function
-        const result = await dbServices.getAwsDbConnectionString(appName);
-
-        if (result.success) {
-            await bot.editMessageText(
-                `**AWS Database Connection String** for \`${appName}\`:\n\n` +
-                `\`${result.dbUrl}\``,
-                {
-                    chat_id: adminId,
-                    message_id: workingMsg.message_id,
-                    parse_mode: 'Markdown'
-                }
-            );
-        } else {
-            await bot.editMessageText(
-                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${result.message}`,
-                {
-                    chat_id: adminId,
-                    message_id: workingMsg.message_id,
-                    parse_mode: 'Markdown'
-                }
-            );
-        }
-    } catch (e) {
-        console.error(`Error processing /getawsdb for ${appName}:`, e.message);
-        await bot.editMessageText(`An unexpected error occurred.`, {
-            chat_id: adminId,
-            message_id: workingMsg.message_id
-        });
-    }
-});
-
-// ... (Your existing bot.js content)
-
-
 bot.onText(/\/sticker(?: (.+))?/, async (msg, match) => {
     // 1. Check permissions
     if (String(msg.from.id) !== ADMIN_ID) {
@@ -7230,6 +8689,107 @@ bot.onText(/^\/backupall$/, async (msg) => {
     // Just call the main task function directly when triggered manually
     runBackupAllTask(adminId); 
 });
+
+
+// ========== ADD EXPIRATION DAYS COMMANDS ==========
+
+// /addexpall <days> - Add days to ALL bots in the system
+bot.onText(/^\/addexpall (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+    
+    const daysToAdd = parseInt(match[1], 10);
+    if (daysToAdd <= 0 || daysToAdd > 3650) {
+        return bot.sendMessage(adminId, "Invalid number of days. Please use a value between 1 and 3650.");
+    }
+    
+    try {
+        const result = await pool.query(
+            `UPDATE user_deployments 
+             SET expiration_date = expiration_date + INTERVAL '${daysToAdd} days'
+             WHERE expiration_date IS NOT NULL AND deleted_from_heroku_at IS NULL
+             RETURNING user_id, app_name, expiration_date`
+        );
+        
+        const updated = result.rowCount;
+        let summary = `✅ Added ${daysToAdd} days to ${updated} bot(s).\n\n`;
+        
+        if (result.rows.length > 0 && result.rows.length <= 20) {
+            summary += `Updated:\n`;
+            result.rows.forEach((row, idx) => {
+                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                summary += `${idx + 1}. ${row.app_name} (User: ${row.user_id}) → ${newDate}\n`;
+            });
+        } else if (result.rows.length > 20) {
+            summary += `First 20 of ${result.rows.length} updates:\n`;
+            result.rows.slice(0, 20).forEach((row, idx) => {
+                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                summary += `${idx + 1}. ${row.app_name} (User: ${row.user_id}) → ${newDate}\n`;
+            });
+        }
+        
+        await bot.sendMessage(adminId, summary);
+    } catch (error) {
+        console.error('[AddExpAll] Error:', error);
+        await bot.sendMessage(adminId, `Error updating expirations: ${error.message}`);
+    }
+});
+
+bot.onText(/^\/addexp (\d+)$/, async (msg, match) => {
+    const userId = msg.chat.id.toString();
+    const daysToAdd = parseInt(match[1], 10);
+    
+    if (isNaN(daysToAdd) || daysToAdd <= 0) {
+        return bot.sendMessage(userId, "Please provide a valid number of days.");
+    }
+    
+    const checkingMsg = await bot.sendMessage(userId, "Scanning Heroku for all active bots...");
+    
+    try {
+        // 1. Fetch ALL apps from Heroku API
+        const herokuAppsRes = await herokuApi.get('/apps', {
+            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
+        });
+        
+        const allApps = herokuAppsRes.data;
+        const buttons = [];
+
+        // 2. Filter for apps owned by this user (or all apps if admin)
+        // Note: Since Heroku doesn't know your TG IDs, we cross-reference with your DB
+        for (const app of allApps) {
+            const appName = app.name;
+            
+            // Cross-check owner in DB
+            const ownerCheck = await pool.query("SELECT user_id FROM user_deployments WHERE app_name = $1", [appName]);
+            const ownerId = ownerCheck.rows[0]?.user_id;
+
+            // Show if user is admin OR if user owns the bot
+            if (userId === ADMIN_ID || ownerId === userId) {
+                buttons.push({
+                    text: appName,
+                    callback_data: `addexp_select:${appName}:${daysToAdd}`
+                });
+            }
+        }
+
+        if (buttons.length === 0) {
+            return bot.editMessageText("No active bots found on your Heroku account.", { chat_id: userId, message_id: checkingMsg.message_id });
+        }
+
+        const keyboard = chunkArray(buttons, 2);
+        
+        await bot.editMessageText(`Select a bot to add ${daysToAdd} days to:`, {
+            chat_id: userId,
+            message_id: checkingMsg.message_id,
+            reply_markup: { inline_keyboard: keyboard }
+        });
+
+    } catch (error) {
+        console.error('[AddExp] Error:', error.message);
+        await bot.sendMessage(userId, "Failed to fetch apps from Heroku.");
+    }
+});
+
 
 
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
@@ -7502,7 +9062,7 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
 
         // FIX: The final response string is now fully escaped to prevent errors.
         const response = `
-*Bot Details for: \`${escapeMarkdown(appName)}\`*
+*Bot Details for: \`${appName}\`*
 
 *Owner Info:*
 ${ownerDetails}
@@ -7650,13 +9210,30 @@ bot.onText(/^\/restoreall$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
 
-    // This callback data 'restore_all_bots' will trigger the selection handler
-    await bot.sendMessage(cid, "Please select the bot type you wish to restore from the backup database:", {
+    await bot.sendMessage(cid, "Select the Bot Type you want to restore all instances of:", {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "Restore All Levanter", callback_data: "mass_restore:levanter" }],
+                [{ text: "Restore All Raganork", callback_data: "mass_restore:raganork" }],
+                [{ text: "Restore All Hermit", callback_data: "mass_restore:hermit" }]
+            ]
+        }
+    });
+});
+
+
+
+// NEW COMMAND: /restartall - Restart all bots of a selected type
+bot.onText(/^\/restartall$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    await bot.sendMessage(cid, "Please select the bot type you wish to restart:", {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: 'Levanter', callback_data: 'restore_all_bots:levanter' },
-                    { text: 'Raganork', callback_data: 'restore_all_bots:raganork' }
+                    { text: 'Levanter', callback_data: 'restart_all_bots:levanter' },
+                    { text: 'Raganork', callback_data: 'restart_all_bots:raganork' }
                 ]
             ]
         }
@@ -7666,11 +9243,13 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 
 // REPLACE your entire bot.on('message', ...) function with this:
 bot.on('message', async msg => {
+    const text = msg.text?.trim() || ""; 
     const cid = msg.chat.id.toString();
-
+    const st = userStates[cid];
   if (msg.text && msg.text.startsWith('/')) {
   return; 
 }
+
 
 
     // --- Step 1: Universal Security Check ---
@@ -7688,36 +9267,124 @@ bot.on('message', async msg => {
     if (msg.web_app_data) {
         try {
             const data = JSON.parse(msg.web_app_data.data);
-            console.log("📩 [MiniApp] Data received from Mini App:", data);
+            console.log("[MiniApp] Data received from Mini App:", data);
+            console.log("[MiniApp] User state:", userStates[cid]);
 
-            if (data.status === 'verified') {
-                await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
-                        ]
+            const userState = userStates[cid];
+            
+            // NEW PATTERN: Use callback_data to trigger bot response instead of web_app_data handler
+            if (userState && userState.step === 'AWAITING_MINI_APP_VERIFICATION') {
+                if (data.status === 'verified') {
+                    console.log(`[MiniApp] User ${cid} passed verification - marking in DB and sending callback`);
+                    
+                    // Mark verification as complete in database
+                    try {
+                        await pool.query(
+                            'UPDATE pre_verified_users SET verified_at = NOW() WHERE user_id = $1',
+                            [cid]
+                        );
+                    } catch (dbErr) {
+                        console.warn('[MiniApp] DB update error:', dbErr.message);
                     }
-                });
+                    
+                    // Update state for callback processing
+                    userStates[cid] = { step: 'FREE_TRIAL_VERIFIED', data: { verifiedAt: new Date(), miniAppMessageId: userState.miniAppMessageId } };
+                    
+                    // Delete mini app message
+                    if (userState.miniAppMessageId) {
+                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
+                            console.warn(`[MiniApp] Could not delete message:`, e.message)
+                        );
+                    }
+                    
+                    // Send verification success with callback button that triggers next step
+                    await bot.sendMessage(cid, 
+                        "*Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click below to proceed.",
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: 'Join Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                                    [{ text: 'I have joined - Proceed!', callback_data: 'verify_join_after_miniapp' }]
+                                ]
+                            }
+                        }
+                    );
+                    
+                    console.log(`[MiniApp] Callback setup complete for user ${cid}`);
+                } else {
+                    // Verification failed
+                    const reason = data.reason || data.error || "An unknown issue occurred.";
+                    console.warn(`[MiniApp] User ${cid} failed verification: ${reason}`);
+                    
+                    // Delete mini app message
+                    if (userState.miniAppMessageId) {
+                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
+                            console.warn(`[MiniApp] Could not delete message:`, e.message)
+                        );
+                    }
+                    
+                    delete userStates[cid];
+                    
+                    // Send error and retry button
+                    await bot.sendMessage(cid, 
+                        `*Verification failed*\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support.`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: 'Try Again', callback_data: 'free_trial_start' }],
+                                    [{ text: 'Contact Support', url: `https://t.me/${SUPPORT_USERNAME}` }]
+                                ]
+                            }
+                        }
+                    );
+                }
             } else {
-                const reason = data.reason || data.error || "An unknown issue occurred.";
-                await bot.sendMessage(cid, 
-                    `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
-                    { parse_mode: 'Markdown' }
-                );
+                // Non-free-trial verification - still use callback pattern
+                if (data.status === 'verified') {
+                    console.log(`[MiniApp] Regular verification passed for user ${cid}`);
+                    
+                    if (userState && userState.miniAppMessageId) {
+                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
+                            console.warn(`[MiniApp] Could not delete message:`, e.message)
+                        );
+                    }
+                    
+                    // Update state and show callback button
+                    userStates[cid] = { step: 'VERIFICATION_COMPLETE' };
+                    
+                    await bot.sendMessage(cid, 
+                        "*Security check passed!*\n\n**Next step:** Join our channel and continue.",
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: 'Join Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                                    [{ text: 'I have joined', callback_data: 'verify_join_after_miniapp' }]
+                                ]
+                            }
+                        }
+                    );
+                }
             }
         } catch (err) {
-            console.error("❌ [MiniApp] Failed to parse web_app_data:", err.message);
-            await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
+            console.error("[MiniApp] Failed to parse web_app_data:", err.message);
+            await bot.sendMessage(cid, "An error occurred during verification. Please try again.", {
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Retry', callback_data: 'free_trial_start' }]]
+                }
+            });
         }
-        return; // Stop processing after handling Mini App data
+        return; // Stop processing - callback will handle next steps
     }
+
+    
+
+
 
     // --- Step 3: Handle Regular Text-Based Commands ---
     // This only runs if the message was not from the Mini App.
-    const text = msg.text?.trim();
-
     // If the message has no text (e.g., a sticker, photo), ignore it.
     if (!text) 
         return;
@@ -7755,7 +9422,8 @@ if (userActivity.rows.length > 0) {
         await sendLatestKeyboard(cid);
     }
 }
-  const st = userStates[cid];
+
+  
   const isAdmin = cid === ADMIN_ID;
 
   if (isAdmin && st && st.step === 'AWAITING_ADMIN_PAIRING_CODE_INPUT') {
@@ -7838,6 +9506,66 @@ if (userActivity.rows.length > 0) {
       }
       return;
   }
+
+
+if (st && st.step === 'LOGOUT_RECOVERY_CHAT') {
+    bot.sendChatAction(cid, 'typing');
+
+    // Track how many attempts the AI has made to help the user
+    st.data.attempts = (st.data.attempts || 0) + 1;
+
+    const prompt = `
+      The user's bot '${st.data.botName}' is logged out.
+      User message: "${text}"
+      Attempt number: ${st.data.attempts}
+      
+      ## YOUR INSTRUCTIONS:
+      1. If the user says the issue is NOT solved, they "tried it and it failed", or if this is Attempt #3, set intent to 'ESCALATE_TO_ADMIN'.
+      2. If the user is asking a question, try to solve it simply.
+      3. If the issue is solved, set intent to 'SOLVED'.
+      
+      Output JSON only: {"intent": "...", "response": "..."}
+    `;
+
+    try {
+        const result = await geminiModel.generateContent(prompt);
+        const aiResponse = JSON.parse(result.response.text());
+
+        // --- CASE 1: ESCALATION TO ADMIN ---
+        if (aiResponse.intent === 'ESCALATE_TO_ADMIN' || st.data.attempts >= 3) {
+            delete userStates[cid]; // End the AI session
+
+            // 1. Notify Admin with Context
+            const adminAlert = `
+**ADMIN HELP REQUIRED**
+User ID: \`${cid}\`
+Bot Name: \`${st.data.botName}\`
+Status: AI Troubleshooting Failed after ${st.data.attempts} attempts.
+User Message: _"${text}"_
+
+_Reply to this message to chat with the user._
+            `;
+            await bot.sendMessage(ADMIN_ID, adminAlert, { parse_mode: 'Markdown' });
+
+            // 2. Inform User
+            return bot.sendMessage(cid, "I'm sorry I couldn't resolve this for you. I have escalated this issue to our Admin. They will review your logs and message you directly here shortly.");
+        }
+
+        // --- CASE 2: ISSUE SOLVED ---
+        if (aiResponse.intent === 'SOLVED') {
+            delete userStates[cid];
+            return bot.sendMessage(cid, "Great! I'm glad we could get your bot back on track. Let me know if you need anything else!");
+        }
+
+        // --- CASE 3: CONTINUE TROUBLESHOOTING ---
+        await bot.sendMessage(cid, aiResponse.response, { parse_mode: 'Markdown' });
+
+    } catch (err) {
+        console.error('[Escalation Error]', err);
+        delete userStates[cid];
+    }
+    return;
+}
 
 
 // REPLACE your existing 'AWAITING_EMAIL' handler with this one.
@@ -8185,7 +9913,65 @@ if (st && st.step === 'AWAITING_VCF_NUMBER') {
     return;
 }
 
-// ... (rest of your state machine logic) ...
+// In bot.js (inside bot.on('message', ...) handler)
+
+// --- STEP 2: AWAITING GROUP LINK ---
+if (st && st.step === 'AWAITING_GROUP_LINK') {
+    const groupLink = text.trim();
+    // Validate common WhatsApp group link format (https://chat.whatsapp.com/...)
+    if (!groupLink.startsWith('https://chat.whatsapp.com/')) {
+        return bot.sendMessage(cid, "❌ Invalid Link. Please send the full WhatsApp group invite link, starting with `https://chat.whatsapp.com/`.");
+    }
+
+    st.data.groupLink = groupLink;
+    st.step = 'AWAITING_MEMBER_AMOUNT';
+
+    const rate = process.env.RATE_PER_NUMBER || 50;
+    
+    return bot.sendMessage(cid, 
+        `Group Link received. The rate is **₦${rate} per number**.\n\n` +
+        `How many members do you want to add? (Min: 1, Max: 500)`, 
+        { parse_mode: 'Markdown' }
+    );
+}
+
+// --- STEP 3: AWAITING MEMBER AMOUNT & CONFIRMATION ---
+if (st && st.step === 'AWAITING_MEMBER_AMOUNT') {
+    const amount = parseInt(text.trim(), 10);
+    const rate = parseInt(process.env.RATE_PER_NUMBER || '50', 10);
+
+    if (isNaN(amount) || amount < 1 || amount > 500) {
+        return bot.sendMessage(cid, "❌ Invalid Amount. Please enter a number between 1 and 500.");
+    }
+    
+    const totalPrice = amount * rate;
+    
+    // Save data and transition to confirmation
+    st.data.memberAmount = amount;
+    st.data.totalPrice = totalPrice;
+    st.step = 'AWAITING_GROUP_CONFIRM';
+    
+    const confirmationMessage = 
+        `**ORDER SUMMARY**\n\n` +
+        `**Members to Add:** ${amount}\n` +
+        `**Price per Member:** ₦${rate}\n` +
+        `───────────────────────\n` +
+        `**TOTAL COST:** ₦${totalPrice.toLocaleString()}\n\n` +
+        `Group Link: \`${st.data.groupLink}\`\n\n` +
+        `Do you want to proceed with payment?`;
+
+    await bot.sendMessage(cid, confirmationMessage, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: `Pay ₦${totalPrice.toLocaleString()}`, callback_data: `group_filler_pay:${totalPrice}` }],
+                [{ text: 'Cancel Order', callback_data: 'group_filler_cancel' }]
+            ]
+        }
+    });
+    return;
+}
+
 
 // In bot.js, inside bot.on('message', ...)
 
@@ -8292,6 +10078,58 @@ if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
     return;
 }
 
+if (st && st.step === 'AA_CONTINUOUS_MODE') {
+    const input = text.trim();
+
+    // Allow manual exit
+    if (input.toLowerCase() === 'exit') {
+        clearTimeout(st.data.timeoutId);
+        delete userStates[cid];
+        return bot.sendMessage(cid, "AA Mode deactivated.");
+    }
+
+    // Reset the 15-min timer on every message
+    clearTimeout(st.data.timeoutId);
+    st.data.timeoutId = setTimeout(async () => {
+        if (userStates[cid] && userStates[cid].step === 'AA_CONTINUOUS_MODE') {
+            delete userStates[cid];
+            await bot.sendMessage(cid, "AA Mode expired due to inactivity.");
+        }
+    }, 15 * 60 * 1000);
+
+    // Parse the input: Expecting "number hours"
+    const parts = input.split(' ');
+    if (parts.length < 2) {
+        return bot.sendMessage(cid, "Invalid input. Send: number time (e.g. 234901234567 2)");
+    }
+
+    const targetNumber = parts[0];
+    const hours = parseInt(parts[1], 10);
+
+    if (isNaN(hours) || hours <= 0) {
+        return bot.sendMessage(cid, "Invalid time. Please provide hours as a number.");
+    }
+
+    const remindAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+
+    try {
+        // Save to Database (Persistent)
+        await pool.query(
+            "INSERT INTO reminders (user_id, target_number, remind_at, hours_duration) VALUES ($1, $2, $3, $4)",
+            [cid, targetNumber, remindAt, hours]
+        );
+
+        // Start the timeout
+        setTimeout(() => sendReminder(targetNumber, cid, hours), hours * 60 * 60 * 1000);
+
+        const timeString = remindAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        await bot.sendMessage(cid, `Timer saved for ${targetNumber}. Due at ${timeString}.\n\nKeep sending or type 'exit'.`);
+    } catch (e) {
+        console.error("AA Mode DB Error:", e);
+        await bot.sendMessage(cid, "Failed to save timer to database.");
+    }
+    return; // Stop processing further
+}
 
   
 
@@ -8539,15 +10377,11 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 }
 
   
-
-// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
-
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         // --- THIS IS THE FREE TRIAL FLOW ---
-        // It correctly skips the email verification.
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
             const formattedDate = check.cooldown.toLocaleString('en-US', {
@@ -8564,67 +10398,73 @@ if (text === 'Deploy' || text === 'Free Trial') {
             });
         }
 
-        try { 
-            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
-            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-            if (isMember) {
-                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
-                await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [ // Row 1
-                                { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
-                                { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
-                            ],
-                            [ // Row 2
-                                { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
-                            ]
-                        ]
-                    }
-                });
-            } else {
-                await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
-                        ]
-                    }
-                });
+        try {
+            if (!process.env.APP_URL) {
+                console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
+                return bot.sendMessage(cid, "Error: The verification service is currently unavailable. Please try again later.");
             }
+
+            userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
+            const verificationUrl = `${process.env.APP_URL}/verify`;
+
+            const miniAppMessage = await bot.sendMessage(cid, "*Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
+                    ]
+                }
+            });
+            
+            userStates[cid].miniAppMessageId = miniAppMessage.message_id;
         } catch (error) { 
-            console.error("Error in free trial initial check:", error.message);
+            console.error("Error in free trial verification flow:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
         }
         return;
 
-    } else {
+        } else {
         // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
         const isVerified = await isUserVerified(cid);
     
         if (!isVerified) {
-            // **Step 1: User is NOT verified, so we start the registration process.**
             userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
             await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
-            return; // Stop and wait for their email
+            return;
         }
     
-        // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
+        // --- 🤖 NEW DYNAMIC AVAILABILITY CHECK ---
+        const res = await pool.query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'status_%'");
+        const statusMap = Object.fromEntries(res.rows.map(r => [r.setting_key, r.setting_value]));
+
+        const allBots = [
+            { id: 'levanter', text: 'Levanter' },
+            { id: 'raganork', text: 'Raganork MD' },
+            { id: 'hermit', text: 'Hermit' }
+        ];
+
+        const availableBots = allBots.filter(bot => (statusMap[`status_${bot.id}`] || 'available') === 'available');
+
+        if (availableBots.length === 0) {
+            return bot.sendMessage(cid, "All bot types are currently not available. Please try again later.");
+        }
+
+        // --- 💡 FIX: Set style to 'success' for GREEN buttons ---
+        const botButtons = availableBots.map(bot => ({
+            text: bot.text,
+            callback_data: `select_deploy_type:${bot.id}`,
+            style: 'success' // 🟢 This property makes the button Green in API 9.4
+        }));
+
+        // Arrange buttons in rows of 2
+        const keyboard = chunkArray(botButtons, 2);
+
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
+        
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
-                inline_keyboard: [
-                    [ // Row 1
-                        { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
-                        { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
-                    ],
-                    [ // Row 2
-                        { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
-                    ]
-                ]
+                inline_keyboard: keyboard
             }
         });
         return;
@@ -8632,6 +10472,9 @@ if (text === 'Deploy' || text === 'Free Trial') {
 }
 
 
+// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
+
+    
   if (text === 'Apps' && isAdmin) {
     return dbServices.sendAppList(cid); // Use dbServices
   }
@@ -8648,25 +10491,55 @@ if (text === 'Deploy' || text === 'Free Trial') {
     });
   }
 
-    if (text === 'Get Session ID') {
-      delete userStates[cid]; // Clear user state
-      userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
 
-      await bot.sendMessage(cid, 'Which bot type do you need a session ID for?', {
-          reply_markup: {
-              inline_keyboard: [
-                  [ // Row 1
-                    { text: 'Levanter', callback_data: `select_get_session_type:levanter` },
-                    { text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }
-                  ],
-                  [ // Row 2
-                    { text: 'Hermit', callback_data: `select_get_session_type:hermit` }
-                  ]
-              ]
-          }
-      });
-      return;
-  }
+   if (text === 'Get Session ID') {
+    const cid = msg.chat.id.toString();
+    delete userStates[cid]; 
+    userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
+
+    try {
+        // --- 🤖 DYNAMIC AVAILABILITY CHECK ---
+        // Fetch current statuses set by the admin via /setbot
+        const res = await pool.query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'status_%'");
+        const statusMap = Object.fromEntries(res.rows.map(r => [r.setting_key, r.setting_value]));
+
+        // Define the bots available for session generation
+        const sessionBots = [
+            { id: 'levanter', text: 'Levanter' },
+            { id: 'raganork', text: 'Raganork MD' },
+            { id: 'hermit', text: 'Hermit' }
+        ];
+
+        // Filter only those marked as 'available'
+        const availableBots = sessionBots.filter(bot => (statusMap[`status_${bot.id}`] || 'available') === 'available');
+
+        if (availableBots.length === 0) {
+            return bot.sendMessage(cid, "Bots are currently undergoing maintenance. Please try again later.");
+        }
+
+        // Create buttons with 'success' style (🟢 Green in API 9.4)
+        const botButtons = availableBots.map(bot => ({
+            text: bot.text,
+            callback_data: `select_get_session_type:${bot.id}`,
+            style: 'success' // 🟢 Makes the button GREEN
+        }));
+
+        // Arrange the dynamic buttons in rows of 2
+        const keyboard = chunkArray(botButtons, 2);
+
+        await bot.sendMessage(cid, 'Which bot type do you need a session ID for?', {
+            reply_markup: {
+                inline_keyboard: keyboard
+            }
+        });
+
+    } catch (error) {
+        console.error("Error in Get Session ID handler:", error.message);
+        await bot.sendMessage(cid, "An error occurred while checking bot availability.");
+    }
+    return;
+}
+ 
 
 
         // In bot.js
@@ -8676,30 +10549,20 @@ if (text === 'Deploy' || text === 'Free Trial') {
 if (text === 'My Bots') {
     const cid = msg.chat.id.toString();
 
-    // --- 💡 NEW VERIFICATION CHECK ---
+    // --- Verification Check ---
     const isVerified = await isUserVerified(cid);
-
     if (!isVerified) {
-        // User is NOT verified. Start the registration flow.
-        // We add an 'action' to the state so the bot knows what to do after verification.
         userStates[cid] = { step: 'AWAITING_EMAIL', data: { action: 'view_bots' } }; 
-        
-        await bot.sendMessage(cid, 'To manage your bots, you must first verify your email address. This is a one-time security step.\n\nPlease enter your email address:');
-        return; // Stop and wait for their email
+        await bot.sendMessage(cid, 'To manage your bots, you must first verify your email address. Please enter your email address:');
+        return;
     }
-    // --- END OF NEW CHECK ---
 
-    // If verified, proceed with the original "My Bots" logic
     const checkingMsg = await bot.sendMessage(cid, 'Syncing your bot list with the server, please wait...');
 
     try {
-        // 1. Get all bots the user owns from the database.
+        // 1. Get all bots from DB
         const dbBotsResult = await pool.query(
-            `SELECT 
-                ub.bot_name, 
-                ub.status, 
-                ud.expiration_date,
-                ud.deleted_from_heroku_at
+            `SELECT ub.bot_name, ub.status, ud.expiration_date, ud.deleted_from_heroku_at
              FROM user_bots ub
              LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
              WHERE ub.user_id = $1`,
@@ -8712,88 +10575,77 @@ if (text === 'My Bots') {
                 chat_id: cid, message_id: checkingMsg.message_id,
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
-                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                        [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot', style: 'success' }],
+                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup', style: 'primary' }]
                     ]
                 }
             });
             return;
         }
 
-        // 2. Check each bot's status on Heroku.
+        // 2. Cross-check with Heroku API
         const verificationPromises = userBotsFromDb.map(bot =>
-            axios.get(`https://api.heroku.com/apps/${bot.bot_name}/formation`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            herokuApi.get(`/apps/${bot.bot_name}/formation`, {
+                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
             }).then(response => {
                 const webDyno = response.data.find(d => d.type === 'web');
                 return { ...bot, exists_on_heroku: true, is_active: webDyno && webDyno.quantity > 0 };
-            })
-              .catch(() => ({ ...bot, exists_on_heroku: false, is_active: false }))
+            }).catch(() => ({ ...bot, exists_on_heroku: false, is_active: false }))
         );
 
         const results = await Promise.all(verificationPromises);
-        
-        const botsToDisplay = [];
-        const botsToCleanup = [];
+        const botsToDisplay = results.filter(r => r.exists_on_heroku);
 
-        for (const result of results) {
-            if (result.exists_on_heroku) {
-                botsToDisplay.push(result);
-            } else {
-                if (!result.deleted_from_heroku_at) {
-                    botsToCleanup.push(result.bot_name);
-                }
-            }
-        }
-        
-        // 3. Clean up the database in the background.
-        if (botsToCleanup.length > 0) {
-            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bot(s) for user ${cid}. Cleaning up DB.`);
-            await Promise.all(botsToCleanup.map(appName => {
-                dbServices.deleteUserBot(cid, appName); // Remove from active list
-                dbServices.markDeploymentDeletedFromHeroku(cid, appName); // Mark as deleted in backup
-            }));
-        }
-
-        // 4. Display the final, filtered list of bots.
-        if (botsToDisplay.length === 0) {
-            await bot.editMessageText("It seems your bots were deleted from Heroku. You can restore them from your backup.", {
-                chat_id: cid, message_id: checkingMsg.message_id,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Deploy a New Bot', callback_data: 'deploy_first_bot' }],
-                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
-                    ]
-                }
-            });
-            return;
-        }
-
+        // 3. Generate Colored Buttons
         const appButtons = botsToDisplay.map(bot => {
             let statusText = bot.is_active ? (bot.status === 'logged_out' ? 'Logged Out' : 'Connected') : 'Off';
             const expirationCountdown = formatTimeLeft(bot.expiration_date);
-            const buttonText = `${bot.bot_name} - ${statusText}${expirationCountdown}`;
-            return { text: buttonText, callback_data: `selectbot:${bot.bot_name}` };
+            
+            // --- Logic for Colors ---
+            let btnStyle = 'success'; // Default: Green
+            let labelPrefix = '';
+
+            const now = new Date();
+            const expDate = bot.expiration_date ? new Date(bot.expiration_date) : null;
+            const daysLeft = expDate ? (expDate - now) / (1000 * 60 * 60 * 24) : 99;
+
+            // Mark Red if Logged Out, Off, or Expiring in <= 3 days
+            if (bot.status === 'logged_out' || !bot.is_active || daysLeft <= 3) {
+                btnStyle = 'danger'; // Red
+                labelPrefix = '⚠️ ';
+            }
+
+            return { 
+                text: `${labelPrefix}${bot.bot_name} - ${statusText}${expirationCountdown}`, 
+                callback_data: `selectbot:${bot.bot_name}`,
+                style: btnStyle // Apply API 9.4 color style
+            };
         });
 
         const rows = chunkArray(appButtons, 2);
-        rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+        
+        // Restore button in Blue (Primary)
+        rows.push([{ 
+            text: 'Bot not found? Restore', 
+            callback_data: 'restore_from_backup',
+            style: 'primary' 
+        }]);
 
         await bot.editMessageText('Select a bot to manage:', {
-            chat_id: cid, message_id: checkingMsg.message_id,
+            chat_id: cid, 
+            message_id: checkingMsg.message_id,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         });
 
     } catch (error) {
         console.error("Error in 'My Bots' handler:", error);
-        await bot.editMessageText("An error occurred while fetching your bots. Please try again.", {
+        await bot.editMessageText("An error occurred. Please try again.", {
             chat_id: cid, message_id: checkingMsg.message_id
         });
     }
     return;
 }
-
 
 
 if (text === 'Referrals') {
@@ -8874,6 +10726,9 @@ if (text === 'More Features') {
         allButtons.push({ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' });
     }
 
+     // 💡 NEW BUTTON
+     allButtons.push({ text: "Group Filler", callback_data: 'group_filler_start' });
+
     // --- 💡 ADD NEW CONTACT GAIN FEATURE 💡 ---
     allButtons.push({ text: "Contact Gain (VCF Exchange)", callback_data: 'vcf_start' });
     // --- 💡 END NEW FEATURE 💡 ---
@@ -8904,6 +10759,16 @@ if (text === 'More Features') {
 }
 
 
+// Add this inside your bot.on('message') handler
+if (text === 'Support') {
+    return bot.sendMessage(cid, "Contact our official support here: @staries1", {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Message Support', url: 'https://t.me/staries1', style: 'success' }]
+            ]
+        }
+    });
+}
 
 
 
@@ -9345,8 +11210,119 @@ if (action === 'bapp_select_type') {
     await sendBappList(cid, q.message.message_id, botTypeToManage);
 }
 
+if (action === 'addexp_select') {
+    // FIX: Payload is the appName, Extra is the daysToAdd
+    const appName = payload; 
+    const daysToAdd = parseInt(extra, 10);
+    const userId = cid;
 
-  // In bot.js, inside bot.on('callback_query', async q => { ... })
+    if (isNaN(daysToAdd)) {
+        return bot.answerCallbackQuery(q.id, { text: "Error: Invalid day count.", show_alert: true });
+    }
+
+    try {
+        // Update the expiration in the database
+        const result = await pool.query(
+            `UPDATE user_deployments 
+             SET expiration_date = COALESCE(expiration_date, NOW()) + ($1 * INTERVAL '1 day')
+             WHERE app_name = $2
+             RETURNING expiration_date`,
+            [daysToAdd, appName]
+        );
+        
+        if (result.rowCount > 0) {
+            const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString('en-GB');
+            await bot.answerCallbackQuery(q.id, { text: `Success: Added ${daysToAdd} days to ${appName}` });
+            await bot.editMessageText(
+                `Successfully added **${daysToAdd} days** to \`${appName}\`.\n\nNew Expiration: **${newDate}**`,
+                { chat_id: userId, message_id: q.message.message_id, parse_mode: 'Markdown' }
+            );
+        } else {
+            // If not in deployments table, create the record
+            await bot.answerCallbackQuery(q.id, { text: "Bot record updated in system.", show_alert: true });
+            const newDate = new Date(Date.now() + (daysToAdd * 24 * 60 * 60 * 1000));
+            
+            await pool.query(
+                `INSERT INTO user_deployments (user_id, app_name, expiration_date, deploy_date) 
+                 VALUES ($1, $2, $3, NOW()) ON CONFLICT (user_id, app_name) 
+                 DO UPDATE SET expiration_date = user_deployments.expiration_date + ($4 * INTERVAL '1 day')`,
+                [userId, appName, newDate, daysToAdd]
+            );
+            
+            await bot.editMessageText(`Bot record was missing but has been created/updated with ${daysToAdd} days.`, { chat_id: userId, message_id: q.message.message_id });
+        }
+    } catch (error) {
+        console.error('[AddExp Callback] Error:', error);
+        await bot.sendMessage(cid, `Database Error: ${error.message}`);
+    }
+    return;
+}
+
+// --- AWS DB FIX: Restart all bots ---
+if (action === 'fix_db_restart_all') {
+    if (cid !== ADMIN_ID) {
+        await bot.answerCallbackQuery(q.id, { text: 'Only admin can use this action', showAlert: true });
+        return;
+    }
+
+    await bot.editMessageText('Fixing database issue... Restarting all bots (Levanter & Raganork)...', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    }).catch(() => {});
+
+    try {
+        const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
+        if (!HEROKU_API_KEY) {
+            throw new Error('HEROKU_API_KEY not configured');
+        }
+
+        // Get all bots
+        const allBots = await dbServices.getAllUserBots();
+        let successCount = 0;
+        let failureCount = 0;
+        const logMessages = [];
+
+        for (const bot_info of allBots) {
+            const appName = bot_info.bot_name;
+            try {
+                // Restart using Heroku API
+                await axios.delete(`https://api.heroku.com/apps/${appName}/dynos/web`, {
+                    headers: {
+                        'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                        'Accept': 'application/vnd.heroku+json; version=3',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                successCount++;
+                logMessages.push(`✓ Restarted: ${appName}`);
+                console.log(`[DB-Fix] Successfully restarted ${appName}`);
+            } catch (error) {
+                failureCount++;
+                logMessages.push(`✗ Failed: ${appName}`);
+                console.error(`[DB-Fix] Failed to restart ${appName}:`, error.message);
+            }
+            // Wait 30 seconds between restarts
+            await new Promise(resolve => setTimeout(resolve, 30000));
+        }
+
+        // Send completion message
+        const summary = `Database Fix Complete\n\nRestarted All Bots:\nSuccess: ${successCount}\nFailed: ${failureCount}\n\n${logMessages.join('\n')}`;
+        await bot.editMessageText(summary, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        }).catch(() => {});
+
+    } catch (error) {
+        console.error('[DB-Fix] Error during restart:', error);
+        await bot.editMessageText(`Error: ${error.message}`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        }).catch(() => {});
+    }
+    return;
+}
+
+// In bot.js, inside bot.on('callback_query', async q => { ... })
 
 if (action === 'editvar_select') {
     const varName = payload;
@@ -9513,63 +11489,65 @@ if (action === 'users_page') {
 // --- FIX: Refactored select_deploy_type to ask for Session ID first with Image ---
 if (action === 'select_deploy_type') {
     const botType = payload;
-    const st = userStates[cid];
-    const messageIdToDelete = q.message.message_id; // Get the ID of the message to delete
+    const cid = q.message.chat.id.toString();
+    const messageIdToDelete = q.message.message_id;
 
     if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION') {
-        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: messageIdToDelete });
+        return bot.editMessageText('This session has expired. Please start the deployment process again.', { 
+            chat_id: cid, 
+            message_id: messageIdToDelete 
+        });
     }
       
     st.data.botType = botType;
-
-    // The flow now always goes to SESSION_ID first.
     st.step = 'SESSION_ID';
     
-    // --- START OF UPDATED IMAGE LOGIC ---
+    // --- START OF UPDATED LOGIC ---
     let prefix;
     let imageGuideUrl;
     let sessionSiteUrl;
 
     if (botType === 'raganork') {
         prefix = RAGANORK_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; // Raganork Image URL
+        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; 
         sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
     } else if (botType === 'hermit') {
         prefix = HERMIT_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; // Using Levanter image as a placeholder for Hermit
+        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; 
         sessionSiteUrl = HERMIT_SESSION_SITE_URL;
-    } else { // Default to Levanter
+    } else { 
         prefix = LEVANTER_SESSION_PREFIX;
-        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
+        imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg'; 
         sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
     }
-    // --- END OF UPDATED LOGIC ---
 
     const botName = botType.charAt(0).toUpperCase() + botType.slice(1);
-    
     const sessionPrompt = `You've selected *${botName}*. Please send your session id. It must start with \`${prefix}\`.`;
     
-    // 1. Send the new image/instructions message
+    // 1. Send the new image with a COLORED BLUE button
     await bot.sendPhoto(cid, imageGuideUrl, { 
-        caption: sessionPrompt, // Use the prompt as the caption
+        caption: sessionPrompt,
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: `Get Session ID for ${botName}`, url: sessionSiteUrl }
+                    { 
+                        text: `Get Session ID for ${botName}`, 
+                        url: sessionSiteUrl,
+                        style: 'primary' // 🔵 Sets the button color to Blue (API 9.4+)
+                    }
                 ]
             ]
         }
     });
 
-    // 2. Delete the original message that contained the bot type buttons
+    // 2. Delete the original bot selection message
     await bot.deleteMessage(cid, messageIdToDelete)
         .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
 
-    // --- END OF NEW IMAGE LOGIC ---
-
     return;
 }
+
 
 
 
@@ -9713,7 +11691,7 @@ if (action === 'edit_deployment_start_over') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Get Session ID for ${botType.toUpperCase()}`, url: sessionUrl }]
+                    [{ text: `Get Session ID for ${botType.toUpperCase()}`, url: sessionUrl, style: 'primary' }]
                 ]
             }
         }
@@ -9834,8 +11812,8 @@ if (action === 'set_auto_status_choice') {
         message_id: q.message.message_id,
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }],
-                [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over` }]
+                [{ text: 'Confirm', callback_data: `confirm_and_pay_step`, style: 'success' }],
+                [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over`, style: 'primary' }]
             ]
         },
         parse_mode: 'Markdown' // This parse_mode works with the ``` code block
@@ -9898,6 +11876,122 @@ if (action === 'set_auto_status_choice') {
     });
     return;
   }
+
+// In bot.js (inside bot.on('callback_query', ...))
+
+// --- 1. GROUP FILLER START / DESCRIPTION ---
+if (action === 'group_filler_start') {
+    delete userStates[cid];
+    
+    const description = 
+        `**Group Filler Service**\n\n` +
+        `Fill your group instantly with our verified bot members at a decent rate.\n\n` +
+        `*NOTE:* We only add numbers.\n\n` +
+        `Tap **Proceed** to start the order process.`;
+
+    await bot.editMessageText(description, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Proceed to Order', callback_data: 'group_filler_proceed' }],
+                [{ text: '« Back', callback_data: 'more_features_menu' }]
+            ]
+        }
+    });
+    return;
+}
+
+// --- 2. PROCEED: Ask for Link ---
+if (action === 'group_filler_proceed') {
+    delete userStates[cid];
+    userStates[cid] = { step: 'AWAITING_GROUP_LINK', data: {} };
+    
+    await bot.editMessageText("Please send the full **WhatsApp Group Invite Link**", {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+    return;
+}
+
+// --- 3. PAYMENT TRIGGER ---
+if (action === 'group_filler_pay') {
+    const priceNgn = parseInt(payload, 10);
+    const st = userStates[cid];
+    
+    if (!st || st.step !== 'AWAITING_GROUP_CONFIRM') {
+        return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start over.", show_alert: true });
+    }
+    
+    // Call function to show payment options (Flutterwave only, as requested)
+    const messageId = q.message.message_id;
+    
+    // We reuse showPaymentOptions but customize the metadata for the webhook
+    
+    const reference = `flw_fill_${crypto.randomBytes(8).toString('hex')}`;
+    const metadata = {
+        user_id: cid,
+        product: 'Group Filler',
+        link: st.data.groupLink,
+        amount: st.data.totalPrice,
+        members: st.data.memberAmount
+    };
+
+    // We do NOT use initiateFlutterwavePayment here as we need a direct link to the external webhook.
+    // Instead, we store PENDING and send user to pay.
+
+    try {
+        // Store PENDING payment (only if the user has a verified email)
+        const userEmail = await getUserEmail(cid);
+        if (!userEmail) {
+             return bot.editMessageText("You must verify your email address before making a payment. Please use the menu to verify first.", { chat_id: cid, message_id: messageId });
+        }
+        
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+            [reference, cid, userEmail, 'group_filler', st.data.memberAmount.toString(), st.data.groupLink]
+        );
+        
+        // --- Generate FLUTTERWAVE link directly for this service ---
+        const response = await axios.post('https://api.flutterwave.com/v3/payments', {
+            tx_ref: reference,
+            amount: priceNgn,
+            currency: "NGN",
+            redirect_url: `https://t.me/${botUsername}`,
+            customer: {
+                email: userEmail,
+                name: `Group Filler User ${cid}`
+            },
+            meta: metadata,
+            customizations: {
+                title: "Group Filler",
+                description: `Adding ${metadata.members} members to group.`
+            }
+        }, {
+            headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }
+        });
+
+        const paymentUrl = response.data.data.link;
+
+        await bot.editMessageText(
+            `Click the button below to complete your payment (₦${priceNgn.toLocaleString()}).`, {
+                chat_id: cid,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Pay with Flutterwave', url: paymentUrl }]]
+                }
+            }
+        );
+        
+    } catch (error) {
+        console.error("[Group Filler Payment] Error:", error.response?.data || error.message);
+        await bot.editMessageText(`Payment failed. Try again later.`, { chat_id: cid, message_id: messageId });
+    }
+    return;
+}
+
 // Add these new `if` blocks inside your bot.on('callback_query', ...) handler
 
 if (action === 'dkey_select') {
@@ -10292,6 +12386,59 @@ if (action === 'select_restore_app') {
     });
     return;
 }
+
+
+if (action === 'mass_restore') {
+    const botType = payload; // e.g., 'levanter'
+    const messageId = q.message.message_id;
+
+    try {
+        // 1. Fetch matching bots from DB
+        const result = await pool.query(
+            "SELECT bot_name FROM user_bots WHERE bot_type = $1", 
+            [botType]
+        );
+        const apps = result.rows;
+
+        if (apps.length === 0) {
+            return bot.editMessageText(`No ${botType} bots found to restore.`, { chat_id: cid, message_id: messageId });
+        }
+
+        await bot.editMessageText(`Found ${apps.length} ${botType} bots. Starting mass restoration with 1-min intervals...`, {
+            chat_id: cid,
+            message_id: messageId
+        });
+
+        // 2. The Sequential Loop
+        for (let i = 0; i < apps.length; i++) {
+            const appName = apps[i].bot_name;
+            
+            // Update UI
+            await bot.sendMessage(cid, `Step ${i + 1}/${apps.length}: Restoring **${appName}**...`);
+
+            // 3. Trigger the Restore logic (using your existing app-restore function)
+            try {
+                // We use the same function your manual "Restore" button uses
+                await triggerRestoreLogic(appName, botType); 
+            } catch (err) {
+                await bot.sendMessage(cid, `Failed to restore ${appName}: ${err.message}`);
+            }
+
+            // 4. Wait for 1 minute before the next one, unless it's the last app
+            if (i < apps.length - 1) {
+                await bot.sendMessage(cid, "Waiting 60 seconds before next restoration...");
+                await new Promise(resolve => setTimeout(resolve, 60000)); // 1 minute delay
+            }
+        }
+
+        await bot.sendMessage(cid, `Mass restoration for ${botType} completed.`);
+    } catch (e) {
+        console.error("Mass Restore Error:", e.message);
+        await bot.sendMessage(cid, "Error during mass restore process.");
+    }
+    return;
+}
+
 
   /// In bot.js, inside bot.on('callback_query', ...)
 
@@ -10690,8 +12837,8 @@ if (action === 'select_get_session_type') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Get Session', url: RAGANORK_SESSION_SITE_URL }],
-                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    [{ text: 'Get Session', url: RAGANORK_SESSION_SITE_URL, style: 'primary' }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
                 ]
             }
         });
@@ -10706,8 +12853,8 @@ if (action === 'select_get_session_type') {
             reply_markup: {
                 inline_keyboard: [
                     // (Assuming HERMIT_SESSION_SITE_URL is defined at the top of bot.js)
-                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL }],
-                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL, style: 'primary' }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
                 ]
             }
         });
@@ -10723,11 +12870,11 @@ if (action === 'select_get_session_type') {
             reply_markup: {
                 inline_keyboard: [
                     [
-                        { text: 'Get Session ID', url: levanterUrl },
-                        { text: "Can't get session?", callback_data: 'levanter_wa_fallback' }
+                        { text: 'Get Session ID', url: levanterUrl, style: 'primary' },
+                        { text: "Can't get session?", callback_data: 'levanter_wa_fallback', style: 'primary' }
                     ],
                     [
-                        { text: 'Deploy Now', callback_data: 'deploy_first_bot' }
+                        { text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }
                     ]
                 ]
             }
@@ -10974,22 +13121,31 @@ if (action === 'verify_join_after_miniapp') {
     const cid = q.message.chat.id.toString();
 
     try {
-        // 1. Check if user is pre-verified
-        const preVerifiedCheck = await pool.query("SELECT ip_address FROM pre_verified_users WHERE user_id = $1", [userId]);
+        // 1. Check if user is pre-verified (with IP and location data)
+        const preVerifiedCheck = await pool.query("SELECT ip_address, city, latitude, longitude FROM pre_verified_users WHERE user_id = $1", [userId]);
         if (preVerifiedCheck.rows.length === 0) {
             await bot.answerCallbackQuery(q.id, { text: "You must complete the security check first.", show_alert: true });
             return;
         }
-        const userIpAddress = preVerifiedCheck.rows[0].ip_address;
+        
+        const { ip_address: userIpAddress, city, latitude, longitude } = preVerifiedCheck.rows[0];
+        console.log(`[Free Trial Verification] User ${userId} | IP: ${userIpAddress} | City: ${city} | Location: ${latitude},${longitude}`);
 
-        // 2. Check if user is in the channel
+        // 2. Check if user is in the channel (joining requirement)
         const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
         if (!['creator', 'administrator', 'member'].includes(member.status)) {
             await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet.", show_alert: true });
             return;
         }
 
-        // All checks passed, assign the number
+        // 3. Double-check: Ensure user hasn't already claimed a trial (abuse prevention)
+        const existingTrialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
+        if (existingTrialCheck.rows.length > 0) {
+            await bot.answerCallbackQuery(q.id, { text: "You have already claimed your free trial.", show_alert: true });
+            return;
+        }
+
+        // All checks passed! Assign a free trial number
         const numberResult = await pool.query("SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1");
         if (numberResult.rows.length === 0) {
             await bot.editMessageText("Sorry, no free trial numbers are available right now.", { chat_id: cid, message_id: q.message.message_id });
@@ -10997,14 +13153,22 @@ if (action === 'verify_join_after_miniapp') {
         }
         const freeNumber = numberResult.rows[0].number;
 
-        // Use a transaction to finalize
+        // Use a transaction to finalize the free trial claim
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            
+            // Mark the number as assigned to this user
             await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
+            
+            // Record this free trial claim with IP and location data for fraud prevention
             await client.query("INSERT INTO free_trial_numbers (user_id, number_used, ip_address) VALUES ($1, $2, $3)", [userId, freeNumber, userIpAddress]);
-            await client.query("DELETE FROM pre_verified_users WHERE user_id = $1", [userId]); // Clean up
+            
+            // Clean up the pre-verified record
+            await client.query("DELETE FROM pre_verified_users WHERE user_id = $1", [userId]);
+            
             await client.query('COMMIT');
+            console.log(`[Free Trial] ✅ Successfully assigned number ${freeNumber} to user ${userId} from IP ${userIpAddress}`);
         } catch (e) {
             await client.query('ROLLBACK');
             throw e;
@@ -11012,16 +13176,24 @@ if (action === 'verify_join_after_miniapp') {
             client.release();
         }
 
-        await bot.editMessageText(`All steps complete! Your free trial number is: <code>${freeNumber}</code>`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'HTML' });
+        // Success! Show the user their number
+        await bot.editMessageText(`✅ *All steps complete!*\n\nYour free trial number is:\n\n<code>${freeNumber}</code>\n\nOTP will be sent automatically if detected.`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'HTML' });
         
-        // 🚨 FIX APPLIED: Correcting the typo "be send automaticallyif detected."
-        await bot.sendMessage(userId, 'OTP will be **sent** automatically **if** detected.'); 
-        
-        await bot.sendMessage(ADMIN_ID, `User \`${userId}\` (IP: ${userIpAddress}) has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
+        // Notify the admin about the free trial claim with security details
+        await bot.sendMessage(ADMIN_ID, 
+            `*Free Trial Claimed!*\n\n` +
+            `*User:* \`${userId}\`\n` +
+            `*Number:* \`${freeNumber}\`\n` +
+            `*IP Address:* \`${userIpAddress}\`\n` +
+            `*City:* ${city || 'N/A'}\n` +
+            `*Coordinates:* ${latitude && longitude ? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` : 'N/A'}\n` +
+            `*Status:* ✅ Verification Passed`, 
+            { parse_mode: 'Markdown' }
+        );
 
     } catch (error) {
         console.error("Error during final verification:", error);
-        await bot.answerCallbackQuery(q.id, { text: "An error occurred.", show_alert: true });
+        await bot.answerCallbackQuery(q.id, { text: "An error occurred. Please try again.", show_alert: true });
     }
     return;
 }
@@ -11402,7 +13574,7 @@ if (action === 'renew_bot') {
     // --- Create list of plan buttons ---
     const planButtons = [
         { text: 'Basic: ₦500 / 10 Days', callback_data: `select_renewal:500:10:${appName}` },
-        { text: 'Standard: ₦1500 / 30 Days', callback_data: `select_renewal:1500:30:${appName}` },
+        { text: 'Standard: ₦1500 / 45 Days', callback_data: `select_renewal:1500:45:${appName}` },
         { text: 'Quarterly: ₦3,000 / 3 months', callback_data: `select_renewal:3000:92:${appName}` },
         { text: 'Semi-Annual: ₦5,000 / 6 months', callback_data: `select_renewal:5000:185:${appName}` },
         { text: 'Annual: ₦8,000 / 1 year', callback_data: `select_renewal:8000:365:${appName}` },
@@ -11493,8 +13665,8 @@ if (action === 'select_renewal') {
               reply_markup: {
                   inline_keyboard: [
                       [
-                          { text: 'Confirm & Deploy', callback_data: `setup:startbuild` },
-                          { text: 'Cancel', callback_data: `setup:cancel` }
+                          { text: 'Confirm & Deploy', callback_data: `setup:startbuild`, style: 'success' },
+                          { text: 'Cancel', callback_data: `setup:cancel`, style: 'danger' }
                       ]
                   ]
               }
@@ -11581,7 +13753,7 @@ if (action === 'confirm_and_pay_step') {
             message_id: q.message.message_id,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Make payment`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
+                    [{ text: `Make payment`, callback_data: 'buy_key_for_deploy', style: 'success' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy', style: 'danger' }]
                 ]
             }
         });
@@ -12007,10 +14179,6 @@ if (action === 'paystack_deploy' || action === 'paystack_renew') {
 }
 
 
-// In bot.js, inside bot.on('callback_query', ...)
-
-// bot.js (Inside bot.on('callback_query', ...) handler)
-
 if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const isRenewal = action === 'flutterwave_renew';
     const priceNgn = parseInt(payload, 10);
@@ -12077,7 +14245,7 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
             `Click the button below to complete your payment with Flutterwave.`, {
                 chat_id: cid, message_id: q.message.message_id,
                 reply_markup: {
-                    inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
+                    inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl, style: 'success' }]]
                 }
             }
         );
@@ -12142,21 +14310,21 @@ if (action === 'cancel_payment_and_deploy') {
 }
 
 
-
-// REPLACE the existing "if (action === 'selectapp' || action === 'selectbot')" block with this one
-
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
 
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
+    
+    if (userStates[cid]?.data?.logInterval) {
+        clearInterval(userStates[cid].data.logInterval);
+        delete userStates[cid].data.logInterval;
+    }
 
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     });
     
-    // Get bot status from all our DB tables
-    // 💡 ADDED ub.bot_type to the query
     const dbBotInfo = (await pool.query(
         'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
         'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
@@ -12166,116 +14334,86 @@ if (action === 'selectapp' || action === 'selectbot') {
 
     const dynoStatus = await dbServices.getDynoStatus(appName);
     if (dynoStatus === 'deleted' || dynoStatus === 'error') {
-        // This is an error state, so we don't use text art
         return bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
             chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
         });
     }
 
-    let finalStatusText;
-    let expirationCountdown = formatPreciseCountdown(dbBotInfo?.expiration_date);
+    const botType = (dbBotInfo?.bot_type || 'Bot').toUpperCase();
+    const expirationDate = dbBotInfo?.expiration_date ? new Date(dbBotInfo.expiration_date) : null;
+    const now = new Date();
     const keyboard = [];
     
-    // 💡 Get bot_type for the header
-    const botType = (dbBotInfo?.bot_type || 'Bot').toUpperCase();
-    let message; // This will hold our new text-art message
+    // TEMPLATE LITERAL FIX: Use backticks (`) for the variables inside the string to work
+    const daysLeft = expirationDate ? Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24)) : 'N/A';
+    const finalStatusText = dbBotInfo?.paused_at ? 'Paused' : (dbBotInfo?.wpp_status === 'logged_out' ? 'Logged Out' : 'Connected');
 
-    if (dbBotInfo?.paused_at) {
-        // --- Bot is PAUSED ---
-        finalStatusText = 'Paused';
-        expirationCountdown += ' (Paused)';
-        
-        // --- 🎨 DESIGN UPDATE ---
-        message = "```\n";
-        message += ` ═══ ${botType} ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
-        message += ` ┃❃╰───────────────\n\n`;
-        message += ` This bot is turned off and its timer is paused.`;
-        message += "\n```";
-        // --- 🎨 END DESIGN ---
+    const isExpired = expirationDate && expirationDate < now;
+    const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
 
-        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
-        
-    } else if (dynoStatus === 'on') {
-        // --- Bot is ON ---
-        finalStatusText = (dbBotInfo?.wpp_status === 'logged_out') ? 'Logged Out' : 'Connected';
-        
-        // --- 🎨 DESIGN UPDATE ---
-        message = "```\n";
-        message += ` ═══ ${botType} ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
-        message += ` ┃❃╰───────────────`;
-        message += "\n```";
-        // --- 🎨 END DESIGN ---
-        
-        const mainRow = [
-            { text: 'Info', callback_data: `info:${appName}` },
-            { text: 'Restart', callback_data: `restart:${appName}` },
-            { text: 'Logs', callback_data: `logs:${appName}` }
-        ];
+    if (isExpired) {
+        const timeSinceExpiry = now - expirationDate.getTime();
+        const hoursRemaining = Math.max(0, Math.round((GRACE_PERIOD_MS - timeSinceExpiry) / (1000 * 60 * 60)));
 
-        if (dbBotInfo && dbBotInfo.expiration_date) {
-            const daysLeft = Math.ceil((new Date(dbBotInfo.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
-            if (daysLeft <= 7) {
-                mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
-            }
-        }
-        
-        keyboard.push(mainRow);
-                keyboard.push(
-            [
-                { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
-                { text: 'Delete', callback_data: `userdelete:${appName}` },
-                { text: 'Set Variable', callback_data: `setvar:${appName}` }
-            ],
-            [
-                { text: 'Backup', callback_data: `backup_app:${appName}` },
-                { text: 'Switch To Another Bot', callback_data: `switch_bot_start:${appName}` }, // <--- NEW BUTTON
-                { text: 'Turn Bot Off (Pause)', callback_data: `toggle_dyno:off:${appName}` }
-            ]
+        let message = "```\n ═══ SUSPENDED ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : Expired\n ┃❃│ Deletion : in " + hoursRemaining + " hours\n ┃❃╰───────────────\n\n This bot is suspended. Renew now to restore it.\n```";
+
+        keyboard.push(
+            [{ text: 'Renew Bot', callback_data: `renew_bot:${appName}`, style: 'success' }], 
+            [{ text: 'Delete Bot', callback_data: `userdelete:${appName}`, style: 'danger' }]
         );
 
+        await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+
+    } else if (dbBotInfo?.paused_at) {
+        let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : Paused\n ┃❃│ Expires  : Paused\n ┃❃╰───────────────\n\n This bot is turned off and its timer is paused.\n```";
+
+        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]);
+        keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }]); // Corrected callback_data
+
+        await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+        
+    } else if (dynoStatus === 'on') {
+        let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : " + finalStatusText + "\n ┃❃│ Expires  : " + daysLeft + " days left\n ┃❃╰───────────────\n```";
+        
+        // FIX: All buttons in the row must be objects if style is used
+        const mainRow = [
+            { text: 'Info', callback_data: `info:${appName}`, style: 'success' },
+            { text: 'Restart', callback_data: `restart:${appName}`, style: 'success' },
+            { text: 'Logs', callback_data: `logs:${appName}`, style: 'success' }
+        ];
+
+        if (daysLeft <= 7) {
+            mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}`, style: 'danger' });
+        }
+        
+        keyboard.push(
+            mainRow,
+            [
+                { text: 'Redeploy', callback_data: `redeploy_app:${appName}`, style: 'success' },
+                { text: 'Delete', callback_data: `userdelete:${appName}`, style: 'danger' },
+                { text: 'Set Variable', callback_data: `setvar:${appName}`, style: 'success' }
+            ],
+            [
+                { text: 'Backup', callback_data: `backup_app:${appName}`, style: 'success' },
+                { text: 'Switch Bot', callback_data: `switch_bot_start:${appName}`, style: 'success' },
+                { text: 'Turn Off (Pause)', callback_data: `toggle_dyno:off:${appName}`, style: 'danger' }
+            ],
+            [{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }] // Fixed property name
+        );
+
+        await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
 
     } else { 
-        // --- Bot is OFF (but not paused, e.g., crashed) ---
-        finalStatusText = 'Off';
-        
-        // --- 🎨 DESIGN UPDATE ---
-        message = "```\n";
-        message += ` ═══ ${botType} ═══⊷\n`;
-        message += ` ┃❃╭──────────────\n`;
-        message += ` ┃❃│ Bot Name : ${appName}\n`;
-        message += ` ┃❃│ Status   : ${finalStatusText}\n`;
-        message += ` ┃❃│ Expires  : ${expirationCountdown}\n`;
-        message += ` ┃❃╰───────────────\n\n`;
-        message += ` This bot is currently turned off.`;
-        message += "\n```";
-        // --- 🎨 END DESIGN ---
+        let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : Off\n ┃❃│ Expires  : Active\n ┃❃╰───────────────\n\n This bot is currently turned off.\n```";
 
-        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
+        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]);
+        keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }]);
+
+        await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
     }
-    
-    keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
-
-    return bot.editMessageText(message, {
-      chat_id: cid,
-      message_id: messageId,
-      parse_mode: 'Markdown', // This is required for the code block
-      reply_markup: {
-        inline_keyboard: keyboard
-      }
-    });
 }
 
 
-
-// In bot.js (inside bot.on('callback_query'))
 
 // 1. START SWITCH: Show available types
 if (action === 'switch_bot_start') {
@@ -12349,8 +14487,8 @@ if (action === 'confirm_switch_pay') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}` }],
-                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}` }]
+                    [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}`, style: 'success' }],
+                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}`,  style: 'danger' }]
                 ]
             }
         }
@@ -12873,7 +15011,7 @@ if (action === 'info') {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}`, style: 'success' }]]
         }
       });
     } finally {
@@ -12883,47 +15021,163 @@ if (action === 'info') {
 
   if (action === 'logs') {
     const st = userStates[cid];
-    // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid]; // Clear invalid state
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots'.");
+        delete userStates[cid];
         return;
     }
+
     const messageId = q.message.message_id;
-
-    await bot.sendChatAction(cid, 'typing');
-    await bot.editMessageText('Fetching logs...', { chat_id: cid, message_id: messageId });
-    try {
-      const sess = await herokuApi.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
-        { tail: false, lines: 100 },
-        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-      );
-      const logRes = await axios.get(sess.data.logplex_url);
-      const logs = logRes.data.trim().slice(-4000);
-
-      return bot.editMessageText(`Logs for "*${payload}*":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
-        }
-      });
-    } catch (e) {
-      if (e.response && e.response.status === 404) {
-          await dbServices.handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // Use dbServices
-          return;
-      }
-      const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
-        chat_id: cid,
-        message_id: messageId,
-        reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
-        }
-      });
+    
+    // BUG FIX: Clear any existing interval if the user clicks "Logs" multiple times
+    if (st.data.logInterval) {
+        clearInterval(st.data.logInterval);
     }
-  }
+
+    await bot.editMessageText(`Logs for ${payload}:\nConnecting...`, { 
+        chat_id: cid, 
+        message_id: messageId 
+    });
+
+    let lastText = ""; // To prevent "message not modified" errors
+
+    const refreshLogs = async () => {
+        try {
+            const sess = await herokuApi.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
+                { tail: false, lines: 30 },
+                { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+            );
+
+            const logRes = await axios.get(sess.data.logplex_url);
+            const logs = logRes.data.trim().slice(-3000);
+            const logText = `Logs for "*${payload}*":\n\`\`\`\n${logs || 'Waiting for activity...'}\n\`\`\``;
+
+            // Only edit if the content actually changed
+            if (logText !== lastText) {
+                await bot.editMessageText(logText, {
+                    chat_id: cid,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Summarize with AI', callback_data: `ai_summary:${payload}` }],
+                            [{ text: 'Stop Stream', callback_data: `selectapp:${payload}` }]
+                        ]
+                    }
+                });
+                lastText = logText;
+            }
+        } catch (e) {
+            // Ignore common harmless Telegram errors
+            if (!e.message.includes("message is not modified") && !e.message.includes("message to edit not found")) {
+                console.error("Live log error:", e.message);
+            }
+        }
+    };
+
+    // Store the interval in the state so we can stop it later
+    const intervalId = setInterval(refreshLogs, 4000);
+    st.data.logInterval = intervalId;
+
+    // Trigger first run immediately
+    refreshLogs();
+
+    // Auto-stop after 1 minute
+    setTimeout(() => {
+        if (st.data && st.data.logInterval === intervalId) {
+            clearInterval(intervalId);
+            delete st.data.logInterval;
+            bot.editMessageText(`Log Session Ended for ${payload}.`, {
+                chat_id: cid,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Summarize with AI', callback_data: `ai_summary:${payload}` }],
+                        [{ text: 'Back', callback_data: `selectapp:${payload}` }]
+                    ]
+                }
+            }).catch(() => {});
+        }
+    }, 60000); 
+
+    return;
+}
+
+if (action === 'ai_summary') {
+    const appName = payload;
+    const messageId = q.message.message_id;
+    const st = userStates[cid];
+
+    // 1. Stop the log loop immediately to prevent the "jump back" bug
+    if (st && st.data && st.data.logInterval) {
+        clearInterval(st.data.logInterval);
+        delete st.data.logInterval;
+    }
+
+    await bot.editMessageText(`AI is analyzing logs for "${appName}"...`, { 
+        chat_id: cid, 
+        message_id: messageId 
+    });
+
+    try {
+        // 2. Fetch the last 50 lines of logs
+        const sess = await herokuApi.post(`https://api.heroku.com/apps/${appName}/log-sessions`,
+            { tail: false, lines: 50 },
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        const logRes = await axios.get(sess.data.logplex_url);
+        const rawLogs = logRes.data;
+
+        // 3. Call Groq API
+        const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: "llama-3.3-70b-versatile", // Fast and smart model
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a technical support assistant. Summarize WhatsApp bot logs in 2 clear sentences. Identify if it is connected or show the specific error."
+                },
+                {
+                    role: "user",
+                    content: `Analyze these logs for bot "${appName}":\n${rawLogs}`
+                }
+            ],
+            temperature: 0.5,
+            max_tokens: 150
+        }, {
+            headers: {
+                'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const explanation = groqRes.data.choices[0].message.content;
+
+        // 4. Show the result
+        await bot.editMessageText(`AI Log Analysis:\n\n${explanation}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Return to Logs', callback_data: `logs:${appName}` }],
+                    [{ text: 'Back to Menu', callback_data: `selectapp:${appName}` }]
+                ]
+            }
+        });
+
+    } catch (error) {
+        console.error("Analysis Failed:", error.response?.data || error.message);
+        await bot.editMessageText("Analysis failed. Please check raw logs.", {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back', callback_data: `logs:${appName}` }]]
+            }
+        });
+    }
+    return;
+}
+
+
 
   if (action === 'delete' || action === 'userdelete') {
     const st = userStates[cid];
@@ -12941,8 +15195,8 @@ if (action === 'info') {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: "Yes, I am sure", callback_data: `confirmdelete:${payload}:${action}` },
-            { text: "No, cancel", callback_data: `selectapp:${payload}` }
+            { text: "Yes, I am sure", callback_data: `confirmdelete:${payload}:${action}`, style: 'danger' },
+            { text: "No, cancel", callback_data: `selectapp:${payload}`, style: 'primary' }
           ]]
         }
       });
@@ -13011,8 +15265,8 @@ if (action === 'info') {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Get Session ID', url: sessionUrl }],
-                [{ text: "I have my Session ID now", callback_data: `has_session:${botType}` }]
+                [{ text: 'Get Session ID', url: sessionUrl, style: 'primary' }],
+                [{ text: "I have my Session ID now", callback_data: `has_session:${botType}`, style: 'success' }]
             ]
         }
     });
@@ -13312,6 +15566,23 @@ if (action === 'confirmdelete') {
   }
   if (action === 'restore_all_cancel') {
       await bot.editMessageText('Restore cancelled.', {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+      });
+      return;
+  }
+
+  // NEW: Handle restart all bots
+  if (action === 'restart_all_bots') {
+      handleRestartAllSelection(q); // This shows confirmation and starts restart
+      return;
+  }
+  if (action === 'restart_all_confirm') {
+      handleRestartAllConfirm(q); // This executes the restart
+      return;
+  }
+  if (action === 'restart_all_cancel') {
+      await bot.editMessageText('Restart cancelled.', {
           chat_id: q.message.chat.id,
           message_id: q.message.message_id
       });
@@ -13638,68 +15909,69 @@ if (action === 'change_session') {
     const appName = payload;
     const targetUserId = extra;
     const cid = q.message.chat.id.toString();
-    const messageIdToDelete = q.message.message_id; // Get the ID of the message to delete
+    const messageIdToDelete = q.message.message_id;
 
     if (cid !== targetUserId) {
-        await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
+        await bot.sendMessage(cid, "You can only change the session ID for your own bots.");
         return;
     }
-    // Clear current state and set up for session ID input
-    delete userStates[cid];
-    const botTypeForChangeSession = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
-    
-    // --- START OF UPDATED IMAGE/PHOTO LOGIC ---
-    let imageGuideUrl;
-    let sessionSiteUrl;
-    let prefix;
 
-    if (botTypeForChangeSession === 'raganork') {
-        imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg'; // Raganork Image URL
-        sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
-        prefix = RAGANORK_SESSION_PREFIX;
-    } else if (botTypeForChangeSession === 'hermit') {
-        imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg'; // Using Levanter image as a placeholder for Hermit
-        sessionSiteUrl = HERMIT_SESSION_SITE_URL;
-        prefix = HERMIT_SESSION_PREFIX;
-    } else { // Default to Levanter
-        imageGuideUrl = 'https.files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
-        sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
-        prefix = LEVANTER_SESSION_PREFIX;
-    }
-    // --- END OF UPDATED IMAGE/PHOTO LOGIC ---
-        
-    const sessionPrompt = `Please send the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
-    
+    // Set state immediately to prevent race conditions or session timeouts
     userStates[cid] = {
         step: 'SETVAR_ENTER_VALUE',
         data: {
             APP_NAME: appName,
             VAR_NAME: 'SESSION_ID',
             targetUserId: targetUserId,
-            isFreeTrial: false, 
-            botType: botTypeForChangeSession
+            isFreeTrial: false
         }
     };
-    
-    // 1. Send the new image/instructions message
-    await bot.sendPhoto(cid, imageGuideUrl, { 
-        caption: sessionPrompt, // Use the prompt as the caption
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: "Don't have the new session? (Click Here)", url: sessionSiteUrl }
-                ]
-            ]
+
+    try {
+        // Fetch bot type to determine the correct guide and prefix
+        const dbRes = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName]);
+        const botType = dbRes.rows[0]?.bot_type || 'levanter';
+        userStates[cid].data.botType = botType;
+
+        let imageGuideUrl;
+        let sessionSiteUrl;
+        let prefix;
+
+        if (botType === 'raganork') {
+            imageGuideUrl = 'https://files.catbox.moe/lqk3gj.jpeg';
+            sessionSiteUrl = RAGANORK_SESSION_SITE_URL;
+            prefix = RAGANORK_SESSION_PREFIX;
+        } else if (botType === 'hermit') {
+            imageGuideUrl = 'https://files.catbox.moe/udjrjg.jpeg';
+            sessionSiteUrl = HERMIT_SESSION_SITE_URL;
+            prefix = HERMIT_SESSION_PREFIX;
+        } else {
+            imageGuideUrl = 'https://files.catbox.moe/k6wgxl.jpeg';
+            sessionSiteUrl = LEVANTER_SESSION_SITE_URL;
+            prefix = LEVANTER_SESSION_PREFIX;
         }
-    });
-    
-    // 2. Delete the original message that contained the button
-    await bot.deleteMessage(cid, messageIdToDelete)
-        .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
-    
-    // --- END OF FIXED IMAGE/PHOTO LOGIC ---
-    
+
+        const sessionPrompt = `Please send the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
+
+        // Send the instruction photo first
+        await bot.sendPhoto(cid, imageGuideUrl, {
+            caption: sessionPrompt,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Get New Session ID", url: sessionSiteUrl, style: 'primary' }]
+                ]
+            }
+        });
+
+        // Delete the original button message only after the instruction is sent
+        await bot.deleteMessage(cid, messageIdToDelete).catch(() => {});
+
+    } catch (error) {
+        console.error("Error in change_session callback:", error);
+        // Fallback message if the photo fails to send
+        await bot.sendMessage(cid, "Please send your new session ID now.");
+    }
     return;
 }
 
@@ -13902,7 +16174,8 @@ if (action === 'change_session') {
       if (bots.length > 0) {
           const rows = chunkArray(bots, 3).map(r => r.map(n => ({
             text: n,
-            callback_data: `selectbot:${n}`
+            callback_data: `selectbot:${n}`,
+              style: 'primary'
           })));
           return bot.editMessageText('Your remaining deployed bots:', {
             chat_id: cid,
@@ -13916,8 +16189,8 @@ if (action === 'change_session') {
             message_id: currentMessageId,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
-                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot', style: 'success' }],
+                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup', style: 'primary' }]
                 ]
             }
         });
@@ -14100,7 +16373,7 @@ bot.on('channel_post', async msg => {
                 const sentMessage = await bot.sendMessage(userId, warningMessage, {
                     parse_mode: 'Markdown',
                     reply_markup: {
-                        inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
+                        inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}`, style: 'success' }]]
                     }
                 }).catch(e => console.error(`Failed to send Telegram warning to user ${userId}: ${e.message}`));
                 
@@ -14225,118 +16498,124 @@ const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 async function checkAndManageExpirations() {
     console.log('[Expiration] Running daily check for expiring and expired bots...');
     const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+    const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000; // 48 Hours
 
     // 1. Handle Warnings for Soon-to-Expire Bots
-    const expiringBots = await dbServices.getExpiringBackups(); // This now gets bots at level 0 or 7
+    const expiringBots = await dbServices.getExpiringBackups(); 
     
     for (const botInfo of expiringBots) {
         const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
-        
-        let warningToSend = null; // 7, 3, or null
+        let warningToSend = null; 
         let newWarningLevel = 0;
 
-        // --- NEW Multi-Stage Warning Logic ---
         if (botInfo.warning_level === 0 && daysLeft <= 7) {
-            // Bot is at level 0 and is 7 days (or less) from expiring. Send 7-day warning.
             warningToSend = 7;
             newWarningLevel = 7;
         } else if (botInfo.warning_level === 7 && daysLeft <= 3) {
-            // Bot is at level 7 and is 3 days (or less) from expiring. Send 3-day warning.
             warningToSend = 3;
             newWarningLevel = 3;
+        } else if (botInfo.warning_level === 3 && daysLeft <= 1) {
+            warningToSend = 1;
+            newWarningLevel = 1;
         }
-        // --- End of New Logic ---
 
-        // If a warning needs to be sent
         if (warningToSend) {
+            let warningMessageText = '';
+            if (warningToSend === 7) {
+                warningMessageText = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent suspension.`;
+            } else if (warningToSend === 3) {
+                warningMessageText = `URGENT: Your bot *${escapeMarkdown(botInfo.app_name)}* expires in *${daysLeft} day(s)* only! Renew now or it will be suspended.`;
+            } else if (warningToSend === 1) {
+                warningMessageText = `CRITICAL: Your bot *${escapeMarkdown(botInfo.app_name)}* expires TODAY/TOMORROW! This is your last chance to renew before suspension and eventual deletion.`;
+            }
+            
             console.log(`[Expiration] Sending ${warningToSend}-day warning for ${botInfo.app_name}.`);
             
             try {
-                // --- A) Send Telegram Message ---
-                const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
-                
-                await bot.sendMessage(botInfo.user_id, warningMessage, {
+                await bot.sendMessage(botInfo.user_id, warningMessageText, {
                     parse_mode: 'Markdown',
                     reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
-                            ]
-                        ]
+                        inline_keyboard: [[{ text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }]]
                     }
                 });
 
-                // --- B) Send Email ---
                 try {
                     const ownerInfoResult = await pool.query(
                         `SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE`,
                         [botInfo.user_id]
                     );
                     if (ownerInfoResult.rows.length > 0 && ownerInfoResult.rows[0].email) {
-                        const email = ownerInfoResult.rows[0].email;
-                        console.log(`[Expiration] Sending ${warningToSend}-day expiration email for ${botInfo.app_name} to ${email}.`);
-                        await sendExpirationReminder(email, botInfo.app_name, botUsername, daysLeft);
+                        await sendExpirationReminder(ownerInfoResult.rows[0].email, botInfo.app_name, botUsername, daysLeft);
                     }
                 } catch (emailError) {
-                    console.error(`[Expiration] Failed to send email for ${botInfo.app_name}:`, emailError.message);
+                    console.error(`[Expiration] Email error for ${botInfo.app_name}:`, emailError.message);
                 }
 
-                // --- C) Update Database Warning Level ---
                 await dbServices.setBackupWarningLevel(botInfo.user_id, botInfo.app_name, newWarningLevel);
-                console.log(`[Expiration] Warning for ${botInfo.app_name} sent. Level set to ${newWarningLevel}.`);
-            
             } catch (error) {
-                // This catches errors in the main loop (e.g., Telegram message failed)
-                console.error(`[Expiration] Failed to send ${warningToSend}-day warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
+                console.error(`[Expiration] Failed to send ${warningToSend}-day warning to user ${botInfo.user_id}:`, error.message);
             }
         }
     }
 
-    // 2. Handle Deletion of Expired Bots
-    // (This part of your function remains unchanged)
+    // 2. Handle Suspension and Deletion of Expired Bots
     const expiredBots = await dbServices.getExpiredBackups();
     for (const botInfo of expiredBots) {
         try {
-            console.log(`[Expiration] Bot ${botInfo.app_name} for user ${botInfo.user_id} has expired. Deleting now.`);
-            
-            // Send notice to user
-            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' })
-                .catch(err => console.error(`[Expiration] Failed to send deletion notice to user ${botInfo.user_id}:`, err.message));
-            
-            // Delete from Heroku
-            console.log(`[Expiration] Deleting Heroku app: ${botInfo.app_name}`);
-            await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
-            
-            // Delete its Neon database
-            console.log(`[Expiration] Deleting associated Neon database: ${botInfo.app_name}`);
-            let accountIdToDelete = '1';
-            try {
-                 const deployInfo = await pool.query('SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2', [botInfo.user_id, botInfo.app_name]);
-                 if (deployInfo.rows.length > 0 && deployInfo.rows[0].neon_account_id) {
-                     accountIdToDelete = deployInfo.rows[0].neon_account_id;
-                 }
-            } catch(e) { /* default to 1 */ }
-            
-            const deleteResult = await deleteNeonDatabase(botInfo.app_name, accountIdToDelete); 
-            if (!deleteResult.success) {
-                console.error(`[Expiration] Failed to delete Neon database ${botInfo.app_name}: ${deleteResult.error}`);
+            const expiryTime = new Date(botInfo.expiration_date).getTime();
+            const timeSinceExpiry = Date.now() - expiryTime;
+
+            if (timeSinceExpiry < GRACE_PERIOD_MS) {
+                // --- PHASE A: WITHIN GRACE PERIOD (SUSPEND) ---
+                if (!botInfo.paused_at) {
+                    console.log(`[Grace Period] Suspending ${botInfo.app_name}.`);
+                    
+                    // Pause on Heroku
+                    await herokuApi.patch(`/apps/${botInfo.app_name}/formation/web`, 
+                        { quantity: 0 },
+                        { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                    ).catch(() => {});
+
+                    // Record suspension in DB
+                    await pool.query("UPDATE user_deployments SET paused_at = NOW() WHERE app_name = $1", [botInfo.app_name]);
+
+                    const hoursLeft = Math.round((GRACE_PERIOD_MS - timeSinceExpiry) / (1000 * 60 * 60));
+                    await bot.sendMessage(botInfo.user_id, 
+                        `Notice: Bot Suspended - ${escapeMarkdown(botInfo.app_name)}\n\n` +
+                        `Your subscription has expired. The bot is now offline.\n` +
+                        `You have ${hoursLeft} hours to renew before the bot and its data are permanently deleted.`,
+                        { 
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: [[{ text: 'Renew Now', callback_data: `renew_bot:${botInfo.app_name}` }]] }
+                        }
+                    ).catch(() => {});
+                }
+            } else {
+                // --- PHASE B: GRACE PERIOD ENDED (DELETE) ---
+                console.log(`[Expiration] Grace period ended for ${botInfo.app_name}. Deleting.`);
+                
+                await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                }).catch(() => {});
+                
+                let accountIdToDelete = '1';
+                try {
+                     const deployInfo = await pool.query('SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2', [botInfo.user_id, botInfo.app_name]);
+                     if (deployInfo.rows.length > 0) accountIdToDelete = deployInfo.rows[0].neon_account_id;
+                } catch(e) {}
+                
+                await deleteNeonDatabase(botInfo.app_name, accountIdToDelete).catch(() => {});
+                await dbServices.permanentlyDeleteBotRecord(botInfo.user_id, botInfo.app_name);
+
+                await bot.sendMessage(botInfo.user_id, `Final Notice: Your bot ${escapeMarkdown(botInfo.app_name)} has been permanently deleted because the grace period ended.`, { parse_mode: 'Markdown' }).catch(() => {});
+                await bot.sendMessage(ADMIN_ID, `Bot ${escapeMarkdown(botInfo.app_name)} for user ${botInfo.user_id} was deleted after grace period.`).catch(() => {});
             }
-
-            // Delete from all local database tables
-            await dbServices.permanentlyDeleteBotRecord(botInfo.user_id, botInfo.app_name);
-
-            // Send alert to admin
-            await bot.sendMessage(ADMIN_ID, `Bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\` expired and was auto-deleted from Heroku and Neon.`, { parse_mode: 'Markdown' })
-                .catch(err => console.error(`[Expiration] Failed to send admin alert for ${botInfo.app_name}:`, err.message));
-
         } catch (error) {
-            console.error(`[Expiration] Failed to delete expired bot ${botInfo.app_name} for user ${botInfo.user_id}:`, error.message);
-            await monitorSendTelegramAlert(`Failed to auto-delete expired bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\`. Please check logs.`, ADMIN_ID);
+            console.error(`[Expiration Critical] Error managing ${botInfo.app_name}:`, error.message);
         }
     }
 }
+
 
 
 // Run the check once every day
