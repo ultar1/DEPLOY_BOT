@@ -2225,9 +2225,36 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             throw err; 
         }
 
-        // --- Step 7: Handle Build Succeeded ---
+         // --- Step 7: Handle Build Succeeded ---
         console.log(`[Flow] buildWithProgress: Heroku build for "${appName}" SUCCEEDED.`);
         
+        // NEW: AUTOMATIC DYNO CONFIGURATION (LEVANTER ONLY)
+        if (botType === 'levanter') {
+            try {
+                console.log(`[Dyno] Auto-scaling Levanter "${appName}" to Standard-2X...`);
+                
+                await herokuApi.patch(`/apps/${appName}/formation`, {
+                    updates: [
+                        {
+                            process: 'web',
+                            quantity: 1,         // Automatically turns the bot ON
+                            size: 'Standard-2X'  // Sets the heavy-duty dyno size (1GB RAM)
+                        }
+                    ]
+                }, {
+                    headers: { 
+                        'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                        'Accept': 'application/vnd.heroku+json; version=3' 
+                    }
+                });
+                console.log(`[Dyno] Levanter "${appName}" is now live on Standard-2X.`);
+            } catch (dynoError) {
+                // If this fails (e.g. no credit card on Heroku), we log it but don't stop the deploy
+                console.error(`[Dyno Error] Could not auto-scale Levanter:`, dynoError.response?.data || dynoError.message);
+            }
+        }
+        // END OF DYNO LOGIC
+
         const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
         await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
         
@@ -2261,6 +2288,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             }
         }
         // --- END OF EXPIRATION DATE UPDATE ---
+
 
         await saveUserDeployment(
             targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, 
