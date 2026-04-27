@@ -81,11 +81,7 @@
       "required": false,
       "value": "false"
     },
-    "DISABLE_BOT": {
-      "description": "Example: jid,jid,... where bot does not work in both ways.",
-      "required": false,
-      "value": "null"
-    },
+    
     "REJECT_CALL": {
       "description": "Auto reject call, if set to true",
       "required": false,
