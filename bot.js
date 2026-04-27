@@ -11178,6 +11178,8 @@ if (st && st.step === 'AWAITING_APP_NAME') {
 
 // 11) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
+    
+  await bot.answerCallbackQuery(q.id).catch(() => {});
   const cid = q.message.chat.id.toString();
   const dataParts = q.data ? q.data.split(':') : [];
   const action = dataParts[0];
@@ -11195,7 +11197,7 @@ bot.on('callback_query', async q => {
       }
   }
 
-  await bot.answerCallbackQuery(q.id).catch(() => {});
+  
   await dbServices.updateUserActivity(cid); // Update user activity on any callback query
   await notifyAdminUserOnline(q); // Call notifyAdminUserOnline for callback queries
 
