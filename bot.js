@@ -4742,9 +4742,14 @@ const APP_URL = process.env.APP_URL;
     const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
     const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
-    // ✅ REPLACE with this
-await bot.setWebHook(fullWebhookUrl, {
-    allowed_updates: ['message', 'callback_query', 'channel_post', 'inline_query']
+    await bot.setWebHook(fullWebhookUrl, {
+    allowed_updates: [
+        'message',
+        'edited_message',
+        'channel_post',
+        'callback_query',
+        'inline_query'
+    ]
 });
 console.log(`[Webhook] Set successfully: ${fullWebhookUrl}`);
   
