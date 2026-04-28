@@ -4745,11 +4745,7 @@ const APP_URL = process.env.APP_URL;
     await bot.setWebHook(fullWebhookUrl);
     console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
 
-  // --- REPLACE the previous pinging block with this one ---
-
-    app.listen(PORT, () => {
-        console.log(`[Web Server] Server running on port ${PORT}`);
-    });
+  
 
     // --- START: Auto-Ping Logic (Render ONLY) ---
 
