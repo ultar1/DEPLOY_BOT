@@ -6229,54 +6229,6 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
 });
 
 
-bot.onText(/^\/dl (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    const url = match[1].trim();
-
-    const waitingMsg = await bot.sendMessage(cid, "**Processing link with yt-dlp...**", { parse_mode: 'Markdown' });
-
-    try {
-        // -j: dump JSON
-        // --flat-playlist: don't expand playlists
-        // --no-warnings: keep logs clean
-const command = `yt-dlp --cookies cookies.txt -j --flat-playlist --no-warnings "${url}"`;
-const { stdout } = await execPromise(command);
-
-        const info = JSON.parse(stdout);
-
-        // Handle Image Carousels (Instagram/TikTok slides)
-        if (info.entries || info.formats === undefined) {
-            const entries = info.entries || [info];
-            const mediaGroup = entries.map(e => ({
-                type: 'photo',
-                media: e.url || e.thumbnail
-            })).slice(0, 10);
-
-            await bot.sendMediaGroup(cid, mediaGroup);
-        } else {
-            // Handle Single Video or Image
-            const mediaUrl = info.url;
-            const isVideo = info.vcodec !== 'none';
-
-            if (isVideo) {
-                await bot.sendVideo(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
-            } else {
-                await bot.sendPhoto(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
-            }
-        }
-
-        await bot.deleteMessage(cid, waitingMsg.message_id);
-
-    } catch (error) {
-        console.error("[yt-dlp Error]:", error.message);
-        await bot.editMessageText("**Error:** link is private or yt-dlp needs an update.", {
-            chat_id: cid,
-            message_id: waitingMsg.message_id
-        });
-    }
-});
-
-
 
 
 // ADMIN COMMAND: /restartaws (Strict Rebuild Only)
@@ -6628,90 +6580,6 @@ const adminDashboardState = {
     currentPage: 1
 };
 
-// Updated /num command handler
-bot.onText(/^\/num$/, async (msg) => {
-    adminDashboardState.currentPage = 1; // Reset to page 1 every time the command is run
-    await sendNumbersDashboard(msg.chat.id, 1);
-});
-
-// Callback handler for page navigation
-bot.on('callback_query', async (query) => {
-    if (query.data.startsWith('num_page:')) {
-        const page = parseInt(query.data.split(':')[1]);
-        adminDashboardState.currentPage = page;
-        await sendNumbersDashboard(query.message.chat.id, page, query.message.message_id);
-    }
-});
-
-// A new reusable function to send the dashboard
-async function sendNumbersDashboard(chatId, page = 1, messageId = null) {
-    if (chatId.toString() !== ADMIN_ID) return;
-    const NUMBERS_PER_PAGE = 10;
-    const offset = (page - 1) * NUMBERS_PER_PAGE;
-
-    try {
-        // Get counts for each status
-        const countsResult = await pool.query(`
-            SELECT
-                COUNT(*) FILTER (WHERE status = 'available') AS available_count,
-                COUNT(*) FILTER (WHERE status = 'pending_payment') AS pending_count,
-                COUNT(*) FILTER (WHERE status = 'assigned') AS assigned_count,
-                COUNT(*) AS total_count
-            FROM temp_numbers;
-        `);
-        const { available_count, pending_count, assigned_count, total_count } = countsResult.rows[0];
-
-        // Get the numbers for the current page
-        const pageResult = await pool.query(
-            "SELECT number, status, user_id FROM temp_numbers ORDER BY status DESC, number ASC LIMIT $1 OFFSET $2",
-            [NUMBERS_PER_PAGE, offset]
-        );
-        const numbersOnPage = pageResult.rows;
-
-        if (total_count == 0) {
-            return bot.sendMessage(chatId, "No temporary numbers found in the database.");
-        }
-
-        const totalPages = Math.ceil(total_count / NUMBERS_PER_PAGE);
-
-        let message = `<b>Numbers Dashboard (Page ${page}/${totalPages})</b>\n\n`;
-        message += `🟢 Available: <b>${available_count}</b>\n`;
-        message += `🟡 Pending: <b>${pending_count}</b>\n`;
-        message += `🔵 Assigned: <b>${assigned_count}</b>\n`;
-        message += `------------------------------\n`;
-
-        numbersOnPage.forEach(num => {
-            const statusEmoji = num.status === 'available' ? '🟢' : num.status === 'pending_payment' ? '🟡' : '🔵';
-            message += `${statusEmoji} <code>${num.number}</code> | <b>User:</b> ${num.user_id || 'N/A'}\n`;
-        });
-
-        // Create navigation buttons
-        const navButtons = [];
-        if (page > 1) {
-            navButtons.push({ text: 'Previous', callback_data: `num_page:${page - 1}` });
-        }
-        if (page < totalPages) {
-            navButtons.push({ text: 'Next', callback_data: `num_page:${page + 1}` });
-        }
-
-        const options = {
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [navButtons]
-            }
-        };
-
-        if (messageId) {
-            await bot.editMessageText(message, { chat_id: chatId, message_id: messageId, ...options });
-        } else {
-            await bot.sendMessage(chatId, message, options);
-        }
-
-    } catch (e) {
-        console.error("Error fetching number dashboard:", e);
-        await bot.sendMessage(chatId, "An error occurred while fetching the number dashboard.");
-    }
-}
 
 
 // In bot.js (REPLACE the existing /expire handler)
@@ -8102,58 +7970,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 });
 
 
-// Admin command to add a temporary number
-// Updated /addnum command handler
-bot.onText(/^\/addnum (.+)$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) {
-        return bot.sendMessage(adminId, "You are not authorized to use this command.");
-    }
 
-    // --- THIS IS THE FIX ---
-    // Remove all whitespace (spaces, tabs, etc.) from the input number
-    const number = match[1].replace(/\s/g, '');
-
-    // The rest of the validation and logic remains the same
-    if (!/^\+\d{10,15}$/.test(number)) {
-        return bot.sendMessage(adminId, "Invalid number format. Please use the full international format, e.g., `+48 699 524 995`", { parse_mode: 'Markdown' });
-    }
-
-    const maskedNumber = number.slice(0, 6) + '***' + number.slice(-3);
-
-    try {
-        await pool.query("INSERT INTO temp_numbers (number, masked_number) VALUES ($1, $2)", [number, maskedNumber]);
-        await bot.sendMessage(adminId, `Successfully added number \`${number}\` to the database.`, { parse_mode: 'Markdown' });
-    } catch (e) {
-        if (e.code === '23505') { 
-            return bot.sendMessage(adminId, `⚠️ Number \`${number}\` already exists in the database.`, { parse_mode: 'Markdown' });
-        }
-        console.error(`Error adding number ${number}:`, e);
-        await bot.sendMessage(adminId, `Failed to add number. An error occurred.`);
-    }
-});
-
-
-// Admin command to remove a temporary number
-bot.onText(/^\/removenum (.+)$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) {
-        return bot.sendMessage(adminId, "You are not authorized to use this command.");
-    }
-    
-    const number = match[1].trim();
-    try {
-        const result = await pool.query("DELETE FROM temp_numbers WHERE number = $1", [number]);
-        if (result.rowCount > 0) {
-            await bot.sendMessage(adminId, `Successfully removed number \`${number}\` from the database.`, { parse_mode: 'Markdown' });
-        } else {
-            await bot.sendMessage(adminId, `⚠Number \`${number}\` not found in the database.`, { parse_mode: 'Markdown' });
-        }
-    } catch (e) {
-        console.error(`Error removing number ${number}:`, e);
-        await bot.sendMessage(adminId, `Failed to remove number. An error occurred.`);
-    }
-});
 
 
 bot.onText(/^\/stats$/, async (msg) => {
