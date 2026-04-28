@@ -4742,9 +4742,11 @@ const APP_URL = process.env.APP_URL;
     const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
     const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
-    await bot.setWebHook(fullWebhookUrl);
-    console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
-
+    // ✅ REPLACE with this
+await bot.setWebHook(fullWebhookUrl, {
+    allowed_updates: ['message', 'callback_query', 'channel_post', 'inline_query']
+});
+console.log(`[Webhook] Set successfully: ${fullWebhookUrl}`);
   
 
     // --- START: Auto-Ping Logic (Render ONLY) ---
