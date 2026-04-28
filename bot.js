@@ -7397,62 +7397,105 @@ bot.onText(/^\/dellogout$/, async (msg) => {
 
 
 
-
-// ADMIN COMMAND: /deploy_email_service (with no arguments)
-bot.onText(/^\/deployem$/, async (msg) => {
+bot.onText(/^\/deploytls$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    // 1. Prerequisite Check for credentials in the bot's environment.
-    const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
-    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY || !HEROKU_API_KEY) {
-        return bot.sendMessage(adminId, "**Setup Incomplete:**\nMissing required credentials (`GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SECRET_API_KEY`, `HEROKU_API_KEY`) in the bot's environment.", { parse_mode: 'Markdown' });
+    const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY, MESSAGE_BOT_API_KEY } = process.env;
+    
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY) {
+        return bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials or Heroku Key.");
     }
 
-    const progressMsg = await bot.sendMessage(adminId, "**Starting Automated Deployment...**", { parse_mode: 'Markdown' });
+    const progressMsg = await bot.sendMessage(adminId, "Starting TLS Stack Deployment (3 Apps)...");
 
     try {
-        const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
+        // --- STEP 1: DEPLOY MESSAGEBOT FIRST (To get the URL for the Scraper) ---
+        await bot.editMessageText("(1/3) Deploying MessageBot...", { chat_id: adminId, message_id: progressMsg.message_id });
+        const msgAppName = `msg-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: msgAppName });
         
-        // --- Step 1: Create the Heroku app ---
-        await bot.editMessageText(`**Progress (1/4):** Creating app \`${appName}\`...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
-        const createAppRes = await herokuApi.post('/apps', { name: appName }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        const appWebUrl = createAppRes.data.web_url;
+        await herokuApi.put(`/apps/${msgAppName}/buildpack-installations`, {
+            updates: [
+                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+                { buildpack: 'heroku/nodejs' }
+            ]
+        });
 
-        // --- Step 2: Set environment variables ---
-        await bot.editMessageText(`**Progress (2/4):** Setting credentials...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
-        await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        await herokuApi.patch(`/apps/${msgAppName}/config-vars`, { 
+            SECRET_API_KEY, 
+            MESSAGE_BOT_API_KEY,
+            DATABASE_URL: process.env.DATABASE_URL 
+        });
 
-        // --- Step 3: Trigger the build from the hardcoded GitHub repo ---
-        await bot.editMessageText(`**Progress (3/4):** Building from GitHub...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
-        await herokuApi.post(`/apps/${appName}/builds`, {
-            source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" }
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        
-        // --- Step 4: Link the new service and explicitly restart the main bot ---
-        await bot.editMessageText(`**Progress (4/4):** Linking service and restarting main bot...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
-        const updateResult = await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
-        if (!updateResult.success) {
-            throw new Error(`Failed to update Render variable: ${updateResult.message}`);
-        }
-        
-        // This function explicitly tells Render to start a new deployment.
+        await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
+
+        // Retrieve exact URL for MessageBot to give to Scraper
+        const msgAppInfo = await herokuApi.get(`/apps/${msgAppName}`);
+        const messageBotUrl = msgAppInfo.data.web_url; // Exact URL for Scraper config
+
+        // --- STEP 2: DEPLOY SCARPERBOT (SCRAPER) ---
+        await bot.editMessageText("(2/3) Deploying ScraperBot...", { chat_id: adminId, message_id: progressMsg.message_id });
+        const scAppName = `scr-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: scAppName });
+
+        await herokuApi.put(`/apps/${scAppName}/buildpack-installations`, {
+            updates: [
+                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+                { buildpack: 'https://github.com/jontewks/heroku-buildpack-puppeteer-firefox' },
+                { buildpack: 'https://buildpack-registry.s3.amazonaws.com/buildpacks/heroku-community/chrome-for-testing.tgz' },
+                { buildpack: 'heroku/python' },
+                { buildpack: 'heroku/nodejs' }
+            ]
+        });
+
+        // 💡 Injects MessageBot URL into Scraper as APP_URL
+        await herokuApi.patch(`/apps/${scAppName}/config-vars`, { 
+            APP_URL: messageBotUrl,
+            SECRET_API_KEY 
+        });
+
+        await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
+
+        // --- STEP 3: DEPLOY EMAIL SERVICE ---
+        await bot.editMessageText("(3/3) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
+        const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: emAppName });
+        await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY });
+        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
+
+        // Retrieve exact URL for Email Service to update Render
+        const emAppInfo = await herokuApi.get(`/apps/${emAppName}`);
+        const emailServiceUrl = emAppInfo.data.web_url;
+
+        // --- FINAL SYNC TO RENDER & RESTART ---
+        await bot.editMessageText("Finalizing: Updating Render EMAIL_SERVICE_URL and restarting...", { chat_id: adminId, message_id: progressMsg.message_id });
+
+        // Update Render variable for Email Service
+        await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl);
+
+        // Explicitly trigger Render restart
         await triggerRenderRestart();
 
         await bot.editMessageText(
-            `**Deployment Successful!**\n\nYour bot is now **restarting** on Render to use the new email service. It will be back online shortly.`, {
-            chat_id: adminId, 
-            message_id: progressMsg.message_id, 
-            parse_mode: 'Markdown'
-        });
+            "Full TLS Stack Deployed Successfully\n\n" +
+            "Message Bot URL: " + messageBotUrl + "\n" +
+            "Scraper Bot: Configured with APP_URL = " + messageBotUrl + "\n" +
+            "Email Service: " + emailServiceUrl + "\n\n" +
+            "Render is restarting to apply the new Email Service link.", 
+            { chat_id: adminId, message_id: progressMsg.message_id }
+        );
 
     } catch (error) {
-        const errorMsg = error.response?.data?.message || error.message;
-        await bot.editMessageText(`**Deployment Failed!**\n\n*Reason:* ${escapeMarkdown(errorMsg)}`, {
-            chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+        console.error(error);
+        const errDetails = error.response?.data?.message || error.message;
+        await bot.editMessageText("Deployment Failed\n\nReason: " + errDetails, {
+            chat_id: adminId, message_id: progressMsg.message_id
         });
     }
 });
+
+
 
 // In bot.js (in the command handlers section, e.g., near line 5150)
 
