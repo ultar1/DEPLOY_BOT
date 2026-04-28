@@ -10991,6 +10991,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
 
 // 11) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
+  console.log(`[DEBUG] Callback received: ${q.data} from ${q.from.id}`);
   const cid = q.message.chat.id.toString();
   const dataParts = q.data ? q.data.split(':') : [];
   const action = dataParts[0];
