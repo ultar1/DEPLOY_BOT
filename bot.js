@@ -4784,6 +4784,27 @@ console.log(`[Webhook] Set successfully: ${fullWebhookUrl}`);
   app.get('/verify', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'verify.html'));
     });
+
+
+    app.get('/fix-webhook', async (req, res) => {
+    try {
+        await bot.deleteWebHook();
+        await new Promise(r => setTimeout(r, 2000));
+        await bot.setWebHook(fullWebhookUrl, {
+            allowed_updates: [
+                'message',
+                'edited_message', 
+                'channel_post',
+                'callback_query',
+                'inline_query'
+            ]
+        });
+        const info = await bot.getWebHookInfo();
+        res.json(info);
+    } catch(e) {
+        res.json({ error: e.message });
+    }
+});
   
   app.get('/miniapp', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
