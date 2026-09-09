@@ -13608,7 +13608,14 @@ if (action === 'selectapp' || action === 'selectbot') {
     
     // TEMPLATE LITERAL FIX: Use backticks (`) for the variables inside the string to work
     const daysLeft = expirationDate ? Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24)) : null;
-    const expirationLabel = daysLeft === null ? 'Expiry unavailable' : `${daysLeft} days left`;
+    const expirationDateLabel = expirationDate
+        ? expirationDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+        : null;
+    const expirationLabel = daysLeft === null
+        ? 'Expiry unavailable'
+        : daysLeft > 0
+            ? `${expirationDateLabel} (${daysLeft} days left)`
+            : `${expirationDateLabel} (Expired)`;
     const finalStatusText = dbBotInfo?.paused_at ? 'Paused' : (dbBotInfo?.wpp_status === 'logged_out' ? 'Logged Out' : 'Connected');
 
     const isExpired = expirationDate && expirationDate < now;

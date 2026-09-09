@@ -64,6 +64,13 @@ test('admin app management resolves ownership globally and returns to the full a
   assert.match(source, /await dbServices\.sendAppList\(q\.message\.chat\.id, messageId\)/);
 });
 
+test('app-management expiry label includes the date and remaining days', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(source, /expirationDate\.toLocaleDateString\('en-GB'/);
+  assert.match(source, /`\$\{expirationDateLabel\} \(\$\{daysLeft\} days left\)`/);
+  assert.match(source, /`\$\{expirationDateLabel\} \(Expired\)`/);
+});
+
 test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   const tlsSource = source.slice(source.indexOf('async function deployTlsStack'), source.indexOf("bot.onText(/^\\/deploytls$/"));
