@@ -13579,12 +13579,20 @@ if (action === 'selectapp' || action === 'selectbot') {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     });
     
-    const dbBotInfo = (await pool.query(
+    let dbBotInfo = (await pool.query(
         'SELECT ud.expiration_date, ud.deploy_date, ud.is_free_trial, ud.config_vars, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
         'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
         'WHERE ud.user_id=$1 AND ud.app_name=$2', 
         [cid, appName]
     )).rows[0];
+    if (!dbBotInfo && cid === ADMIN_ID) {
+        dbBotInfo = (await pool.query(
+            'SELECT ud.expiration_date, ud.deploy_date, ud.is_free_trial, ud.config_vars, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
+            'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
+            'WHERE ud.app_name=$1 LIMIT 1',
+            [appName]
+        )).rows[0];
+    }
 
     const dynoStatus = await dbServices.getDynoStatus(appName);
     if (dynoStatus === 'deleted' || dynoStatus === 'error') {
@@ -14617,7 +14625,9 @@ if (action === 'confirmdelete') {
         });
 
         // Follow-up logic (showing remaining bots or deploy prompt)
-        if (originalAction === 'userdelete') { // User initiated
+        if (q.message.chat.id.toString() === ADMIN_ID) { // Admin always returns to the full apps menu
+            await dbServices.sendAppList(q.message.chat.id, messageId);
+        } else if (originalAction === 'userdelete') { // User initiated
             const remainingUserBots = await dbServices.getUserBots(targetUserId);
             if (remainingUserBots.length > 0) {
                  const rows = chunkArray(remainingUserBots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
@@ -14632,8 +14642,6 @@ if (action === 'confirmdelete') {
                      }
                  });
             }
-        } else if (q.message.chat.id.toString() === ADMIN_ID) { // Admin initiated via /apps
-            await dbServices.sendAppList(q.message.chat.id, messageId); // Refresh admin list
         }
 
     } catch (e) {
@@ -14664,7 +14672,9 @@ if (action === 'confirmdelete') {
                  parse_mode: 'Markdown'
             });
              // Follow-up logic after 404 cleanup
-             if (originalAction === 'userdelete') {
+             if (q.message.chat.id.toString() === ADMIN_ID) {
+                  await dbServices.sendAppList(q.message.chat.id, messageId);
+             } else if (originalAction === 'userdelete') {
                   const remainingUserBots = await dbServices.getUserBots(targetUserId);
                   if (remainingUserBots.length > 0) {
                      const rows = chunkArray(remainingUserBots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
@@ -14679,8 +14689,6 @@ if (action === 'confirmdelete') {
                           }
                      });
                   }
-             } else if (q.message.chat.id.toString() === ADMIN_ID) {
-                  await dbServices.sendAppList(q.message.chat.id, messageId);
              }
             return; // Stop after 404 handling
         }

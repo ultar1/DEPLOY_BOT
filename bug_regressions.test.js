@@ -56,6 +56,14 @@ test('mass restore triggers asynchronously and edits one progress message', () =
   assert.doesNotMatch(massRestore, /sendMessage\(cid, "Waiting 60 seconds/);
 });
 
+test('admin app management resolves ownership globally and returns to the full apps menu after deletion', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(source, /if \(!dbBotInfo && cid === ADMIN_ID\)/);
+  assert.match(source, /WHERE ud\.app_name=\$1 LIMIT 1/);
+  assert.match(source, /if \(q\.message\.chat\.id\.toString\(\) === ADMIN_ID\) \{ \/\/ Admin always returns to the full apps menu/);
+  assert.match(source, /await dbServices\.sendAppList\(q\.message\.chat\.id, messageId\)/);
+});
+
 test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   const tlsSource = source.slice(source.indexOf('async function deployTlsStack'), source.indexOf("bot.onText(/^\\/deploytls$/"));
