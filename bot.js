@@ -7481,7 +7481,9 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             EXPIRATION_DATE: null,
         });
         const tgTagConfigVars = (await herokuApi.get(`/apps/${tgTagAppName}/config-vars`)).data;
-        const configuredWebhookUrl = tgTagConfigVars.find(item => item.name === 'WEBHOOK_URL')?.value;
+        const configuredWebhookUrl = Array.isArray(tgTagConfigVars)
+            ? tgTagConfigVars.find(item => item.name === 'WEBHOOK_URL')?.value
+            : tgTagConfigVars.WEBHOOK_URL;
         if (configuredWebhookUrl !== tgTagUrl) {
             throw new Error(`TG_TAG WEBHOOK_URL was not saved correctly (expected ${tgTagUrl}).`);
         }
