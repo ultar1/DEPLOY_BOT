@@ -7404,6 +7404,20 @@ async function configureTlsAppFormation(appName) {
     });
 }
 
+function monitorTlsBuildAndConfigure(appName, buildId, adminId, label, delayMs = 30000) {
+    void (async () => {
+        try {
+            await waitForHerokuBuild(appName, buildId);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            await configureTlsAppFormation(appName);
+            await bot.sendMessage(adminId, `${label} build succeeded. Standard-2x web formation applied.`).catch(() => {});
+        } catch (error) {
+            console.error(`[TLS] Background monitor failed for ${label} (${appName}):`, error.message);
+            await bot.sendMessage(adminId, `${label} background deployment failed: ${error.message}`).catch(() => {});
+        }
+    })();
+}
+
 async function deployTlsStack(adminId, { restartRender = true } = {}) {
     const {
         GMAIL_USER,
@@ -7442,8 +7456,8 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             EXPIRATION_DATE: null
         });
 
-        await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
-        await configureTlsAppFormation(msgAppName);
+        const msgBuild = await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
+        monitorTlsBuildAndConfigure(msgAppName, msgBuild.data.id, adminId, 'MessageBot');
 
         // Retrieve exact URL for MessageBot to give to Scraper
         const msgAppInfo = await herokuApi.get(`/apps/${msgAppName}`);
@@ -7472,8 +7486,8 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
     EXPIRATION_DATE: null
 });
 
-        await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
-        await configureTlsAppFormation(scAppName);
+        const scraperBuild = await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
+        monitorTlsBuildAndConfigure(scAppName, scraperBuild.data.id, adminId, 'ScraperBot');
 
         // The scraper is deployed only. Its URL is intentionally not used as PAIRING_URL.
 
@@ -7501,17 +7515,15 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         const tgTagBuild = await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
             source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
         });
-        await bot.editMessageText("(3/4) Waiting for TG_TAG Python container build...", { chat_id: adminId, message_id: progressMsg.message_id });
-        await waitForHerokuBuild(tgTagAppName, tgTagBuild.data.id);
-        await configureTlsAppFormation(tgTagAppName);
+        monitorTlsBuildAndConfigure(tgTagAppName, tgTagBuild.data.id, adminId, 'TG_TAG');
 
         // --- STEP 4: DEPLOY EMAIL SERVICE ---
         await bot.editMessageText("(4/4) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
         await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
-        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
-        await configureTlsAppFormation(emAppName);
+        const emailBuild = await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
+        monitorTlsBuildAndConfigure(emAppName, emailBuild.data.id, adminId, 'Email Service');
 
         // Retrieve exact URL for Email Service to update Render
         const emAppInfo = await herokuApi.get(`/apps/${emAppName}`);
@@ -7534,7 +7546,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             "TG_TAG Telegram Bot: " + tgTagUrl + " (repository .env used)\n" +
             "PAIRING_URL set to TG_TAG: " + tgTagUrl + "\n" +
             "Email Service: " + emailServiceUrl + "\n\n" +
-            (restartRender ? "Render is restarting to apply the new links." : "Recovery will restart Render after bot restoration."),
+            (restartRender ? "Render is restarting to apply the new links. Dyno sizing will be applied in the background after each build succeeds." : "Recovery will restart Render after bot restoration. Dyno sizing will be applied in the background after each build succeeds."),
             { chat_id: adminId, message_id: progressMsg.message_id }
         );
         return { success: true, messageBotUrl, tgTagUrl, emailServiceUrl };
