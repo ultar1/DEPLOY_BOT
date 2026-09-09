@@ -7492,6 +7492,14 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         });
         await bot.editMessageText("(3/4) Waiting for TG_TAG Python container build...", { chat_id: adminId, message_id: progressMsg.message_id });
         await waitForHerokuBuild(tgTagAppName, tgTagBuild.data.id);
+        await herokuApi.patch(`/apps/${tgTagAppName}/formation`, {
+            updates: [
+                { type: 'web', quantity: 1, size: 'standard-2x' },
+                // TG_TAG runs the Telegram webhook in web; keep worker off to
+                // prevent two bot processes from consuming the same updates.
+                { type: 'worker', quantity: 0, size: 'standard-2x' }
+            ]
+        });
 
         // --- STEP 4: DEPLOY EMAIL SERVICE ---
         await bot.editMessageText("(4/4) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
