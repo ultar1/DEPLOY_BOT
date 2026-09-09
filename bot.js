@@ -7398,8 +7398,7 @@ async function waitForHerokuBuild(appName, buildId, timeoutMs = 15 * 60 * 1000) 
 async function configureTlsAppFormation(appName) {
     await herokuApi.patch(`/apps/${appName}/formation`, {
         updates: [
-            { type: 'web', quantity: 1, size: 'standard-2x' },
-            { type: 'worker', quantity: 0, size: 'standard-2x' }
+            { type: 'web', quantity: 1, size: 'standard-2x' }
         ]
     });
 }
@@ -7522,8 +7521,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
         await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
-        const emailBuild = await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
-        monitorTlsBuildAndConfigure(emAppName, emailBuild.data.id, adminId, 'Email Service');
+        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
 
         // Retrieve exact URL for Email Service to update Render
         const emAppInfo = await herokuApi.get(`/apps/${emAppName}`);

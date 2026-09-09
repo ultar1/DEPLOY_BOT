@@ -46,11 +46,11 @@ test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   assert.match(source, /await waitForHerokuBuild\(appName, buildId\)/);
   assert.match(source, /await new Promise\(resolve => setTimeout\(resolve, delayMs\)\)/);
   assert.match(source, /type: 'web', quantity: 1, size: 'standard-2x'/);
-  assert.match(source, /type: 'worker', quantity: 0, size: 'standard-2x'/);
+  assert.doesNotMatch(source, /type: 'worker', quantity: 0, size: 'standard-2x'/);
   assert.match(tlsSource, /monitorTlsBuildAndConfigure\(msgAppName, msgBuild\.data\.id, adminId, 'MessageBot'\)/);
   assert.match(tlsSource, /monitorTlsBuildAndConfigure\(scAppName, scraperBuild\.data\.id, adminId, 'ScraperBot'\)/);
   assert.match(tlsSource, /monitorTlsBuildAndConfigure\(tgTagAppName, tgTagBuild\.data\.id, adminId, 'TG_TAG'\)/);
-  assert.match(tlsSource, /monitorTlsBuildAndConfigure\(emAppName, emailBuild\.data\.id, adminId, 'Email Service'\)/);
+  assert.doesNotMatch(tlsSource, /monitorTlsBuildAndConfigure\(emAppName/);
   assert.match(tlsSource, /stack: 'container'/);
   assert.match(tlsSource, /https:\/\/github\.com\/Ultar12\/TG_TAG\/tarball\/main/);
   assert.match(tlsSource, /const tgTagUrl = tgTagAppInfo\.data\.web_url/);
