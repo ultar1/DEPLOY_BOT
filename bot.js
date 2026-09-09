@@ -7480,6 +7480,11 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             WEBHOOK_URL: tgTagUrl,
             EXPIRATION_DATE: null,
         });
+        const tgTagConfigVars = (await herokuApi.get(`/apps/${tgTagAppName}/config-vars`)).data;
+        const configuredWebhookUrl = tgTagConfigVars.find(item => item.name === 'WEBHOOK_URL')?.value;
+        if (configuredWebhookUrl !== tgTagUrl) {
+            throw new Error(`TG_TAG WEBHOOK_URL was not saved correctly (expected ${tgTagUrl}).`);
+        }
         const tgTagBuild = await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
             source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
         });

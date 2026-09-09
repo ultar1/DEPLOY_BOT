@@ -44,6 +44,8 @@ test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   assert.match(tlsSource, /stack: 'container'/);
   assert.match(tlsSource, /https:\/\/github\.com\/Ultar12\/TG_TAG\/tarball\/main/);
   assert.match(tlsSource, /const tgTagUrl = tgTagAppInfo\.data\.web_url/);
+  assert.match(tlsSource, /WEBHOOK_URL: tgTagUrl/);
+  assert.match(tlsSource, /configuredWebhookUrl !== tgTagUrl/);
   assert.match(tlsSource, /await waitForHerokuBuild\(tgTagAppName, tgTagBuild\.data\.id\)/);
   assert.match(tlsSource, /updateRenderVar\('PAIRING_URL', tgTagUrl, false\)/);
   assert.match(tlsSource, /if \(restartRender\) await triggerRenderRestart\(\)/);
