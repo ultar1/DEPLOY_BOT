@@ -21,10 +21,32 @@ test('expiry alert keeps ordinary hyphens unescaped', () => {
 
 test('restoreall uses the shared buildWithProgress restore contract', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
-  assert.match(source, /const buildResult = await dbServices\.buildWithProgress\(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore\)/);
+  assert.match(source, /const buildResult = await dbServices\.buildWithProgress\(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore, null, null, null, true\)/);
   assert.match(source, /APP_NAME: originalAppName/);
   assert.match(source, /SESSION_ID: deployment\.session_id/);
   assert.match(fs.readFileSync('./bot_services.js', 'utf8'), /ud\.bot_type, ud\.expiration_date/);
+});
+
+test('admin restores are silent to the actual bot owner', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const servicesSource = fs.readFileSync('./bot_services.js', 'utf8');
+  assert.match(botSource, /buildWithProgress\(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore, null, null, null, true\)/);
+  assert.match(botSource, /buildWithProgress\(appUserId, combinedVarsForRestore, false, true, botTypeToRestore, null, null, null, true\)/);
+  assert.match(servicesSource, /silentRestore = false/);
+  assert.match(servicesSource, /if \(silentRestore\)/);
+  assert.match(servicesSource, /Starting silent restore/);
+  assert.doesNotMatch(servicesSource, /if \(silentRestore\)[\s\S]{0,500}bot\.sendMessage\(targetChatId/);
+});
+
+test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  const tlsSource = source.slice(source.indexOf('async function deployTlsStack'), source.indexOf("bot.onText(/^\\/deploytls$/"));
+  assert.match(tlsSource, /stack: 'container'/);
+  assert.match(tlsSource, /https:\/\/github\.com\/Ultar12\/TG_TAG\/tarball\/main/);
+  assert.match(tlsSource, /const tgTagUrl = tgTagAppInfo\.data\.web_url/);
+  assert.match(tlsSource, /await waitForHerokuBuild\(tgTagAppName, tgTagBuild\.data\.id\)/);
+  assert.match(tlsSource, /updateRenderVar\('PAIRING_URL', tgTagUrl, false\)/);
+  assert.match(tlsSource, /if \(restartRender\) await triggerRenderRestart\(\)/);
 });
 
 test('admin expiry label falls back to deployment date instead of N/A', () => {

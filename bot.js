@@ -2911,7 +2911,9 @@ async function handleRestoreAllConfirm(query) {
                 SESSION_ID: deployment.session_id,
                 expiration_date: deployment.expiration_date
             };
-            const buildResult = await dbServices.buildWithProgress(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore);
+            // Match the BApp restore behavior, but keep the restore invisible to
+            // the bot owner. Progress and failures are reported to the admin only.
+            const buildResult = await dbServices.buildWithProgress(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore, null, null, null, true);
             
             if (!buildResult.success) {
                 // Throw the specific error from the silent function
@@ -7380,6 +7382,19 @@ bot.onText(/^\/dellogout$/, async (msg) => {
 
 
 
+async function waitForHerokuBuild(appName, buildId, timeoutMs = 15 * 60 * 1000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        const build = (await herokuApi.get(`/apps/${appName}/builds/${buildId}`)).data;
+        if (build.status === 'succeeded') return build;
+        if (['failed', 'errored', 'canceled', 'error'].includes(build.status)) {
+            throw new Error(`Heroku build ${build.status} for ${appName} (build ${buildId}).`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 10000));
+    }
+    throw new Error(`Heroku build timed out for ${appName} after ${Math.round(timeoutMs / 60000)} minutes.`);
+}
+
 async function deployTlsStack(adminId, { restartRender = true } = {}) {
     const {
         GMAIL_USER,
@@ -7454,27 +7469,22 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         // --- STEP 3: DEPLOY TG_TAG TELEGRAM BOT ---
         await bot.editMessageText("(3/4) Deploying TG_TAG Telegram Bot...", { chat_id: adminId, message_id: progressMsg.message_id });
         const tgTagAppName = `tg-tag-tls-${crypto.randomBytes(3).toString('hex')}`;
-        await herokuApi.post('/apps', { name: tgTagAppName });
-        await herokuApi.put(`/apps/${tgTagAppName}/buildpack-installations`, {
-            updates: [
-                { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
-                { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-                { buildpack: 'heroku/nodejs' },
-                { buildpack: 'heroku/python' }
-            ]
-        });
+        // TG_TAG is a Python Docker app. It must use Heroku's container stack;
+        // installing Node/Python buildpacks would ignore its Dockerfile.
+        await herokuApi.post('/apps', { name: tgTagAppName, stack: 'container' });
         const tgTagAppInfo = await herokuApi.get(`/apps/${tgTagAppName}`);
         const tgTagUrl = tgTagAppInfo.data.web_url;
 
-        // TG_TAG's tracked repository .env supplies its own bot/database/API values.
-        // Only the dynamic Heroku webhook URL is injected here.
+        // The public URL must be present before the Python webhook container starts.
         await herokuApi.patch(`/apps/${tgTagAppName}/config-vars`, {
             WEBHOOK_URL: tgTagUrl,
             EXPIRATION_DATE: null,
         });
-        await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
+        const tgTagBuild = await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
             source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
         });
+        await bot.editMessageText("(3/4) Waiting for TG_TAG Python container build...", { chat_id: adminId, message_id: progressMsg.message_id });
+        await waitForHerokuBuild(tgTagAppName, tgTagBuild.data.id);
 
         // --- STEP 4: DEPLOY EMAIL SERVICE ---
         await bot.editMessageText("(4/4) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
@@ -12260,11 +12270,15 @@ if (action === 'rag_regen') {
       } else {
           defaultVarsForRestore = levanterDefaultEnvVars;
       }
+      const savedConfigVars = typeof selectedDeployment.config_vars === 'string'
+          ? JSON.parse(selectedDeployment.config_vars)
+          : (selectedDeployment.config_vars || {});
       const combinedVarsForRestore = {
           ...defaultVarsForRestore,    // Apply type-specific defaults first
-          ...selectedDeployment.config_vars, // Overlay with the saved config vars (these take precedence)
+          ...savedConfigVars, // Overlay with the saved config vars (these take precedence)
           APP_NAME: selectedDeployment.app_name, // Ensure APP_NAME is always correct
-          SESSION_ID: selectedDeployment.session_id // Explicitly ensure saved SESSION_ID is used
+          SESSION_ID: selectedDeployment.session_id, // Explicitly ensure saved SESSION_ID is used
+          expiration_date: selectedDeployment.expiration_date // Preserve the original expiration date
       };
 
       await bot.editMessageText(`Attempting to restore and deploy "*${escapeMarkdown(appName)}*" for user \`${escapeMarkdown(appUserId)}\`... This may take a few minutes.`, {
@@ -12273,7 +12287,7 @@ if (action === 'rag_regen') {
           parse_mode: 'Markdown'
       });
       // Call buildWithProgress with isRestore flag and the original botType
-      await dbServices.buildWithProgress(appUserId, combinedVarsForRestore, false, true, botTypeToRestore); // IMPORTANT: Use appUserId as target chatId for build
+      await dbServices.buildWithProgress(appUserId, combinedVarsForRestore, false, true, botTypeToRestore, null, null, null, true); // IMPORTANT: Use appUserId as the restored owner, but keep notifications admin-only
 
       // The buildWithProgress function itself will update the message upon success/failure.
       // No explicit return here, as buildWithProgress takes over the message flow.

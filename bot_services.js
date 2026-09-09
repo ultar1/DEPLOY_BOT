@@ -1852,7 +1852,7 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
 
 
-async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
+async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null, silentRestore = false) {
     const isFreeTrial = false;
     // 1. Get all the tools from the 'init' function
         const {
@@ -1927,7 +1927,15 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // --- NEW MESSAGE LOGIC ---
         // This logic determines where to send animations.
 
-        if (String(targetChatId) === ADMIN_ID) {
+        if (silentRestore) {
+            // Restore operations initiated by an administrator must stay invisible
+            // to the backup owner. Send all progress to the administrator instead.
+            adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting silent restore for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
+            primaryBuildMsg = adminLogMsg;
+
+            primaryAnimChatId = primaryBuildMsg.chat.id;
+            primaryAnimMsgId = primaryBuildMsg.message_id;
+        } else if (String(targetChatId) === ADMIN_ID) {
             // The admin is deploying for themselves.
             // The "primary" message IS the admin's message.
             primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
@@ -2279,7 +2287,7 @@ if (botType === 'levanter' || botType === 'raganork') {
             }
 
             const successMessage = isRestore ?
-                `Your bot *${escapeMarkdown(appName)}* has been restored and is now live!` :
+                (silentRestore ? `Silent restore successful for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Bot is now live.` : `Your bot *${escapeMarkdown(appName)}* has been restored and is now live!`) :
                 `Your bot *${escapeMarkdown(appName)}* is now live!\n\nBackup your app for future reference.`;
 
             // Edit the USER's message to show SUCCESS
