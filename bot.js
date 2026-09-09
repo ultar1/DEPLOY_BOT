@@ -12160,7 +12160,7 @@ if (action === 'mass_restore') {
             message_id: messageId
         });
 
-        const progressLog = apps.map(app => `⏳ ${app.bot_name}: waiting to trigger`);
+        const progressLog = apps.map(app => `${app.bot_name}: waiting to trigger`);
         const editProgress = () => bot.editMessageText(
             `Mass restore progress (${botType})\n\n${progressLog.join('\n')}`,
             { chat_id: cid, message_id: messageId }
@@ -12170,17 +12170,17 @@ if (action === 'mass_restore') {
         for (let i = 0; i < apps.length; i++) {
             const appName = apps[i].bot_name;
 
-            progressLog[i] = `🚀 ${appName}: restore triggered`;
+            progressLog[i] = `${appName}: restore triggered`;
             await editProgress();
 
             // Run the long build without blocking the next app trigger.
             void triggerRestoreLogic(appName, botType)
                 .then(() => {
-                    progressLog[i] = `✅ ${appName}: restore build completed`;
+                    progressLog[i] = `${appName}: restore build completed`;
                     return editProgress();
                 })
                 .catch(async err => {
-                    progressLog[i] = `❌ ${appName}: ${err.message}`;
+                    progressLog[i] = `${appName}: restore failed - ${err.message}`;
                     await editProgress();
                 });
 
