@@ -92,7 +92,10 @@ test('TLS uses Scraper for PAIRING_URL and TG_TAG for bot PLAY_URL', () => {
   assert.match(tlsSource, /monitorTlsBuildAndConfigure\(scAppName, scraperBuild\.data\.id, adminId, 'ScraperBot'\)/);
   assert.match(tlsSource, /monitorTlsBuildAndConfigure\(tgTagAppName, tgTagBuild\.data\.id, adminId, 'TG_TAG'\)/);
   assert.doesNotMatch(tlsSource, /monitorTlsBuildAndConfigure\(emAppName/);
-  assert.match(tlsSource, /stack: 'container'/);
+  assert.match(tlsSource, /await herokuApi\.put\(`\/apps\/\$\{tgTagAppName\}\/buildpack-installations`/);
+  assert.match(tlsSource, /heroku\/nodejs/);
+  assert.match(tlsSource, /heroku\/python/);
+  assert.doesNotMatch(tlsSource, /stack: 'container'/);
   assert.match(tlsSource, /https:\/\/github\.com\/Ultar12\/TG_TAG\/tarball\/main/);
   assert.match(tlsSource, /const tgTagUrl = tgTagAppInfo\.data\.web_url/);
   assert.match(tlsSource, /const scraperUrl = scraperAppInfo\.data\.web_url/);

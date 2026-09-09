@@ -7493,9 +7493,16 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         // --- STEP 3: DEPLOY TG_TAG TELEGRAM BOT ---
         await bot.editMessageText("(3/4) Deploying TG_TAG Telegram Bot...", { chat_id: adminId, message_id: progressMsg.message_id });
         const tgTagAppName = `tg-tag-tls-${crypto.randomBytes(3).toString('hex')}`;
-        // TG_TAG is a Python Docker app. It must use Heroku's container stack;
-        // installing Node/Python buildpacks would ignore its Dockerfile.
-        await herokuApi.post('/apps', { name: tgTagAppName, stack: 'container' });
+        // TG_TAG uses the repository's classic Heroku buildpacks, not Docker.
+        await herokuApi.post('/apps', { name: tgTagAppName });
+        await herokuApi.put(`/apps/${tgTagAppName}/buildpack-installations`, {
+            updates: [
+                { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
+                { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+                { buildpack: 'heroku/nodejs' },
+                { buildpack: 'heroku/python' }
+            ]
+        });
         const tgTagAppInfo = await herokuApi.get(`/apps/${tgTagAppName}`);
         const tgTagUrl = tgTagAppInfo.data.web_url;
 
