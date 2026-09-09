@@ -1911,7 +1911,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                 vars.APP_NAME = newAppName;
 
                 // Notify Admin
-                if (String(targetChatId) !== ADMIN_ID) {
+                if (!silentRestore && String(targetChatId) !== ADMIN_ID) {
                      bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another Heroku account. Renamed to \`${appName}\` for this deployment.`).catch(()=>{});
                 }
 
@@ -1928,13 +1928,12 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // This logic determines where to send animations.
 
         if (silentRestore) {
-            // Restore operations initiated by an administrator must stay invisible
-            // to the backup owner. Send all progress to the administrator instead.
-            adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting silent restore for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
-            primaryBuildMsg = adminLogMsg;
-
-            primaryAnimChatId = primaryBuildMsg.chat.id;
-            primaryAnimMsgId = primaryBuildMsg.message_id;
+            // Mass-restore owns the single edited progress message. Do not emit
+            // one Telegram message or percentage update per app here.
+            adminLogMsg = null;
+            primaryBuildMsg = null;
+            primaryAnimChatId = null;
+            primaryAnimMsgId = null;
         } else if (String(targetChatId) === ADMIN_ID) {
             // The admin is deploying for themselves.
             // The "primary" message IS the admin's message.
@@ -1957,7 +1956,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // --- END OF NEW LOGIC ---
 
 
-        primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
+        primaryAnimateIntervalId = silentRestore ? null : await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
 
         // --- Step 1: Create the Heroku app ---
         const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
@@ -1965,8 +1964,10 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         clearInterval(primaryAnimateIntervalId);
 
         // --- All animations now go to the user ---
-        await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
-        primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
+        if (!silentRestore) {
+            await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+            primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
+        }
 
           let actionText = "Creating";
         if (primaryAnimMsgId) {
@@ -2054,8 +2055,10 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         }
 
         // --- Step 4: Set Environment Variables ---
-        await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
-        primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
+        if (!silentRestore) {
+            await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+            primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
+        }
 
         const filteredVars = {};
         for (const key in vars) {
@@ -2068,8 +2071,10 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
 
         if (process.env.PAIRING_URL) {
-            finalConfigVars.PLAY_URL = process.env.PAIRING_URL;
             finalConfigVars.PAIRING_URL = process.env.PAIRING_URL;
+        }
+        if ((botType === 'levanter' || botType === 'raganork') && process.env.TG_TAG_URL) {
+            finalConfigVars.PLAY_URL = process.env.TG_TAG_URL;
         }
 
         // 🚀 INJECT EXPIRATION DATE TO HEROKU 🚀
@@ -2087,7 +2092,9 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
 
         // --- Step 5: Trigger Build from GitHub ---
                 // --- Step 5: Trigger Build from GitHub ---
-        await bot.editMessageText(`Starting to build your Bot...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+        if (!silentRestore) {
+            await bot.editMessageText(`Starting to build your Bot...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
+        }
 
         // --- 💡 UPDATED REPO URL LOGIC 💡 ---
         let repoUrl;
@@ -2137,9 +2144,11 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                         }
 
                         // --- This now edits the USER's message ---
-                        await bot.editMessageText(`Building... ${currentPct}%`, {
-                            chat_id: primaryAnimChatId, message_id: primaryAnimMsgId
-                        }).catch(() => {});
+                        if (!silentRestore) {
+                            await bot.editMessageText(`Building... ${currentPct}%`, {
+                                chat_id: primaryAnimChatId, message_id: primaryAnimMsgId
+                            }).catch(() => {});
+                        }
 
                         if (buildStatus !== 'pending') {
                             clearInterval(buildProgressInterval);
@@ -2263,8 +2272,10 @@ if (botType === 'levanter' || botType === 'raganork') {
         // This block now animates and edits the USER's message
 
         const baseWaitingText = `Build successful! Waiting for bot to connect...`;
-        await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' });
-        primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); // Re-using primaryAnimateIntervalId
+        if (!silentRestore) {
+            await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' });
+            primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); // Re-using primaryAnimateIntervalId
+        }
 
         const appStatusPromise = new Promise((resolve, reject) => {
             const STATUS_CHECK_TIMEOUT = 300 * 1000;

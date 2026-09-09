@@ -7487,8 +7487,8 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
 
         const scraperBuild = await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
         monitorTlsBuildAndConfigure(scAppName, scraperBuild.data.id, adminId, 'ScraperBot');
-
-        // The scraper is deployed only. Its URL is intentionally not used as PAIRING_URL.
+        const scraperAppInfo = await herokuApi.get(`/apps/${scAppName}`);
+        const scraperUrl = scraperAppInfo.data.web_url;
 
         // --- STEP 3: DEPLOY TG_TAG TELEGRAM BOT ---
         await bot.editMessageText("(3/4) Deploying TG_TAG Telegram Bot...", { chat_id: adminId, message_id: progressMsg.message_id });
@@ -7532,7 +7532,8 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
 
         // Update Render variables
         await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl, false);
-        await updateRenderVar('PAIRING_URL', tgTagUrl, false);
+        await updateRenderVar('PAIRING_URL', scraperUrl, false);
+        await updateRenderVar('TG_TAG_URL', tgTagUrl, false);
 
         // Explicitly trigger Render restart only for the manual command.
         if (restartRender) await triggerRenderRestart();
@@ -7540,9 +7541,10 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         await bot.editMessageText(
             "Full TLS Stack Deployed Successfully\n\n" +
             "Message Bot URL: " + messageBotUrl + "\n" +
-            "Scraper Bot: Deployed only; APP_URL = " + messageBotUrl + "\n" +
+            "Scraper Bot URL: " + scraperUrl + "\n" +
             "TG_TAG Telegram Bot: " + tgTagUrl + " (repository .env used)\n" +
-            "PAIRING_URL set to TG_TAG: " + tgTagUrl + "\n" +
+            "PAIRING_URL set to ScraperBot: " + scraperUrl + "\n" +
+            "TG_TAG_URL set for Levanter/Raganork PLAY_URL: " + tgTagUrl + "\n" +
             "Email Service: " + emailServiceUrl + "\n\n" +
             (restartRender ? "Render is restarting to apply the new links. Dyno sizing will be applied in the background after each build succeeds." : "Recovery will restart Render after bot restoration. Dyno sizing will be applied in the background after each build succeeds."),
             { chat_id: adminId, message_id: progressMsg.message_id }

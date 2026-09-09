@@ -34,7 +34,7 @@ test('admin restores are silent to the actual bot owner', () => {
   assert.match(botSource, /buildWithProgress\(appUserId, combinedVarsForRestore, false, true, botTypeToRestore, null, null, null, true\)/);
   assert.match(servicesSource, /silentRestore = false/);
   assert.match(servicesSource, /if \(silentRestore\)/);
-  assert.match(servicesSource, /Starting silent restore/);
+  assert.doesNotMatch(servicesSource, /Starting silent restore/);
   assert.doesNotMatch(servicesSource, /if \(silentRestore\)[\s\S]{0,500}bot\.sendMessage\(targetChatId/);
 });
 
@@ -56,6 +56,14 @@ test('mass restore triggers asynchronously and edits one progress message', () =
   assert.doesNotMatch(massRestore, /sendMessage\(cid, "Waiting 60 seconds/);
 });
 
+test('mass restore suppresses per-app build and ownership spam', () => {
+  const source = fs.readFileSync('./bot_services.js', 'utf8');
+  assert.match(source, /if \(!silentRestore && String\(targetChatId\) !== ADMIN_ID\)/);
+  assert.match(source, /primaryAnimateIntervalId = silentRestore \? null/);
+  assert.match(source, /if \(!silentRestore\) \{\n\s+await bot\.editMessageText\(`Building\.\.\. \$\{currentPct\}%`/);
+  assert.match(source, /if \(!silentRestore\) \{\n\s+await bot\.editMessageText\(`\$\{baseWaitingText\}/);
+});
+
 test('admin app management resolves ownership globally and returns to the full apps menu after deletion', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   assert.match(source, /if \(!dbBotInfo && cid === ADMIN_ID\)/);
@@ -71,7 +79,7 @@ test('app-management expiry label includes the date and remaining days', () => {
   assert.match(source, /`\$\{expirationDateLabel\} \(Expired\)`/);
 });
 
-test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
+test('TLS uses Scraper for PAIRING_URL and TG_TAG for bot PLAY_URL', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   const tlsSource = source.slice(source.indexOf('async function deployTlsStack'), source.indexOf("bot.onText(/^\\/deploytls$/"));
   assert.match(source, /async function configureTlsAppFormation\(appName\)/);
@@ -87,11 +95,21 @@ test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   assert.match(tlsSource, /stack: 'container'/);
   assert.match(tlsSource, /https:\/\/github\.com\/Ultar12\/TG_TAG\/tarball\/main/);
   assert.match(tlsSource, /const tgTagUrl = tgTagAppInfo\.data\.web_url/);
+  assert.match(tlsSource, /const scraperUrl = scraperAppInfo\.data\.web_url/);
   assert.match(tlsSource, /WEBHOOK_URL: tgTagUrl/);
   assert.match(tlsSource, /configuredWebhookUrl !== tgTagUrl/);
   assert.match(tlsSource, /monitorTlsBuildAndConfigure\(tgTagAppName, tgTagBuild\.data\.id, adminId, 'TG_TAG'\)/);
-  assert.match(tlsSource, /updateRenderVar\('PAIRING_URL', tgTagUrl, false\)/);
+  assert.match(tlsSource, /updateRenderVar\('PAIRING_URL', scraperUrl, false\)/);
+  assert.match(tlsSource, /updateRenderVar\('TG_TAG_URL', tgTagUrl, false\)/);
   assert.match(tlsSource, /if \(restartRender\) await triggerRenderRestart\(\)/);
+});
+
+test('Levanter and Raganork builds use TG_TAG_URL as PLAY_URL', () => {
+  const source = fs.readFileSync('./bot_services.js', 'utf8');
+  assert.match(source, /finalConfigVars\.PAIRING_URL = process\.env\.PAIRING_URL/);
+  assert.match(source, /botType === 'levanter' \|\| botType === 'raganork'/);
+  assert.match(source, /finalConfigVars\.PLAY_URL = process\.env\.TG_TAG_URL/);
+  assert.doesNotMatch(source, /finalConfigVars\.PLAY_URL = process\.env\.PAIRING_URL/);
 });
 
 test('replacement Heroku keys accept common copied formats before verification', () => {
