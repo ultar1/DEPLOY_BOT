@@ -2070,12 +2070,10 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
 
-        if (process.env.PAIRING_URL) {
-            finalConfigVars.PAIRING_URL = process.env.PAIRING_URL;
-        }
-        if ((botType === 'levanter' || botType === 'raganork') && process.env.TG_TAG_URL) {
+        if (process.env.TG_TAG_URL) {
             finalConfigVars.PLAY_URL = process.env.TG_TAG_URL;
         }
+    
 
         // 🚀 INJECT EXPIRATION DATE TO HEROKU 🚀
         if (expirationDateToUse) {
