@@ -12155,34 +12155,45 @@ if (action === 'mass_restore') {
             return bot.editMessageText(`No ${botType} bots found to restore.`, { chat_id: cid, message_id: messageId });
         }
 
-        await bot.editMessageText(`Found ${apps.length} ${botType} bots. Starting mass restoration with 1-min intervals...`, {
+        await bot.editMessageText(`Found ${apps.length} ${botType} bots. Starting mass restoration with 30-second trigger intervals...`, {
             chat_id: cid,
             message_id: messageId
         });
 
-        // 2. The Sequential Loop
+        const progressLog = apps.map(app => `⏳ ${app.bot_name}: waiting to trigger`);
+        const editProgress = () => bot.editMessageText(
+            `Mass restore progress (${botType})\n\n${progressLog.join('\n')}`,
+            { chat_id: cid, message_id: messageId }
+        ).catch(() => {});
+
+        // Trigger restores in sequence, but do not wait for any build to finish.
         for (let i = 0; i < apps.length; i++) {
             const appName = apps[i].bot_name;
-            
-            // Update UI
-            await bot.sendMessage(cid, `Step ${i + 1}/${apps.length}: Restoring **${appName}**...`);
 
-            // 3. Trigger the Restore logic (using your existing app-restore function)
-            try {
-                // We use the same function your manual "Restore" button uses
-                await triggerRestoreLogic(appName, botType); 
-            } catch (err) {
-                await bot.sendMessage(cid, `Failed to restore ${appName}: ${err.message}`);
-            }
+            progressLog[i] = `🚀 ${appName}: restore triggered`;
+            await editProgress();
 
-            // 4. Wait for 1 minute before the next one, unless it's the last app
+            // Run the long build without blocking the next app trigger.
+            void triggerRestoreLogic(appName, botType)
+                .then(() => {
+                    progressLog[i] = `✅ ${appName}: restore build completed`;
+                    return editProgress();
+                })
+                .catch(async err => {
+                    progressLog[i] = `❌ ${appName}: ${err.message}`;
+                    await editProgress();
+                });
+
+            // Only space out trigger requests; do not wait for a build.
             if (i < apps.length - 1) {
-                await bot.sendMessage(cid, "Waiting 60 seconds before next restoration...");
-                await new Promise(resolve => setTimeout(resolve, 60000)); // 1 minute delay
+                progressLog[i] += ' (next app in 30s)';
+                await editProgress();
+                await new Promise(resolve => setTimeout(resolve, 30000));
             }
         }
 
-        await bot.sendMessage(cid, `Mass restoration for ${botType} completed.`);
+        progressLog[progressLog.length - 1] += ' (all restore requests triggered)';
+        await editProgress();
     } catch (e) {
         console.error("Mass Restore Error:", e.message);
         await bot.sendMessage(cid, "Error during mass restore process.");

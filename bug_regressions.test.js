@@ -41,9 +41,19 @@ test('admin restores are silent to the actual bot owner', () => {
 test('mass restore uses a defined shared restore helper', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   assert.match(source, /async function triggerRestoreLogic\(appName, botType\)/);
-  assert.match(source, /await triggerRestoreLogic\(appName, botType\)/);
+  assert.match(source, /void triggerRestoreLogic\(appName, botType\)/);
   assert.match(source, /deployment\.bot_type \|\| botType/);
   assert.match(source, /String\(deployment\.user_id\)/);
+});
+
+test('mass restore triggers asynchronously and edits one progress message', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  const massRestore = source.slice(source.indexOf("if (action === 'mass_restore')"), source.indexOf("if (action === 'confirm_restore_app')"));
+  assert.match(massRestore, /const editProgress = \(\) => bot\.editMessageText/);
+  assert.match(massRestore, /void triggerRestoreLogic\(appName, botType\)/);
+  assert.match(massRestore, /setTimeout\(resolve, 30000\)/);
+  assert.doesNotMatch(massRestore, /setTimeout\(resolve, 60000\)/);
+  assert.doesNotMatch(massRestore, /sendMessage\(cid, "Waiting 60 seconds/);
 });
 
 test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
