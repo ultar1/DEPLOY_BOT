@@ -58,6 +58,14 @@ test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   assert.match(tlsSource, /if \(restartRender\) await triggerRenderRestart\(\)/);
 });
 
+test('replacement Heroku keys accept common copied formats before verification', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  const recoveryInput = source.slice(source.indexOf("st?.step === 'AWAITING_RECOVERY_API_KEY'"), source.indexOf('if (isMaintenanceMode', source.indexOf("st?.step === 'AWAITING_RECOVERY_API_KEY'")));
+  assert.match(recoveryInput, /replace\(\/\^Bearer\\s\+\/i, ''\)/);
+  assert.match(recoveryInput, /replace\(\/\^HEROKU_API_KEY\\s\*=\\s\*\/i, ''\)/);
+  assert.match(recoveryInput, /apiReason = error\.response\?\.data\?\.message/);
+});
+
 test('admin expiry label falls back to deployment date instead of N/A', () => {
   const now = new Date('2026-08-21T00:00:00.000Z');
   const deployDate = new Date('2026-08-01T00:00:00.000Z');

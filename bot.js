@@ -9331,7 +9331,15 @@ bot.on('message', async msg => {
   await notifyAdminUserOnline(msg); 
 
   if (cid === ADMIN_ID && st?.step === 'AWAITING_RECOVERY_API_KEY') {
-    const replacementKey = text.trim();
+    // Accept the raw token as well as common copied formats such as
+    // `Bearer <token>`, `HEROKU_API_KEY=<token>`, or Markdown backticks.
+    const replacementKey = text.trim()
+      .replace(/^`+|`+$/g, '')
+      .replace(/^Bearer\s+/i, '')
+      .replace(/^HEROKU_API_KEY\s*=\s*/i, '')
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .trim();
     delete userStates[cid];
     if (replacementKey.length < 30) {
       await bot.sendMessage(cid, 'Invalid key. Please use Enter New Key again and send the complete API key.');
@@ -9345,8 +9353,9 @@ bot.on('message', async msg => {
       await bot.sendMessage(cid, 'Replacement API key verified and stored. Automatic recovery is resuming now.');
       void handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
     } catch (error) {
-      const reason = error.response?.status ? `Status ${error.response.status}` : error.message;
-      await bot.sendMessage(cid, `Replacement key verification failed (${reason}). Please use Enter New Key and try again.`);
+      const apiReason = error.response?.data?.message || error.response?.data?.error || error.message;
+      const reason = error.response?.status ? `Status ${error.response.status}: ${apiReason}` : apiReason;
+      await bot.sendMessage(cid, `Replacement key verification failed (${reason}). Please use Enter New Key and send the complete API key.`);
     }
     return;
   }
