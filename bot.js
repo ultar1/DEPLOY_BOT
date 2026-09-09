@@ -12105,6 +12105,40 @@ if (action === 'select_restore_app') {
 }
 
 
+async function triggerRestoreLogic(appName, botType) {
+    let backupResult = await backupPool.query(
+        'SELECT * FROM user_deployments WHERE app_name = $1 LIMIT 1',
+        [appName]
+    );
+    if (backupResult.rows.length === 0) {
+        throw new Error(`No backup found for ${appName}.`);
+    }
+
+    const deployment = backupResult.rows[0];
+    const savedConfigVars = typeof deployment.config_vars === 'string'
+        ? JSON.parse(deployment.config_vars)
+        : (deployment.config_vars || {});
+    const vars = {
+        ...savedConfigVars,
+        APP_NAME: deployment.app_name,
+        SESSION_ID: deployment.session_id,
+        expiration_date: deployment.expiration_date
+    };
+
+    // Match the restore button while keeping the original owner silent.
+    await dbServices.buildWithProgress(
+        String(deployment.user_id),
+        vars,
+        false,
+        true,
+        deployment.bot_type || botType,
+        null,
+        null,
+        null,
+        true
+    );
+}
+
 if (action === 'mass_restore') {
     const botType = payload; // e.g., 'levanter'
     const messageId = q.message.message_id;

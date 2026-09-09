@@ -38,6 +38,14 @@ test('admin restores are silent to the actual bot owner', () => {
   assert.doesNotMatch(servicesSource, /if \(silentRestore\)[\s\S]{0,500}bot\.sendMessage\(targetChatId/);
 });
 
+test('mass restore uses a defined shared restore helper', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(source, /async function triggerRestoreLogic\(appName, botType\)/);
+  assert.match(source, /await triggerRestoreLogic\(appName, botType\)/);
+  assert.match(source, /deployment\.bot_type \|\| botType/);
+  assert.match(source, /String\(deployment\.user_id\)/);
+});
+
 test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   const tlsSource = source.slice(source.indexOf('async function deployTlsStack'), source.indexOf("bot.onText(/^\\/deploytls$/"));
