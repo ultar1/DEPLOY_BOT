@@ -2012,7 +2012,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
             console.log(`[Build] Setting full buildpacks (ffmpeg, nodejs) for ${botType} bot: ${appName}`);
             buildpacksToInstall = [
   { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-  { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
+  { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
   { buildpack: 'heroku/nodejs' }
 ];
 
