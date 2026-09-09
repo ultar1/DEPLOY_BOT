@@ -41,14 +41,19 @@ test('admin restores are silent to the actual bot owner', () => {
 test('TLS deploys TG_TAG and uses its app URL as Render PAIRING_URL', () => {
   const source = fs.readFileSync('./bot.js', 'utf8');
   const tlsSource = source.slice(source.indexOf('async function deployTlsStack'), source.indexOf("bot.onText(/^\\/deploytls$/"));
+  assert.match(source, /async function configureTlsAppFormation\(appName\)/);
+  assert.match(source, /type: 'web', quantity: 1, size: 'standard-2x'/);
+  assert.match(source, /type: 'worker', quantity: 0, size: 'standard-2x'/);
+  assert.match(tlsSource, /configureTlsAppFormation\(msgAppName\)/);
+  assert.match(tlsSource, /configureTlsAppFormation\(scAppName\)/);
+  assert.match(tlsSource, /configureTlsAppFormation\(tgTagAppName\)/);
+  assert.match(tlsSource, /configureTlsAppFormation\(emAppName\)/);
   assert.match(tlsSource, /stack: 'container'/);
   assert.match(tlsSource, /https:\/\/github\.com\/Ultar12\/TG_TAG\/tarball\/main/);
   assert.match(tlsSource, /const tgTagUrl = tgTagAppInfo\.data\.web_url/);
   assert.match(tlsSource, /WEBHOOK_URL: tgTagUrl/);
   assert.match(tlsSource, /configuredWebhookUrl !== tgTagUrl/);
   assert.match(tlsSource, /await waitForHerokuBuild\(tgTagAppName, tgTagBuild\.data\.id\)/);
-  assert.match(tlsSource, /type: 'web', quantity: 1, size: 'standard-2x'/);
-  assert.match(tlsSource, /type: 'worker', quantity: 0, size: 'standard-2x'/);
   assert.match(tlsSource, /updateRenderVar\('PAIRING_URL', tgTagUrl, false\)/);
   assert.match(tlsSource, /if \(restartRender\) await triggerRenderRestart\(\)/);
 });

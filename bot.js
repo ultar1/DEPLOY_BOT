@@ -7395,6 +7395,15 @@ async function waitForHerokuBuild(appName, buildId, timeoutMs = 15 * 60 * 1000) 
     throw new Error(`Heroku build timed out for ${appName} after ${Math.round(timeoutMs / 60000)} minutes.`);
 }
 
+async function configureTlsAppFormation(appName) {
+    await herokuApi.patch(`/apps/${appName}/formation`, {
+        updates: [
+            { type: 'web', quantity: 1, size: 'standard-2x' },
+            { type: 'worker', quantity: 0, size: 'standard-2x' }
+        ]
+    });
+}
+
 async function deployTlsStack(adminId, { restartRender = true } = {}) {
     const {
         GMAIL_USER,
@@ -7433,7 +7442,9 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             EXPIRATION_DATE: null
         });
 
-        await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
+        const msgBuild = await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
+        await waitForHerokuBuild(msgAppName, msgBuild.data.id);
+        await configureTlsAppFormation(msgAppName);
 
         // Retrieve exact URL for MessageBot to give to Scraper
         const msgAppInfo = await herokuApi.get(`/apps/${msgAppName}`);
@@ -7462,7 +7473,9 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
     EXPIRATION_DATE: null
 });
 
-        await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
+        const scraperBuild = await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
+        await waitForHerokuBuild(scAppName, scraperBuild.data.id);
+        await configureTlsAppFormation(scAppName);
 
         // The scraper is deployed only. Its URL is intentionally not used as PAIRING_URL.
 
@@ -7492,21 +7505,16 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         });
         await bot.editMessageText("(3/4) Waiting for TG_TAG Python container build...", { chat_id: adminId, message_id: progressMsg.message_id });
         await waitForHerokuBuild(tgTagAppName, tgTagBuild.data.id);
-        await herokuApi.patch(`/apps/${tgTagAppName}/formation`, {
-            updates: [
-                { type: 'web', quantity: 1, size: 'standard-2x' },
-                // TG_TAG runs the Telegram webhook in web; keep worker off to
-                // prevent two bot processes from consuming the same updates.
-                { type: 'worker', quantity: 0, size: 'standard-2x' }
-            ]
-        });
+        await configureTlsAppFormation(tgTagAppName);
 
         // --- STEP 4: DEPLOY EMAIL SERVICE ---
         await bot.editMessageText("(4/4) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
         await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
-        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
+        const emailBuild = await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
+        await waitForHerokuBuild(emAppName, emailBuild.data.id);
+        await configureTlsAppFormation(emAppName);
 
         // Retrieve exact URL for Email Service to update Render
         const emAppInfo = await herokuApi.get(`/apps/${emAppName}`);
