@@ -7442,8 +7442,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             EXPIRATION_DATE: null
         });
 
-        const msgBuild = await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
-        await waitForHerokuBuild(msgAppName, msgBuild.data.id);
+        await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
         await configureTlsAppFormation(msgAppName);
 
         // Retrieve exact URL for MessageBot to give to Scraper
@@ -7473,8 +7472,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
     EXPIRATION_DATE: null
 });
 
-        const scraperBuild = await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
-        await waitForHerokuBuild(scAppName, scraperBuild.data.id);
+        await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
         await configureTlsAppFormation(scAppName);
 
         // The scraper is deployed only. Its URL is intentionally not used as PAIRING_URL.
@@ -7512,8 +7510,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
         await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
-        const emailBuild = await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
-        await waitForHerokuBuild(emAppName, emailBuild.data.id);
+        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
         await configureTlsAppFormation(emAppName);
 
         // Retrieve exact URL for Email Service to update Render
